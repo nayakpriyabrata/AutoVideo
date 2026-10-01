@@ -1,0 +1,11 @@
+name: SOCIAL_VIRAL
+label: "Social Viral (Shorts/Reels)"
+prompt_vocabulary: ["bold high-energy visuals", "crisp detail", "vibrant color", "dynamic motion", "eye-catching composition"]
+lighting: "bright punchy light, high clarity, strong subject separation"
+camera_behavior: "fast push-ins, quick pans, energetic handheld-feel (stabilized), snap zooms sparingly"
+color_treatment: "vivid saturated grade, high contrast, social-media pop"
+caption_style: HORMOZI
+music_style: "upbeat phonk/lofi energy, 100-120 BPM"
+editing_pace: "fast, 2-5s shots, hard cuts on beats, hook in first second"
+shot_length: [2, 5]
+negative: ["slow", "boring static frame", "dark murky", "blurry"]

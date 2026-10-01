@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "AutoVideoAI Flow Companion",
+  "version": "1.0.0",
+  "description": "Connects your local AutoVideoAI engine to the Google Flow tab you are already signed into.",
+  "permissions": ["storage", "downloads", "tabs"],
+  "host_permissions": [
+    "https://flow.google.com/*",
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "background": {"service_worker": "service_worker.js"},
+  "content_scripts": [{
+    "matches": ["https://flow.google.com/*"],
+    "js": ["content.js"],
+    "css": ["content.css"],
+    "run_at": "document_idle"
+  }],
+  "action": {"default_popup": "popup.html", "default_title": "AutoVideoAI"}
+}

@@ -1,0 +1,11 @@
+name: TECH_FUTURE
+label: "Tech Future"
+prompt_vocabulary: ["sleek futuristic tech aesthetic", "clean surfaces", "glowing accents", "precision motion"]
+lighting: "cool rim light, neon accents, deep shadows with detail"
+camera_behavior: "precise glides, macro details, smooth orbital product moves"
+color_treatment: "cool blue-cyan grade, electric highlights"
+caption_style: TECH
+music_style: "electronic synth pulse, 90-110 BPM"
+editing_pace: "snappy, 3-6s shots, match cuts on shapes"
+shot_length: [3, 6]
+negative: ["rustic", "warm vintage", "messy background", "grainy"]

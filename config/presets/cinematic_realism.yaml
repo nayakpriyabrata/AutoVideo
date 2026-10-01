@@ -1,0 +1,11 @@
+name: CINEMATIC_REALISM
+label: "Cinematic Realism"
+prompt_vocabulary: ["photorealistic cinematic realism", "natural skin texture", "subtle film grain", "anamorphic feel", "realistic physics"]
+lighting: "motivated natural light, soft shadows, warm highlights, gentle contrast"
+camera_behavior: "slow deliberate moves, 35mm-50mm lens feel, locked-off or smooth dolly, no whip pans"
+color_treatment: "warm cinematic grade, teal-shadow balance, natural saturation"
+caption_style: CINEMATIC
+music_style: "cinematic ambient, soft piano + strings, 70-90 BPM"
+editing_pace: "calm, 4-8s shots, hard cuts, dissolve only on time jumps"
+shot_length: [4, 8]
+negative: ["cartoon", "cgi look", "plastic skin", "oversaturated", "fisheye", "shaky cam"]

@@ -1,0 +1,40 @@
+# AutoVideoAI v5.8.1 clip configuration
+# Copy this file, change source, and uncomment only the options you need.
+
+source: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
+output: "outputs/my-clips"
+
+# Number and duration of final non-overlapping clips.
+count: 3
+# min_seconds: 25
+# max_seconds: 55
+
+# gemini-hybrid: API retries -> visible signed-in Gemini browser -> Groq/local.
+# Other choices: auto, gemini-api-hybrid, gemini-web-hybrid, groq, local.
+ranking_provider: gemini-hybrid
+# gemini_model: "YOUR_AVAILABLE_MODEL_ID"
+# gemini_chat_cleanup: delete-after-read
+
+# Speech timing still runs locally/Groq so Gemini timestamps can be verified.
+# caption_provider: groq
+
+# Fill the vertical canvas for reels. Preview framing for speaker changes.
+framing: face-crop
+# Static face crop is not active-speaker tracking.
+# framing: fit
+
+# REQUIRED for URL input. This is recorded, not independently verified.
+source_rights: own_content
+# Other values:
+# written_permission
+# licensed_content
+# creative_commons
+# public_domain
+# commentary_or_review
+# private_draft_only
+
+# Optional music. Music/captions/cropping do not make copied footage
+# copyright-safe. Use only music you may publish.
+# background_music: "assets/music/my_licensed_track.mp3"
+# music_license: youtube_audio_library
+# music_volume: 0.08

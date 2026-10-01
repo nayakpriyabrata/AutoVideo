@@ -1,0 +1,5 @@
+#autovideoai-panel{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:310px;background:#111827;color:#f9fafb;border:1px solid #374151;border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.35);font:13px/1.35 Arial,sans-serif;padding:12px}
+#autovideoai-panel .av-title{font-weight:700;font-size:14px;margin-bottom:7px}
+#autovideoai-panel .av-status{color:#d1d5db;white-space:pre-wrap;max-height:84px;overflow:auto}
+#autovideoai-panel button{margin-top:8px;margin-right:6px;border:0;border-radius:8px;padding:7px 10px;cursor:pointer;background:#2563eb;color:white}
+#autovideoai-panel button.av-secondary{background:#374151}

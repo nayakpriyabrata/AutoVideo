@@ -1,0 +1,137 @@
+# Flow model registry - September 2026 pricing/feature snapshot.
+# Google can change costs; verify in Flow Settings before production runs.
+source_note: "Official Google Flow Help pricing/features checked 2026-09-23. Keep this file editable."
+
+models:
+  omni_draft:
+    label: "Gemini Omni Flash 360p"
+    durations: [4, 6, 8, 10]
+    inputs: ["text", "image", "first_frame", "last_frame", "reference"]
+    reference_support: true
+    edit_support: true
+    extension_support: false
+    resolution: "360p"
+    credit_costs: {4: 4, 6: 5, 8: 6, 10: 7}
+    credits_per_8s: 6
+    upscale_available: true
+    upscale_cost: 0
+
+  omni_standard:
+    label: "Gemini Omni Flash 720p"
+    durations: [4, 6, 8, 10]
+    inputs: ["text", "image", "first_frame", "last_frame", "reference"]
+    reference_support: true
+    edit_support: true
+    extension_support: false
+    resolution: "720p"
+    credit_costs: {4: 7, 6: 10, 8: 12, 10: 15}
+    credits_per_8s: 12
+    upscale_available: false
+    upscale_cost: 0
+
+  veo_lite:
+    label: "Veo 3.1 - Lite"
+    durations: [4, 6, 8]
+    inputs: ["text", "image", "first_frame", "last_frame", "reference"]
+    reference_support: true
+    edit_support: false
+    extension_support: true
+    resolution: "720p"
+    credit_costs: {4: 10, 6: 10, 8: 10}
+    credits_per_8s: 10
+    upscale_available: true
+    upscale_cost: 0
+
+  veo_fast:
+    label: "Veo 3.1 - Fast"
+    durations: [4, 6, 8]
+    inputs: ["text", "image", "first_frame", "last_frame", "reference"]
+    reference_support: true
+    edit_support: false
+    extension_support: false
+    resolution: "720p"
+    credit_costs: {4: 20, 6: 20, 8: 20}
+    credits_per_8s: 20
+    upscale_available: true
+    upscale_cost: 0
+
+  veo_quality:
+    label: "Veo 3.1 - Quality"
+    durations: [8]
+    inputs: ["text", "image", "first_frame", "last_frame"]
+    reference_support: false
+    edit_support: false
+    extension_support: false
+    resolution: "720p"
+    credit_costs: {8: 100}
+    credits_per_8s: 100
+    upscale_available: true
+    upscale_cost: 0
+
+  imagen_flow:
+    label: "Nano Banana 2 Lite"
+    kind: image
+    inputs: ["text", "reference"]
+    reference_support: true
+    resolution: "image"
+    credits_per_image: 0
+
+profiles:
+  FLOW_CINEMATIC:
+    label: "Flow Cinematic"
+    description: "Higher quality; premium generations are explicit and budget-gated."
+    routing: {LOW: veo_lite, NORMAL: veo_fast, HERO: veo_quality, HIGH_MOTION: veo_fast, REFERENCE_HEAVY: omni_standard, EDIT: omni_standard, EXTEND: veo_lite}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 1}
+    upscale_accepted: true
+    allow_downgrade: false
+  FLOW_BALANCED:
+    label: "Flow Balanced"
+    description: "Credit-aware default: Lite for normal shots, Omni 720p for reference-heavy shots."
+    routing: {LOW: omni_draft, NORMAL: veo_lite, HERO: veo_fast, HIGH_MOTION: veo_fast, REFERENCE_HEAVY: omni_standard, EDIT: omni_standard, EXTEND: veo_lite}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 1}
+    upscale_accepted: true
+    allow_downgrade: false
+  FLOW_ECONOMY:
+    label: "Flow Economy"
+    description: "Lowest-credit Flow video path: Omni Flash 360p, one take, free 720p upscale for Pro/Ultra when available."
+    routing: {LOW: omni_draft, NORMAL: omni_draft, HERO: omni_draft, HIGH_MOTION: omni_draft, REFERENCE_HEAVY: omni_draft, EDIT: omni_standard, EXTEND: veo_lite}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 1}
+    upscale_accepted: true
+    allow_downgrade: false
+
+  STORYBOARD_ECONOMY:
+    label: "Storyboard Economy"
+    description: "Long-form credit optimizer: only meaningful-motion shots use Omni 360p; the rest use free image-pair motion or optional stock."
+    routing: {LOW: kenburns_plus, NORMAL: kenburns_plus, HERO: omni_draft, HIGH_MOTION: omni_draft, REFERENCE_HEAVY: omni_draft, EDIT: omni_standard, EXTEND: veo_lite}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 1}
+    upscale_accepted: true
+    allow_downgrade: true
+  LOCAL_FREE:
+    label: "Local Free"
+    description: "ComfyUI + open video models + local TTS. $0, needs GPU."
+    routing: {LOW: wan_t2v, NORMAL: wan_t2v, HERO: wan_i2v, HIGH_MOTION: ltx_t2v, REFERENCE_HEAVY: wan_i2v, EDIT: ltx_t2v, EXTEND: ltx_t2v}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 2}
+    upscale_accepted: false
+    allow_downgrade: true
+  FREE_HYBRID:
+    label: "Free Hybrid"
+    description: "Stock + local images + occasional local video. $0."
+    routing: {LOW: stock, NORMAL: stock, HERO: kenburns_plus, HIGH_MOTION: stock, REFERENCE_HEAVY: kenburns_plus, EDIT: kenburns_plus, EXTEND: stock}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 1}
+    upscale_accepted: false
+    allow_downgrade: true
+  MANUAL_DIRECTOR:
+    label: "Manual Director"
+    description: "Approve every shot/prompt before generation."
+    routing: {LOW: omni_draft, NORMAL: veo_lite, HERO: veo_fast, HIGH_MOTION: veo_fast, REFERENCE_HEAVY: omni_standard, EDIT: omni_standard, EXTEND: veo_lite}
+    candidates: {LOW: 1, NORMAL: 1, HERO: 1}
+    upscale_accepted: true
+    allow_downgrade: false
+    require_approval: true
+
+budgets:
+  MAX_CREDITS_PER_VIDEO: 100
+  MAX_RETRIES_PER_SHOT: 1
+  MAX_QUALITY_GENERATIONS: 1
+  USER_RESERVE: 50
+  RETRY_RESERVE_PCT: 15

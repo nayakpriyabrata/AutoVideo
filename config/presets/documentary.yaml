@@ -1,0 +1,11 @@
+name: DOCUMENTARY
+label: "Documentary"
+prompt_vocabulary: ["authentic documentary footage", "natural unposed moments", "real locations", "observational camera"]
+lighting: "available light, realistic exposure, minimal stylization"
+camera_behavior: "observational handheld (stabilized), slow reveals, interview-style framing"
+color_treatment: "natural grade, true skin tones, mild contrast"
+caption_style: DOCUMENTARY
+music_style: "subtle underscore, acoustic, 60-80 BPM"
+editing_pace: "measured, 4-8s shots, J/L cuts, let moments breathe"
+shot_length: [4, 8]
+negative: ["staged", "glamour lighting", "beauty filter", "cgi"]

@@ -1,0 +1,52 @@
+# AutoVideoAI v5.7.9 configuration. Keep topic; uncomment only overrides.
+topic: "5 habits winners build for a successful life"
+
+# production_mode: youtube_pro   # youtube_pro | reels_pro | legacy
+# video_type: faceless_youtube   # shorts | faceless_youtube | explainer | marketing
+# theme: motivational            # run: python3 cli.py v3 themes
+# duration: 300
+
+# script_provider: auto          # auto | gemini-web | gemini | groq | openai | planner
+# script_quality: publish
+gemini_chat_cleanup: delete-after-read  # keep | delete-after-read
+# tts_provider: auto
+# voice: en-IN-PrabhatNeural
+# caption_provider: auto
+# caption_display: auto          # auto | full | none
+
+# profile: STORYBOARD_ECONOMY
+# preset: cinematic_realism
+# Long-form auto mix: 60% stock video, 20% Flow video, 20% image motion.
+# video_share: 0.20
+# stock_share: 0.60
+# dynamic_video_scenes: 40       # optional exact stock+Flow count
+# stock_scenes: 30               # optional exact override
+# stock_source: auto
+# images_per_shot: 2
+# flow_image_workers: 1          # 1..3; isolated workers for candidate stills
+# flow_scenes: 10                # optional exact override; budget safety still wins
+# max_flow_scenes: 10
+# frame_source: auto             # auto | flow | free
+# flow_approval: once
+
+# Existing Flow project is stored and reused on every resume.
+# flow_project_url: "https://flow.google.com/project/PUT-YOUR-UUID-HERE"
+# flow_reuse_project_media: true
+# flow_reuse_mode: exact
+# flow_frame_retries: 3
+# flow_video_retries: 1
+# network_wait_seconds: 300
+
+# background_music: auto
+# music_mood: "soft motivational cinematic instrumental"
+# channel_name: "My Channel"
+# channel_logo: "assets/channel_logo.png"
+# graphics_overlays: true
+# watermark: true               # off by default; enable only when wanted
+# render_quality: high
+
+# max_credits: 30
+# max_generation_credits: 10
+# max_retries: 2
+# dry_run: false
+# plan_only: false

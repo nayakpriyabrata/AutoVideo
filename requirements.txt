@@ -1,0 +1,33 @@
+# AutoVideoAI v3
+# ---------- core (free pipeline) ----------
+streamlit>=1.32.0
+moviepy==1.0.3
+Pillow>=10.0.0
+requests>=2.31.0
+edge-tts>=6.1.9
+gTTS>=2.5.0
+numpy>=1.26.0,<2
+python-dotenv>=1.0.0
+feedparser>=6.0.10
+imageio>=2.33.0
+imageio-ffmpeg>=0.4.9
+faster-whisper>=1.0.0
+google-genai>=1.0.0
+# ---------- v3 orchestration ----------
+pyyaml>=6.0
+pydantic>=2.0
+tenacity>=8.0
+opencv-python-headless>=4.8
+pytest>=7.0
+# ---------- v3 Flow browser bridge (optional, CPU-safe) ----------
+# pip package is small; browser comes from:  playwright install chromium
+playwright>=1.40
+# URL input for the optional local highlight clipper (local files need no downloader)
+yt-dlp>=2025.1.0
+# ---------- optional groups (install only if needed) ----------
+# [local-video]  torch / diffusers / ComfyUI (see README, needs NVIDIA GPU)
+# [advanced-tts] kokoro / chatterbox (see README)
+# (Seedance/Kling via fal.ai needs no extra package - REST built in)
+# ---------- v5 optional local high-quality TTS ----------
+# pip install "kokoro>=0.9.4" soundfile   # also install espeak-ng on Linux/WSL
+# Groq/Gemini/ElevenLabs/OpenAI/xAI integrations use requests; no vendor SDK is required.

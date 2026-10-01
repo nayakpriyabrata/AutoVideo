@@ -1,0 +1,13 @@
+# Offline regression suite only; install requirements.txt to run the full app.
+# No browser download, API keys, Whisper/TTS model weights, or GPU required.
+pytest>=7.0,<10
+pyyaml>=6.0
+pydantic>=2.0,<3
+numpy>=1.26.0,<2
+opencv-python-headless>=4.8,<4.12
+Pillow>=10.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+moviepy==1.0.3
+imageio-ffmpeg>=0.4.9
+playwright>=1.40

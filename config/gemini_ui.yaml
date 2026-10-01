@@ -1,0 +1,22 @@
+gemini_url: "https://gemini.google.com/app"
+browser:
+  mode: auto
+  channel: chrome
+  executable: ""
+  cdp_url: ""
+actions:
+  prompt_box:
+    - {by: css, selector: "rich-textarea textarea"}
+    - {by: css, selector: "textarea[placeholder*='prompt' i]"}
+    - {by: css, selector: "textarea[aria-label*='prompt' i]"}
+    - {by: css, selector: "[contenteditable='true'][role='textbox']"}
+    - {by: css, selector: "div[contenteditable='true']"}
+  send_button:
+    - {by: role, role: button, name_contains: "Send message"}
+    - {by: role, role: button, name_contains: "Send"}
+    - {by: role, role: button, name_contains: "Submit"}
+    - {by: css, selector: "button[type='submit']"}
+  chat_menu_button:
+    - {by: role, role: button, name_contains: "Conversation options"}
+    - {by: role, role: button, name_contains: "Chat options"}
+    - {by: css, selector: "button[aria-label*='conversation options' i]"}

@@ -1,0 +1,25 @@
+name: CARTOON_STORY
+label: "Cartoon Story / Kids & Family"
+prompt_vocabulary:
+  - "high-quality cinematic cartoon animation"
+  - "consistent character model and proportions across every shot"
+  - "expressive faces and readable silhouette"
+  - "clean stylized backgrounds with strong visual storytelling"
+  - "family-friendly animated film look"
+lighting: "soft colorful animated-film lighting, clear subject separation, gentle rim light, warm inviting highlights"
+camera_behavior: "smooth animated dolly and pan moves, clear staging, medium and wide storytelling shots, close-ups only for emotion"
+color_treatment: "bright but balanced animation palette, consistent character colors, soft cinematic contrast"
+caption_style: CINEMATIC
+music_style: "playful cinematic orchestral / light adventure, family-friendly, 85-115 BPM"
+editing_pace: "story-driven, 3-6s shots, clean cuts, dissolves for location/time changes"
+shot_length: [3, 6]
+negative:
+  - "photorealistic live-action"
+  - "character redesign"
+  - "wardrobe changes"
+  - "face drift"
+  - "extra fingers"
+  - "morphing limbs"
+  - "text"
+  - "logos"
+  - "watermarks"

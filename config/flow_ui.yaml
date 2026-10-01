@@ -1,0 +1,222 @@
+# Flow UI selectors - text/ARIA-first so Flow redesigns are easy to repair.
+# Each action lists candidate locators tried in order. If ALL fail -> Assisted Flow Mode.
+# Do not put selectors in Python; edit here.
+flow_url: "https://flow.google.com/"
+login_check: "https://flow.google.com/"
+
+# Which browser to drive. Overridable in SETTINGS (config/user_settings.yaml)
+# or env: FLOW_BROWSER_MODE / FLOW_BROWSER_CHANNEL / FLOW_BROWSER_EXE / FLOW_CDP_URL.
+browser:
+  mode: auto        # auto|system|bundled|cdp
+  channel: chrome   # system mode: chrome|chromium|msedge
+  executable: ""    # optional explicit path, e.g. /mnt/c/.../chrome.exe (WSL)
+  cdp_url: ""       # attach to YOUR open browser, e.g. http://localhost:9222
+
+actions:
+  enter_flow:
+    - {by: role, role: button, name_contains: "Create with Google Flow"}
+    - {by: text, text: "Create with Google Flow"}
+    - {by: role, role: link, name_contains: "Create with Google Flow"}
+    - {by: role, role: button, name_contains: "Try Google Flow"}
+    - {by: role, role: link, name_contains: "Try Google Flow"}
+  new_project:
+    # Current dashboard renders the New project tile/card with visible text;
+    # try text first, then semantic roles for other Flow variants.
+    - {by: text, text: "New project"}
+    - {by: text, text: "+ New project"}
+    - {by: role, role: button, name_contains: "New project"}
+    - {by: role, role: button, name_contains: "+ New project"}
+    - {by: role, role: link, name_contains: "New project"}
+  project_name_input:
+    - {by: role, role: textbox, name_contains: "name"}
+    - {by: placeholder, text_contains: "project"}
+  # Migrated flow.google.com standard editor (Angular, Sep 2026).
+  # These are structural selectors documented from the live migrated UI.
+  migrated_settings_trigger:
+    - {by: css, selector: ".settings-trigger-button"}
+  migrated_video_radio:
+    - {by: css, selector: "[role='radio']:has(mat-icon:text-is('videocam'))"}
+  migrated_image_radio:
+    - {by: css, selector: "[role='radio']:has(mat-icon:text-is('image'))"}
+  migrated_aspect_portrait:
+    - {by: css, selector: "[role='radio']:has(mat-icon:text-is('crop_9_16'))"}
+  migrated_aspect_landscape:
+    - {by: css, selector: "[role='radio']:has(mat-icon:text-is('crop_16_9'))"}
+  migrated_model_picker:
+    - {by: css, selector: ".cdk-overlay-pane button:has(mat-icon:text-is('arrow_drop_down'))"}
+  migrated_submit_button:
+    - {by: css, selector: "button:has(mat-icon:text-is('arrow_forward'))"}
+
+  # Expanded Google Flow Agent editor.  Current migrated accounts may open a
+  # conversational side panel instead of the classic mode tabs/chips.
+  agent_prompt_box:
+    - {by: css, selector: "[contenteditable='true']"}
+    - {by: placeholder, text_contains: "What do you want to create"}
+  agent_send_button:
+    - {by: css, selector: "button:has(mat-icon:text-is('arrow_forward'))"}
+  agent_add_media_button:
+    - {by: css, selector: "button:has(mat-icon:text-is('add'))"}
+    - {by: role, role: button, name_contains: "Add"}
+  agent_upload_option:
+    - {by: role, role: menuitem, name_contains: "Upload"}
+    - {by: role, role: button, name_contains: "Upload"}
+    - {by: text, text: "Upload"}
+  # Credit approval is intentionally restricted to Flow's explicit approval
+  # controls. Generic labels such as Generate/Create/Continue/Yes can appear
+  # elsewhere in the page and caused false "credit confirmation blocked" errors.
+  agent_confirmation_buttons:
+    - "Approve"
+    - "Approve once"
+    - "Always approve"
+
+  # New Flow (flow.google.com): click the current model/type chip, then choose Video.
+  generation_type_picker:
+    - {by: role, role: button, name_contains: "Nano Banana"}
+    - {by: role, role: button, name_contains: "Veo"}
+    - {by: role, role: button, name_contains: "Gemini Omni"}
+    # Deliberately no generic "Image"/"Video" button selectors here: in the
+    # expanded Flow Agent those can match quick actions such as "Edit an image".
+  video_option:
+    - {by: role, role: menuitem, name_contains: "Video"}
+    - {by: role, role: option, name_contains: "Video"}
+    - {by: role, role: button, name_contains: "Video"}
+    - {by: text, text: "Video"}
+  image_option:
+    - {by: role, role: menuitem, name_contains: "Image"}
+    - {by: role, role: option, name_contains: "Image"}
+    - {by: role, role: button, name_contains: "Image"}
+    - {by: text, text: "Image"}
+  # Legacy labels retained as fallbacks.
+  text_to_video_tab:
+    - {by: role, role: tab, name_contains: "Text to Video"}
+    - {by: text, text: "Text to Video"}
+    - {by: role, role: tab, name_contains: "Text to video"}
+    - {by: text, text: "Text to video"}
+    - {by: role, role: button, name_contains: "Text to Video"}
+    - {by: role, role: button, name_contains: "Text to video"}
+  frames_to_video_tab:
+    - {by: role, role: tab, name_contains: "Frames to Video"}
+    - {by: text, text: "Frames to Video"}
+    - {by: role, role: tab, name_contains: "Frames to video"}
+    - {by: text, text: "Frames to video"}
+    - {by: role, role: button, name_contains: "Frames"}
+  ingredients_tab:
+    - {by: role, role: tab, name_contains: "Ingredients"}
+    - {by: text, text: "Ingredients"}
+    - {by: role, role: button, name_contains: "Ingredients"}
+  # First-visit welcome / Labs consent dialogs. Clicked best-effort (short timeouts)
+  # before entering a project; all misses are fine (means no dialog showing).
+  onboarding_dismiss:
+    - "Get started"
+    - "Try Flow"
+    - "Continue"
+    - "Accept"
+    - "I agree"
+    - "Agree"
+    - "Got it"
+    - "Dismiss"
+    - "Skip"
+    - "Not now"
+    - "Close"
+  image_tab:
+    - {by: role, role: tab, name_contains: "Text to Image"}
+    - {by: text, text: "Text to Image"}
+    - {by: role, role: tab, name_contains: "Image"}
+  image_generating_indicator:
+    - {by: text, text: "Generating"}
+    - {by: text, text: "Creating"}
+  model_picker:
+    - {by: role, role: button, name_contains: "Veo 3.1"}
+    - {by: role, role: button, name_contains: "Veo"}
+    - {by: role, role: button, name_contains: "Gemini Omni"}
+    - {by: role, role: button, name_contains: "Nano Banana"}
+    - {by: role, role: combobox, name_contains: "Model"}
+    - {by: text, text: "Model"}
+  model_option_contains: "{MODEL_LABEL}"
+  aspect_landscape:
+    - {by: role, role: button, name_contains: "16:9"}
+    - {by: text, text: "16:9"}
+  aspect_portrait:
+    - {by: role, role: button, name_contains: "9:16"}
+    - {by: text, text: "9:16"}
+  duration_option_contains: "{SECONDS}"
+  output_count_option_contains: "{COUNT}"
+  prompt_box:
+    - {by: role, role: textbox, name_contains: "prompt"}
+    - {by: placeholder, text_contains: "Describe"}
+    - {by: css, selector: "textarea"}
+    - {by: css, selector: "[contenteditable='true'][role='textbox']"}
+    - {by: css, selector: "[contenteditable='true']"}
+    - {by: role, role: textbox}
+  upload_button:
+    - {by: role, role: button, name_contains: "Upload"}
+    - {by: text, text: "Upload"}
+  first_frame_slot:
+    - {by: text, text: "First frame"}
+  last_frame_slot:
+    - {by: text, text: "Last frame"}
+  generate_button:
+    - {by: role, role: button, name_contains: "Generate"}
+    - {by: role, role: button, name_contains: "Generate Image"}
+    - {by: text, text: "Generate Image"}
+    - {by: text, text: "Generate"}
+  generating_indicator:
+    - {by: text, text: "Generating"}
+    - {by: text, text: "In progress"}
+  generation_card:
+    - {by: css, selector: "[data-generation-card]"}
+    - {by: role, role: img}
+  download_button:
+    - {by: role, role: button, name_contains: "Download"}
+    - {by: css, selector: "button[aria-label*='download' i]"}
+    - {by: css, selector: "button[title*='download' i]"}
+    - {by: css, selector: "button:has(mat-icon:text-is('download'))"}
+    - {by: css, selector: "button:has(mat-icon:text-is('download_2'))"}
+    - {by: text, text: "Download"}
+  download_original_option:
+    - {by: role, role: menuitem, name_contains: "1080p"}
+    - {by: role, role: menuitem, name_contains: "720p"}
+    - {by: role, role: menuitem, name_contains: "360p"}
+    - {by: role, role: menuitem, name_contains: "Download original"}
+    - {by: role, role: option, name_contains: "1080p"}
+    - {by: role, role: option, name_contains: "720p"}
+    - {by: role, role: option, name_contains: "360p"}
+    - {by: role, role: menuitem, name_contains: "1K"}
+    - {by: role, role: option, name_contains: "1K"}
+    - {by: role, role: button, name_contains: "1K"}
+    - {by: text, text: "1K"}
+    - {by: text, text: "Original size"}
+  upscale_button:
+    - {by: role, role: button, name_contains: "Upscale"}
+    - {by: text, text: "Upscale"}
+  # Do not treat a generic "Try again" button as a normal generation failure.
+  # Flow shows that button for temporary Agent-capacity throttling as well.
+  failure_texts: ["Something went wrong", "couldn't generate", "generation failed", "request failed", "blocked"]
+  service_busy_texts:
+    - "agent is experiencing high demand"
+    - "experiencing high demand"
+    - "please try again later"
+    - "too many requests"
+    - "service is busy"
+    - "temporarily at capacity"
+  service_retry_buttons: ["Try again", "Retry"]
+  service_busy_retry_delays: [0, 30, 60, 90, 120, 180]
+  # Keep these specific. Generic words such as "upgrade" or "quota" also occur
+  # in help/navigation text and can pause a healthy project. The current Flow
+  # usage-limit card includes "You've reached your usage limit".
+  quota_texts:
+    - "you've reached your usage limit"
+    - "you’ve reached your usage limit"
+    - "reached your usage limit"
+    - "out of credits"
+    - "credit limit reached"
+    - "quota exceeded"
+
+timeouts:
+  ui_action: 20
+  upload: 60
+  generation: 900
+  download: 180
+  poll_interval: 8
+  service_busy_wait: 900
+  service_busy_retries: 8

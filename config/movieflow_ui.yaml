@@ -1,0 +1,31 @@
+movieflow_url: "https://studio.movieflow.ai/"
+browser:
+  mode: "auto"
+  channel: "chrome"
+  executable: ""
+  cdp_url: ""
+actions:
+  prompt_box:
+    - {by: placeholder, text_contains: "What do you want to create"}
+    - {by: placeholder, text_contains: "Describe"}
+    - {by: placeholder, text_contains: "story"}
+    - {by: css, selector: "textarea"}
+    - {by: css, selector: "[contenteditable='true']"}
+  new_project:
+    - {by: role, role: button, name_contains: "New project"}
+    - {by: role, role: button, name_contains: "Create project"}
+    - {by: role, role: button, name_contains: "Start creating"}
+    - {by: text, text: "Start Creating"}
+  agent_mode:
+    - {by: role, role: button, name_contains: "Agent"}
+    - {by: text, text: "Agent"}
+  submit:
+    - {by: role, role: button, name_contains: "Generate"}
+    - {by: role, role: button, name_contains: "Create"}
+    - {by: role, role: button, name_contains: "Start"}
+    - {by: role, role: button, name_contains: "Send"}
+    - {by: css, selector: "button[type='submit']"}
+  download:
+    - {by: role, role: button, name_contains: "Download"}
+    - {by: text, text: "Download"}
+    - {by: css, selector: "a[download]"}

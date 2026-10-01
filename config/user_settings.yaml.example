@@ -1,0 +1,63 @@
+# AutoVideoAI v5.6 global defaults. Copy to config/user_settings.yaml.
+# Per-job CLI settings override these values.
+
+# -------- Content Engine --------
+script_provider: auto        # auto|gemini|groq|ollama|openai|grok|planner
+script_model: auto           # provider-specific model ID; auto chooses a current default
+script_quality: high         # standard|high (high enables a critic/edit pass)
+auto_retime_script: true     # rewrite the script if measured TTS is substantially over target
+max_tts_speedup: 1.08        # gentle final correction only; no more 1.25x+ robotic squeeze
+
+# -------- Narration --------
+tts_provider: auto           # auto|gemini|gemini-lite|groq|elevenlabs|kokoro|edge|gtts
+tts_model: ""               # optional provider model override
+tts_voice: ""               # Gemini/ElevenLabs/Kokoro voice; blank uses provider default
+tts_style: "warm, confident documentary narrator; conversational and human; natural pauses; medium energy; never salesy or robotic"
+
+# -------- Captions --------
+caption_provider: auto       # auto=Groq Whisper if keyed, otherwise local faster-whisper
+caption_model: whisper-large-v3-turbo
+caption_local_model: small   # old build used tiny; small gives materially better timing/alignment
+caption_align_script: true   # exact authored script is subtitle text; ASR supplies timing only
+
+monthly_credits: 1000        # optional planning hint only
+images_per_shot: 2           # legacy Flow profiles
+
+# -------- STORYBOARD_ECONOMY --------
+video_share: 0.20
+stock_share: 0.60
+flow_scenes: null            # exact requested Flow video scene count; null = automatic share
+max_flow_scenes: null        # hard cap only; does not request this many scenes
+frame_source: auto
+flow_approval: once
+max_generation_credits: 10
+flow_capacity_wait_seconds: 900
+flow_capacity_retries: 8
+flow_frame_retries: 3
+network_wait_seconds: 300
+flow_project_url: ""
+flow_video_retries: 1
+flow_video_ready_grace_seconds: 20
+flow_video_recovery_wait_seconds: 180
+flow_reuse_project_media: true
+flow_reuse_mode: topic       # exact|topic|project
+
+budgets:
+  MAX_CREDITS_PER_VIDEO: 50
+  MAX_RETRIES_PER_SHOT: 1
+  MAX_QUALITY_GENERATIONS: 0
+  USER_RESERVE: 50
+  RETRY_RESERVE_PCT: 15
+
+# -------- YouTube Production Engine (v5.6) --------
+production_mode: legacy       # legacy|youtube_pro
+dynamic_video_scenes: null    # youtube_pro auto ~= one true-motion insert every 30s
+stock_scenes: null            # exact stock-video target; null auto-fills dynamic mix
+stock_source: auto            # auto|api|browser|local
+caption_display: auto         # auto: youtube_pro=none, legacy=full; SRT/ASS are always kept
+background_music: off         # off|auto|local|browser
+music_mood: "soft motivational modern ambient instrumental"
+channel_name: ""              # enables branded watermark/end screen in youtube_pro
+channel_logo: ""
+graphics_overlays: false      # automatically true in youtube_pro
+watermark: false              # automatically true in youtube_pro when channel_name is set

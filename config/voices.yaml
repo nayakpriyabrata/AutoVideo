@@ -1,0 +1,20 @@
+# Voice registry
+edge:
+  en-IN-NeerjaNeural: {label: "English India Female", lang: "en"}
+  en-IN-PrabhatNeural: {label: "English India Male", lang: "en"}
+  en-US-AriaNeural: {label: "English US Female", lang: "en"}
+  en-US-GuyNeural: {label: "English US Male", lang: "en"}
+  en-GB-SoniaNeural: {label: "English UK Female", lang: "en"}
+  en-GB-RyanNeural: {label: "English UK Male", lang: "en"}
+  hi-IN-SwaraNeural: {label: "Hindi Female", lang: "hi"}
+  hi-IN-MadhurNeural: {label: "Hindi Male", lang: "hi"}
+local_tts:
+  kokoro:
+    label: "Kokoro (local, lightweight)"
+    install: "pip install kokoro soundfile"
+    status: "optional"
+  chatterbox:
+    label: "Chatterbox (local, expressive)"
+    install: "See README (GPU recommended)"
+    status: "optional"
+    note: "Only clone voices you own or are authorized to use. Never clone public figures."

@@ -1,7 +1,9 @@
 
-# Start here — AutoVideoAI v5.8.5
+# Start here — AutoVideoAI v5.8.6
 
-For current installation, saved-job upgrades and pause diagnosis, read
+For music-only reels and readable card controls, start with
+[V5_8_6_MUSIC_ONLY_TEXT_CARDS.md](V5_8_6_MUSIC_ONLY_TEXT_CARDS.md).
+For installation, saved-job upgrades and pause diagnosis, read
 [V5_8_5_QUALITY_PAUSE_DIAGNOSTICS.md](V5_8_5_QUALITY_PAUSE_DIAGNOSTICS.md) and
 [README.md](README.md). Do not delete old outputs, request journals or browser
 profiles to bypass a pause. The earlier runbook below includes legacy commands.

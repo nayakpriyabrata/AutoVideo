@@ -4,6 +4,7 @@ Narration timing drives shot boundaries (NOT equal splits, NOT 1 para = 1 shot).
 """
 from __future__ import annotations
 import re
+import math
 from ..project.manifest import ProductionManifest, Shot
 
 COVERAGE_CYCLE = ["primary", "closeup", "insert", "primary", "broll", "closeup"]
@@ -188,9 +189,30 @@ def _split_long_sentences(words: list[dict], sents: list[dict], max_len: float) 
     return out
 
 
+def _visual_sentences(beats, story, total, max_length):
+    """Gapless action windows driven by scene intent, never synthetic ASR words."""
+    if not math.isfinite(float(total)) or not .1 <= total <= 6*3600:
+        raise ValueError("Invalid visual story duration")
+    source = list(beats or []) or [{'text': story, 'visual_intent': story, 'name': 'story'}]
+    weights = [max(1, len(str(b.get('text') or b.get('visual_intent') or b.get('name') or '').split())) for b in source]
+    windows, cursor = [], 0.0
+    for index, (beat, weight) in enumerate(zip(source, weights)):
+        end = total if index == len(source)-1 else cursor+total*weight/sum(weights)
+        pieces = max(1, math.ceil((end-cursor)/max(1, float(max_length))))
+        step = (end-cursor)/pieces
+        for piece in range(pieces):
+            windows.append({'text': str(beat.get('text') or beat.get('visual_intent') or story),
+                            'start': cursor+piece*step, 'end': cursor+(piece+1)*step,
+                            'beat_index': index})
+        cursor = end
+    if len(windows) > 1000:
+        raise ValueError("Visual story needs too many scenes; increase shot length")
+    return windows
+
+
 def create_production_plan(manifest: ProductionManifest, narration: str, words: list[dict],
                            beats: list[dict], bible: dict, preset: dict,
-                           router, total_duration: float) -> ProductionManifest:
+                           router, total_duration: float, timing_source: str = "narration") -> ProductionManifest:
     """Fill manifest with voice-timed shots + routing + continuity rules."""
     manifest.visual_style = bible["visual_style"]
     manifest.color_palette = preset.get("color_treatment", "")
@@ -203,6 +225,11 @@ def create_production_plan(manifest: ProductionManifest, narration: str, words: 
 
     sents = _sentences_with_time(words) if words else [{"text": narration, "start": 0.0, "end": total_duration}]
     min_len, max_len = preset.get("shot_length", [4, 8])
+    if timing_source == "visual_storyboard":
+        sents = _visual_sentences(beats, narration, total_duration, max_len)
+    elif timing_source != "narration":
+        raise ValueError("Unknown story timing source")
+    manifest.timing_source = timing_source
     # Never submit generations against a collapsed timing plan. This guard runs
     # before stock/Flow requests, including after estimated-timing recovery.
     if words and total_duration >= 30:
@@ -269,7 +296,7 @@ def create_production_plan(manifest: ProductionManifest, narration: str, words: 
         # final beat for the remaining 40+ shots.  This was a major cause of
         # semantic visual drift in five-minute list videos.
         if beats:
-            beat_idx = min(len(beats) - 1, int(i * len(beats) / max(1, len(windows))))
+            beat_idx = group[0].get('beat_index', min(len(beats) - 1, int(i * len(beats) / max(1, len(windows)))))
             beat = beats[beat_idx]
         else:
             beat_idx, beat = 0, {}

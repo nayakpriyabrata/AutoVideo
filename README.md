@@ -1,9 +1,15 @@
-# AutoVideoAI v5.8.5 Studio — video generation and production review
+# AutoVideoAI v5.8.6 Studio — video generation and production review
 
 This repository includes **editable application source**, based on the uploaded
 v5.8.4 Settings Hotfix release. Run commands from the folder containing `cli.py`
 and `app.py`. The original v5.8.4 ZIP is preserved as a reference archive, not the
 updated build.
+
+**New in v5.8.6:** [music-only reels and readable text cards](V5_8_6_MUSIC_ONLY_TEXT_CARDS.md).
+Independent voiceover/text-card switches, actual no-TTS music-only and silent
+rendering, large pixel-measured display typography, bundled licensed fonts,
+phone-safe transparent layouts and render-only edits of saved accepted footage.
+Choose **Music only** + **Include text cards off** for a clean cartoon reel.
 
 **Full ZIP / paused-job upgrade:** [v5.8.5 quality and pause diagnostics](V5_8_5_QUALITY_PAUSE_DIAGNOSTICS.md).
 Includes explicit pause/download logs, an offline redacted support report, safe
@@ -37,7 +43,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v5.8.5
+# ZIP download: cd AutoVideoAI-v5.8.6
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

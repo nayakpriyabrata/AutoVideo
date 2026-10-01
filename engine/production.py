@@ -169,7 +169,7 @@ def asset_inventory(root, timeline):
     sound = read(Path(root) / 'audio/sound_plan.json', {})
     # The factory stores narration outside sound_plan.
     voice = Path(root) / 'narration/voice.mp3'
-    if voice.exists(): paths.append(str(voice))
+    if sound.get('voiceover_enabled', True) and voice.exists(): paths.append(str(voice))
     def collect(value):
         if isinstance(value, dict):
             if value.get('path'): paths.append(str(value['path']))
@@ -216,21 +216,28 @@ def check_job(job_dir, model='', max_calls=0, progress=None):
         errors.append('decode_failed: ' + str(exc)[:120])
     black = waiting(lambda: _black_duration_ratio(str(final), expected_duration=expected), emit, 'Checking black frames', 9)
     freeze = waiting(lambda: _freeze_metrics(str(final), expected), emit, 'Checking frozen frames', 12)
-    for kind in ('video', 'audio'):
+    sound = read(root / 'audio/sound_plan.json', {})
+    audio_expected = sound.get('audio_expected', True)
+    for kind in (('video', 'audio') if audio_expected else ('video',)):
         if durs.get(kind) is None or abs(durs[kind] - expected) > max(1, expected*.02):
             errors.append(kind + '_duration_or_stream')
     if black is None or black > .08: errors.append('black_frames_or_unmeasured')
     if freeze.get('longest') is None or freeze['longest'] > 8: errors.append('freeze_or_unmeasured')
-    try:
-        measured = waiting(lambda: run(['ffmpeg', '-hide_banner', '-i', str(final), '-af',
-            'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json', '-vn', '-f', 'null', '-'], timeout=900),
-            emit, 'Measuring audio loudness', 16)
-        loudness = json.loads(measured.stderr[measured.stderr.rfind('{'):])
-        integrated, peak = float(loudness['input_i']), float(loudness['input_tp'])
-        if not (-20 <= integrated <= -10 and peak <= -.1): errors.append('loudness_or_peak')
-    except Exception:
-        loudness = {}
-        errors.append('audio_measurement_missing')
+    if not audio_expected and durs.get('audio') is not None:
+        errors.append('unexpected_audio_in_silent_edit')
+    if audio_expected:
+        try:
+            measured = waiting(lambda: run(['ffmpeg', '-hide_banner', '-i', str(final), '-af',
+                'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json', '-vn', '-f', 'null', '-'], timeout=900),
+                emit, 'Measuring audio loudness', 16)
+            loudness = json.loads(measured.stderr[measured.stderr.rfind('{'):])
+            integrated, peak = float(loudness['input_i']), float(loudness['input_tp'])
+            if not (-20 <= integrated <= -10 and peak <= -.1): errors.append('loudness_or_peak')
+        except Exception:
+            loudness = {}
+            errors.append('audio_measurement_missing')
+    else:
+        loudness = {'status': 'not_applicable_intentionally_silent'}
     video_hash = digest(final)
     rows, fingerprints, used_calls = [], [], 0
     shots = {s['shot_id']: s for s in manifest.get('shots', [])}

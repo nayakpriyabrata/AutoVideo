@@ -87,6 +87,15 @@ def main_v3(argv):
     c.add_argument("--movieflow-recovery-wait-seconds", type=int, default=300,
                    help="if the MovieFlow tab/session closes after submit, reopen the project and wait this long for the already-running job instead of generating again")
     c.add_argument("--tone", default="cinematic")
+    c.add_argument("--voiceover", dest="voiceover_enabled", action=argparse.BooleanOptionalAction, default=None,
+                   help="include narration; --no-voiceover skips TTS/ASR entirely and uses a visual story clock")
+    c.add_argument("--text-cards", dest="text_cards_enabled", action=argparse.BooleanOptionalAction, default=None,
+                   help="editorial title/key-point/recap cards; --no-text-cards also overrides Pro mode and custom graphics")
+    c.add_argument("--text-card-style", choices=["auto", "bold", "playful", "clean"], default="auto")
+    c.add_argument("--background-music-path", default="", help="licensed local music file; choose --background-music local")
+    c.add_argument("--music-volume", type=float, default=None, help="music gain 0..1; auto defaults to a foreground instrumental level without voiceover")
+    c.add_argument("--sound-effects", dest="sound_effects_enabled", action=argparse.BooleanOptionalAction, default=None)
+    c.add_argument("--ambience", dest="ambience_enabled", action=argparse.BooleanOptionalAction, default=None)
     c.add_argument("--voice", default="en-IN-PrabhatNeural",
                    help="legacy/Edge voice name; provider-specific voice can be set with --tts-voice")
     c.add_argument("--script-provider", default="auto",
@@ -218,6 +227,15 @@ def main_v3(argv):
     rd = sub.add_parser("render", help="Render accepted takes")
     rd.add_argument("job_id")
     rd.add_argument("--quality", default="high", choices=["preview", "standard", "high"])
+    rd.add_argument("--voiceover", dest="voiceover_enabled", action=argparse.BooleanOptionalAction, default=None)
+    rd.add_argument("--text-cards", dest="text_cards_enabled", action=argparse.BooleanOptionalAction, default=None)
+    rd.add_argument("--text-card-style", choices=["auto", "bold", "playful", "clean"], default=None)
+    rd.add_argument("--caption-display", choices=["auto", "full", "none"], default=None)
+    rd.add_argument("--background-music", choices=["off", "auto", "local", "browser"], default=None)
+    rd.add_argument("--background-music-path", default=None)
+    rd.add_argument("--music-volume", type=float, default=None)
+    rd.add_argument("--sound-effects", dest="sound_effects_enabled", action=argparse.BooleanOptionalAction, default=None)
+    rd.add_argument("--ambience", dest="ambience_enabled", action=argparse.BooleanOptionalAction, default=None)
 
     au = sub.add_parser("audit", help="Audit shot density, provider fallbacks and observed credit use")
     au.add_argument("job_id")
@@ -427,6 +445,10 @@ def main_v3(argv):
                             caption_display=args.caption_display, background_music=args.background_music,
                             music_mood=args.music_mood, channel_name=args.channel_name, channel_logo=args.channel_logo,
                             graphics_overlays=args.graphics_overlays, watermark=args.watermark,
+                            voiceover_enabled=args.voiceover_enabled, text_cards_enabled=args.text_cards_enabled,
+                            text_card_style=args.text_card_style, background_music_path=args.background_music_path,
+                            music_volume=args.music_volume, sound_effects_enabled=args.sound_effects_enabled,
+                            ambience_enabled=args.ambience_enabled,
                             images_per_shot=args.images_per_shot,
                             video_share=args.video_share, stock_share=args.stock_share,
                             flow_scenes=args.flow_scenes, max_flow_scenes=args.max_flow_scenes, frame_source=args.frame_source,
@@ -598,6 +620,11 @@ def main_v3(argv):
         if os.path.exists(gs):
             print("Generation summary:", gs)
     elif args.cmd == "render":
+        from engine.presentation import PRESENTATION_KEYS
+        edits = {key: getattr(args, key) for key in PRESENTATION_KEYS
+                 if hasattr(args, key) and getattr(args, key) is not None}
+        if edits:
+            f.set_presentation_options(args.job_id, **edits)
         print(f.render_job(args.job_id, quality=args.quality, progress_cb=cb))
     elif args.cmd == "associate":
         print(f.associate_download(args.job_id, args.shot_id, args.file))

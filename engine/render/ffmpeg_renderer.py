@@ -118,7 +118,7 @@ def _checked_seconds(value, label: str, *, minimum: float = 0.0, maximum: float 
     return v
 
 
-def build_ffmpeg_cmd(segments: list[dict], narration: str, out_path: str,
+def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
                      W: int = 1080, H: int = 1920, fps: int = 24,
                      ass_path: str | None = None, music: str | None = None,
                      ambience: str | None = None, sfx: list[dict] | None = None,
@@ -152,13 +152,17 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str, out_path: str,
         else:
             cmd += ["-ss", str(seek), "-t", str(dur), "-i", s["src"]]
     v_n = len(segments)
-    cmd += ["-i", narration]
-    a_voice = v_n
+    a_voice = None
+    next_idx = v_n
+    if narration:
+        cmd += ["-i", narration]
+        a_voice = next_idx
+        next_idx += 1
     a_music = a_ambient = None
     if music and os.path.exists(music):
         cmd += ["-stream_loop", "-1", "-i", music]
-        a_music = v_n + 1
-    next_idx = v_n + 1 + (1 if a_music is not None else 0)
+        a_music = next_idx
+        next_idx += 1
     if ambience and os.path.exists(ambience):
         cmd += ["-stream_loop", "-1", "-i", ambience]
         a_ambient = next_idx
@@ -233,7 +237,14 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str, out_path: str,
         st = _checked_seconds(e.get("start", 0), f"overlay[{j}].start", minimum=0.0)
         en = _checked_seconds(e.get("end", total), f"overlay[{j}].end", minimum=0.0)
         en = min(total, max(st + 0.05, en))
-        F.append(f"[{idx}:v]scale={W}:{H},format=rgba[ov{j}]")
+        overlay_filter = f"[{idx}:v]scale={W}:{H},format=rgba"
+        fade_in = min((en-st)/2, _checked_seconds(e.get("fade_in", 0), f"overlay[{j}].fade_in"))
+        fade_out = min((en-st)/2, _checked_seconds(e.get("fade_out", 0), f"overlay[{j}].fade_out"))
+        if fade_in:
+            overlay_filter += f",fade=t=in:st={st:.3f}:d={fade_in:.3f}:alpha=1"
+        if fade_out:
+            overlay_filter += f",fade=t=out:st={en-fade_out:.3f}:d={fade_out:.3f}:alpha=1"
+        F.append(overlay_filter + f"[ov{j}]")
         F.append(f"{vcur}[ov{j}]overlay=0:0:enable='between(t,{st:.3f},{en:.3f})'[vg{j}]")
         vcur = f"[vg{j}]"
     if burn:
@@ -255,8 +266,10 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str, out_path: str,
     # them simultaneously can drop the music tail on FFmpeg 7. The one-second
     # internal silence guard is removed from the mixed output below.
     has_bed = a_music is not None or a_ambient is not None or bool(sfx_idx)
-    audio_end = round(total + (1.0 if has_bed else 0.0), 3)
-    F.append(f"[{a_voice}:a]{audio_input},atrim=0:{total},apad,atrim=0:{audio_end}[voice]")
+    has_audio = a_voice is not None or has_bed
+    audio_end = round(total + (1.0 if has_bed and a_voice is not None else 0.0), 3)
+    if a_voice is not None:
+        F.append(f"[{a_voice}:a]{audio_input},atrim=0:{total},apad,atrim=0:{audio_end}[voice]")
     bed_labels = []
     if a_music is not None:
         F.append(f"[{a_music}:a]{audio_input},atrim=0:{total},volume={max(0.0, min(1.0, float(music_volume))):.3f}[mus]")
@@ -273,30 +286,38 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str, out_path: str,
         # Keep short SFX/ambience beds alive through the narration timeline;
         # extending silence here does not loop or invent any sound effects.
         F.append(f"{beds}amix=inputs={len(bed_labels)}:duration=longest:dropout_transition=0:normalize=0,apad,atrim=0:{audio_end}[bed]")
-        # Filter outputs are single-consumer. The sidechain detector and audible
-        # narration need separate branches; reusing [voice] made every render
-        # with music, ambience, or SFX fail with 'matches no streams'.
-        F.append("[voice]asplit=2[voice_mix][voice_sidechain]")
-        F.append("[bed][voice_sidechain]sidechaincompress=threshold=0.03:ratio=8:attack=200:release=600[duck]")
-        # amix's default normalization halves narration gain just because a bed
-        # exists, even when that bed is silent. Keep configured gains intact;
-        # the loudness master below handles normal publish-path peak control.
-        F.append(f"[voice_mix][duck]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,atrim=0:{total}[mix]")
-    else:
+        if a_voice is not None:
+            # Filter outputs are single-consumer. The sidechain detector and audible
+            # narration need separate branches; reusing [voice] made every render
+            # with music, ambience, or SFX fail with 'matches no streams'.
+            F.append("[voice]asplit=2[voice_mix][voice_sidechain]")
+            F.append("[bed][voice_sidechain]sidechaincompress=threshold=0.03:ratio=8:attack=200:release=600[duck]")
+            # amix's default normalization halves narration gain just because a bed
+            # exists, even when that bed is silent. Keep configured gains intact;
+            # the loudness master below handles normal publish-path peak control.
+            F.append(f"[voice_mix][duck]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,atrim=0:{total}[mix]")
+        else:
+            # Instrumental edit: no phantom voice, detector, or ducking.
+            F.append(f"[bed]atrim=0:{total}[mix]")
+    elif a_voice is not None:
         F.append("[voice]anull[mix]")
-    if use_loudnorm:
+    if has_audio and use_loudnorm:
         amix_in = "[mix]"
         if stereo_master:
             F.append("[mix]aformat=sample_rates=48000:channel_layouts=stereo[mixst]")
             amix_in = "[mixst]"
         F.append(f"{amix_in}loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
-    else:
+    elif has_audio:
         # Preserve the compatible retry graph without the fragile loudness
         # filter. Input layouts/gains are already correct, so a stereo master
         # remains stereo on this path too; target loudness still needs review.
         F.append("[mix]anull[aout]")
 
-    cmd += ["-filter_complex", ";".join(F), "-map", vmap, "-map", "[aout]"]
+    cmd += ["-filter_complex", ";".join(F), "-map", vmap]
+    if has_audio:
+        cmd += ["-map", "[aout]"]
+    else:
+        cmd += ["-an"]  # Intentional silent edit; never retain generated-clip speech.
     if enc == "h264_nvenc":
         cmd += ["-c:v", enc, "-preset", q["nv_preset"], "-cq", str(q["cq"])]
     elif enc == "h264_qsv":
@@ -307,9 +328,13 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str, out_path: str,
         cmd += ["-c:v", "libx264", "-preset", q["preset"], "-crf", str(q["crf"])]
     cmd += ["-pix_fmt", "yuv420p", "-profile:v", "high", "-level:v", "4.1",
             "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
-            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-movflags", "+faststart", "-t", str(total), out_path]
+            ]
+    if has_audio:
+        cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+    cmd += ["-movflags", "+faststart", "-t", str(total), out_path]
     meta = {"encoder": enc, "quality": quality, "total": total,
+            "voiceover_enabled": a_voice is not None, "audio_present": has_audio,
+            "audio_mode": "voiceover" if a_voice is not None else ("instrumental" if has_audio else "silent"),
             "captions_requested": bool(ass_path), "burn_captions": burn,
             "segments": len(segments), "use_loudnorm": use_loudnorm,
             "safe_concat": bool(safe_concat), "overlays": len(overlay_idx),

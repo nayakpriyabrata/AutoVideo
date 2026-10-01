@@ -42,6 +42,13 @@ DEFAULTS = {
     "channel_name": "",
     "channel_logo": "",
     "graphics_overlays": False,
+    "voiceover_enabled": True,
+    "text_cards_enabled": None,
+    "text_card_style": "auto",
+    "background_music_path": "",
+    "music_volume": None,
+    "sound_effects_enabled": None,
+    "ambience_enabled": None,
     "watermark": False,
     "images_per_shot": 2,
     "flow_image_workers": 1,
@@ -89,6 +96,7 @@ CHOICES = {
     "script_quality": {"standard", "high", "publish"},
     "tts_provider": {"auto", "gemini", "gemini-lite", "groq", "elevenlabs", "kokoro", "edge", "gtts", "mock"},
     "caption_display": {"auto", "full", "none"},
+    "text_card_style": {"auto", "bold", "playful", "clean"},
     "render_quality": {"preview", "standard", "high"},
     "frame_source": {"auto", "flow", "free"},
     "flow_approval": {"once", "manual", "always"},
@@ -138,6 +146,13 @@ def load_video_config(path: str) -> dict:
     cfg["flow_image_workers"] = int(cfg.get("flow_image_workers") or 1)
     if not 1 <= cfg["flow_image_workers"] <= 3:
         raise ValueError("flow_image_workers must be 1, 2, or 3")
+    from .presentation import resolve_presentation
+    presentation = resolve_presentation(cfg)
+    if not presentation.voiceover:
+        cfg["caption_display"] = "none"
+    if cfg["background_music_path"]:
+        music_path = Path(cfg["background_music_path"]).expanduser()
+        cfg["background_music_path"] = os.fspath((p.parent / music_path).resolve() if not music_path.is_absolute() else music_path.resolve())
     cfg["production_mode_engine"] = "youtube_pro" if mode == "reels_pro" else mode
     cfg["aspect"] = "9:16" if cfg["video_type"] == "shorts" or mode == "reels_pro" else "16:9"
     cfg["config_source"] = os.fspath(p)

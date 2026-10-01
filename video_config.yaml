@@ -1,4 +1,4 @@
-# AutoVideoAI v5.7.9 configuration. Keep topic; uncomment only overrides.
+# AutoVideoAI v5.8.6 configuration. Keep topic; uncomment only overrides.
 topic: "5 habits winners build for a successful life"
 
 # production_mode: youtube_pro   # youtube_pro | reels_pro | legacy
@@ -9,6 +9,9 @@ topic: "5 habits winners build for a successful life"
 # script_provider: auto          # auto | gemini-web | gemini | groq | openai | planner
 # script_quality: publish
 gemini_chat_cleanup: delete-after-read  # keep | delete-after-read
+# voiceover_enabled: true        # false skips TTS/ASR; visual story clock instead
+# text_cards_enabled: true        # false overrides Pro and custom cards
+# text_card_style: auto           # auto | bold | playful | clean
 # tts_provider: auto
 # voice: en-IN-PrabhatNeural
 # caption_provider: auto
@@ -38,6 +41,10 @@ gemini_chat_cleanup: delete-after-read  # keep | delete-after-read
 # network_wait_seconds: 300
 
 # background_music: auto
+# background_music_path: assets/music/my-licensed-track.mp3
+# music_volume: 0.55              # optional; instrumental foreground gain
+# sound_effects_enabled: false    # null/omitted follows voiceover flag
+# ambience_enabled: false
 # music_mood: "soft motivational cinematic instrumental"
 # channel_name: "My Channel"
 # channel_logo: "assets/channel_logo.png"

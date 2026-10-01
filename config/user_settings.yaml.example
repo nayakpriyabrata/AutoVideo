@@ -54,10 +54,19 @@ production_mode: legacy       # legacy|youtube_pro
 dynamic_video_scenes: null    # youtube_pro auto ~= one true-motion insert every 30s
 stock_scenes: null            # exact stock-video target; null auto-fills dynamic mix
 stock_source: auto            # auto|api|browser|local
-caption_display: auto         # auto: youtube_pro=none, legacy=full; SRT/ASS are always kept
+caption_display: auto         # voiceover: Pro=none, legacy=full; no voiceover=no speech captions
 background_music: off         # off|auto|local|browser
 music_mood: "soft motivational modern ambient instrumental"
 channel_name: ""              # enables branded watermark/end screen in youtube_pro
 channel_logo: ""
-graphics_overlays: false      # automatically true in youtube_pro
-watermark: false              # automatically true in youtube_pro when channel_name is set
+graphics_overlays: false      # legacy recipe flag; use text_cards_enabled for explicit override
+watermark: false              # only when explicitly enabled
+
+# -------- Optional presentation (v5.8.6) --------
+voiceover_enabled: true       # false avoids TTS, ASR and speech captions
+text_cards_enabled: null      # true/false overrides Pro; null preserves old recipe
+text_card_style: auto         # auto|bold|playful|clean
+background_music_path: ""    # licensed local file, used when background_music != off
+music_volume: null            # auto: soft with voice, 0.55 for instrumental
+sound_effects_enabled: null   # auto: on with voice, off without voice
+ambience_enabled: null

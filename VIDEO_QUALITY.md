@@ -1,11 +1,15 @@
 # Video-quality upgrade
 
-This v5.8.5 checkout/packaged build contains editable source based on the uploaded
+This v5.8.6 checkout/packaged build contains editable source based on the uploaded
 **v5.8.4 Settings Hotfix** release, plus the improvements below. Run from the
 folder containing `cli.py` and `app.py`. The original v5.8.4 ZIP is preserved as a
-reference and does not contain these changes; the new v5.8.5 ZIP does. See
+reference and does not contain these changes; the v5.8.5 and newer ZIPs do. See
 [V5_8_5_QUALITY_PAUSE_DIAGNOSTICS.md](V5_8_5_QUALITY_PAUSE_DIAGNOSTICS.md) for the
 paused-job upgrade procedure.
+
+The v5.8.6 build additionally provides independent voiceover and card switches,
+real music-only/silent output, and redesigned readable display cards. See
+[V5_8_6_MUSIC_ONLY_TEXT_CARDS.md](V5_8_6_MUSIC_ONLY_TEXT_CARDS.md).
 
 ## What improved
 

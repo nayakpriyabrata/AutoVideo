@@ -69,6 +69,8 @@ class ProductionManifest(BaseModel):
     height: int = 1920
     language: str = "en"
     voice: str = "en-IN-PrabhatNeural"
+    voiceover_enabled: bool = True
+    timing_source: str = "narration"  # narration | visual_storyboard
     preset: str = "cinematic_realism"
     profile: str = "FLOW_BALANCED"
     visual_style: str = ""

@@ -55,7 +55,9 @@ def release_files(root: Path) -> list[Path]:
                 if directory == "assets":
                     # These folders are user-supplied footage/music libraries,
                     # not redistributable build artifacts.
-                    if name.lower() not in ("readme.md", "readme.txt"):
+                    bundled_fonts = {"assets/fonts/Bungee-Regular.ttf", "assets/fonts/Fredoka-Variable.ttf",
+                                     "assets/fonts/OFL-Bungee.txt", "assets/fonts/OFL-Fredoka.txt"}
+                    if rel not in bundled_fonts and name.lower() not in ("readme.md", "readme.txt"):
                         continue
                 elif path.suffix.lower() not in SOURCE_SUFFIXES:
                     continue

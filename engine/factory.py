@@ -26,6 +26,7 @@ from .routing.provider_router import ProviderRouter, NeedsDecision
 from .reference_manager import ReferenceManager
 from .audio.tts import synthesize_narration, fit_narration_to_target
 from .runtime_log import runtime_print as print
+from .presentation import resolve_presentation, visual_duration, PRESENTATION_KEYS
 from .providers.flow_browser import FlowRequestPending
 
 # Profiles that use the Flow browser bridge (scene images + Veo/Omni generation).
@@ -40,6 +41,8 @@ class AssistedNeeded(Exception):
 
 
 def load_preset(name: str) -> dict:
+    # Studio's older theme identifier must not silently load photorealism.
+    name = "cartoon_story" if name == "cartoon_3d" else name
     p = os.path.join("config", "presets", f"{name}.yaml")
     if not os.path.exists(p):
         p = os.path.join("config", "presets", "cinematic_realism.yaml")
@@ -99,7 +102,15 @@ class Factory:
                    stock_scenes: int | None = None, stock_source: str = "auto",
                    caption_display: str = "auto", background_music: str = "off",
                    music_mood: str = "", channel_name: str = "", channel_logo: str = "",
-                   graphics_overlays: bool = False, watermark: bool = False) -> str:
+                   graphics_overlays: bool = False, watermark: bool = False,
+                   voiceover_enabled: bool | None = None, text_cards_enabled: bool | None = None,
+                   text_card_style: str = "auto", background_music_path: str = "",
+                   music_volume: float | None = None, sound_effects_enabled: bool | None = None,
+                   ambience_enabled: bool | None = None) -> str:
+        resolve_presentation({"voiceover_enabled": voiceover_enabled, "text_cards_enabled": text_cards_enabled,
+                              "text_card_style": text_card_style, "background_music": background_music,
+                              "music_volume": music_volume, "sound_effects_enabled": sound_effects_enabled,
+                              "ambience_enabled": ambience_enabled, "caption_display": caption_display})
         W, H = (1080, 1920) if aspect == "9:16" else (1920, 1080)
         m = ProductionManifest(job_id=self.pm.new_job_id(topic), topic=topic, video_type=video_type,
                                target_seconds=target_seconds, aspect=aspect, width=W, height=H,
@@ -154,7 +165,21 @@ class Factory:
                     "channel_name": str(channel_name or ""),
                     "channel_logo": str(channel_logo or ""),
                     "graphics_overlays": bool(graphics_overlays),
-                    "watermark": bool(watermark)})
+                    "watermark": bool(watermark),
+                    "voiceover_enabled": voiceover_enabled, "text_cards_enabled": text_cards_enabled,
+                    "text_card_style": text_card_style, "background_music_path": background_music_path,
+                    "music_volume": music_volume, "sound_effects_enabled": sound_effects_enabled,
+                    "ambience_enabled": ambience_enabled})
+        # Freeze these two choices for new jobs; later global defaults must not
+        # unexpectedly switch a saved storyboard to a different recipe.
+        job_settings_path = os.path.join(self.pm.job_dir(m.job_id), "settings.json")
+        actual = resolve_presentation(self._settings(m.job_id))
+        job_settings = json.load(open(job_settings_path, encoding="utf-8"))
+        job_settings.update(voiceover_enabled=actual.voiceover, text_cards_enabled=actual.text_cards)
+        _save_json(job_settings_path, job_settings)
+        m.voiceover_enabled = actual.voiceover
+        m.timing_source = "narration" if actual.voiceover else "visual_storyboard"
+        self.pm.save_manifest(m)
         self.db.upsert(m.job_id, topic=topic, status="created", video_type=video_type,
                        target_seconds=target_seconds, aspect=aspect, profile=profile,
                        preset=preset, dry_run=1 if dry_run else 0,
@@ -185,7 +210,10 @@ class Factory:
                     "render_quality": "high", "production_mode": "legacy",
                     "dynamic_video_scenes": None, "stock_scenes": None, "stock_source": "auto",
                     "caption_display": "auto", "background_music": "off", "music_mood": "",
-                    "channel_name": "", "channel_logo": "", "graphics_overlays": False, "watermark": False}
+                    "channel_name": "", "channel_logo": "", "graphics_overlays": False, "watermark": False,
+                    "voiceover_enabled": True, "text_cards_enabled": None, "text_card_style": "auto",
+                    "background_music_path": "", "music_volume": None,
+                    "sound_effects_enabled": None, "ambience_enabled": None}
         try:  # global user defaults
             import yaml as _yaml
             if os.path.exists("config/user_settings.yaml"):
@@ -208,7 +236,8 @@ class Factory:
                             "max_tts_speedup", "auto_retime_script", "render_quality",
                             "production_mode", "dynamic_video_scenes", "stock_scenes", "stock_source",
                             "caption_display", "background_music", "music_mood", "channel_name", "channel_logo",
-                            "graphics_overlays", "watermark"):
+                            "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled", "text_card_style",
+                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled"):
                     if key in g:
                         merged[key] = g[key]
         except Exception:
@@ -233,8 +262,9 @@ class Factory:
                         "max_tts_speedup", "auto_retime_script", "render_quality",
                         "production_mode", "dynamic_video_scenes", "stock_scenes", "stock_source",
                         "caption_display", "background_music", "music_mood", "channel_name", "channel_logo",
-                        "graphics_overlays", "watermark"):
-                if key in j:
+                        "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled", "text_card_style",
+                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled"):
+                if key in j and not (key in PRESENTATION_KEYS and j[key] is None):
                     merged[key] = j[key]
         except Exception:
             pass
@@ -274,7 +304,9 @@ class Factory:
                  or "cinematic family-friendly cartoon animation")
         mood = getattr(m, "tone", "warm")
         return (
-            "Create a complete cartoon story video from the following original narration. "
+            ("Create a complete dialogue-free cartoon story from the following visual story notes. "
+             if not getattr(m, "voiceover_enabled", True) else
+             "Create a complete cartoon story video from the following original narration. ") +
             "Use MovieFlow's story/Agent workflow to parse the story into coherent scenes. "
             "Keep the SAME main character identity, face, hairstyle, body proportions, wardrobe colors and art style in every scene. "
             "Maintain location continuity unless the story clearly changes setting. Avoid text, subtitles, logos and watermarks inside the generated visuals. "
@@ -386,6 +418,26 @@ class Factory:
               f"Export diagnostics offline: python3 cli.py v3 support-report {job_id}")
         return state
 
+    def set_presentation_options(self, job_id: str, **updates) -> dict:
+        """Local editing only: keep takes, scene timings, project bindings and journals."""
+        unknown = set(updates) - PRESENTATION_KEYS
+        if unknown:
+            raise ValueError("Unknown presentation option(s): " + ", ".join(sorted(unknown)))
+        m = self.pm.load_manifest(job_id)
+        merged = {**self._settings(job_id), **updates}
+        resolve_presentation(merged)  # Validate every option before changing files.
+        path = os.path.join(self.pm.job_dir(job_id), "settings.json")
+        saved = json.load(open(path, encoding="utf-8"))
+        saved.update(updates)
+        from .production import save
+        save(path, saved)
+        m.voiceover_enabled = resolve_presentation(merged).voiceover
+        self.pm.save_manifest(m)
+        save(os.path.join(self.pm.job_dir(job_id), "production", "review.json"),
+             {"status": "STALE_AFTER_PRESENTATION_CHANGE", "next_action": "Render the same accepted takes, then review"})
+        self.pm.log(job_id, "presentation_changed", {"options": updates, "new_visual_generations": 0})
+        return updates
+
     # ---------------- main run (resumable) ----------------
     def set_gemini_cleanup(self, job_id, policy):
         if policy not in ("keep", "delete-after-read"):
@@ -410,6 +462,8 @@ class Factory:
         m = self.pm.load_manifest(job_id)
         D = self.pm.dirs(job_id)
         settings = self._settings(job_id)
+        presentation = resolve_presentation(settings)
+        m.voiceover_enabled = presentation.voiceover
         os.environ["AUTOVIDEO_GEMINI_CHAT_CLEANUP"] = str(
             settings.get("gemini_chat_cleanup", "keep") or "keep")
         prog("Gemini temporary-chat policy", 1, os.environ["AUTOVIDEO_GEMINI_CHAT_CLEANUP"])
@@ -477,7 +531,18 @@ class Factory:
         # ---- 2. narration ----
         voice_path = os.path.join(D["narration"], "voice.mp3")
         words_path = voice_path + ".words.json"
-        if m.status in ("created", "scripted") or not os.path.exists(voice_path):
+        if not presentation.voiceover:
+            # Do not synthesize a voice then mute it. No TTS, transcription,
+            # retiming, dummy MP3 or fabricated caption timestamps are needed.
+            words = []
+            narration_dur = visual_duration(m)
+            if not m.shots:
+                m.timing_source = "visual_storyboard"
+                m.status = "narrated"  # Existing stage order; voice itself is skipped.
+                self.pm.save_manifest(m)
+            prog("🎵 Voiceover disabled — visual story clock", 14, f"{narration_dur:.1f}s; TTS and speech captions skipped")
+            self.pm.log(job_id, "voiceover_skipped", {"duration": narration_dur, "timing_source": "visual_storyboard"})
+        elif m.status in ("created", "scripted") or not os.path.exists(voice_path):
             prog("🎙️ Narrating...", 12)
 
             def _synth(current_plan):
@@ -651,7 +716,8 @@ class Factory:
             bible = build_bible(m.topic, m.content_type, preset, m.audience, m.tone)
             _save_json(os.path.join(D["root"], "story_bible.json"), bible)
             m = create_production_plan(m, plan["narration"], words, plan["beats"],
-                                       bible, preset, router, narration_dur)
+                                       bible, preset, router, narration_dur,
+                                       timing_source="narration" if presentation.voiceover else "visual_storyboard")
             self.pm.save_manifest(m)
             self.db.upsert(job_id, status="planned")
             self.pm.log(job_id, "planned", {"shots": len(m.shots)})
@@ -2427,10 +2493,18 @@ class Factory:
         settings = self._settings(job_id)
         preset = load_preset(m.preset)
         prog("🎞️ Building timeline...", 85)
-        voice = os.path.join(D["narration"], "voice.mp3")
-        c = AudioFileClip(voice)
-        ndur = c.duration
-        c.close()
+        presentation = resolve_presentation(settings)
+        m.voiceover_enabled = presentation.voiceover
+        voice_path = os.path.join(D["narration"], "voice.mp3")
+        voice = voice_path if presentation.voiceover else None
+        if voice:
+            if not os.path.isfile(voice):
+                raise RuntimeError("Voiceover is enabled but no narration exists. Run Resume to prepare it, or disable voiceover for a music-only/silent edit.")
+            c = AudioFileClip(voice)
+            ndur = c.duration
+            c.close()
+        else:
+            ndur = visual_duration(m)
         tl = build_timeline(m, os.path.join(D["flow"], "shots"), ndur, hard_cuts=True)
         from .production import apply_overrides, save as save_review
         tl = apply_overrides(D["root"], tl)
@@ -2449,8 +2523,8 @@ class Factory:
                  "See render/coverage_qc.json; replace the listed media or create a corrected plan. Existing job and Flow project are preserved.")
             raise RuntimeError("Coverage QC: " + "; ".join(coverage["issues"]) +
                                ". No new generation submitted. See render/coverage_qc.json.")
-        words_p = voice + ".words.json"
-        words = json.load(open(words_p, encoding="utf-8")) if os.path.exists(words_p) else []
+        words_p = voice_path + ".words.json"
+        words = json.load(open(words_p, encoding="utf-8")) if voice and os.path.exists(words_p) else []
         script_text = ""
         script_data = {}
         try:
@@ -2458,37 +2532,39 @@ class Factory:
             script_text = str(script_data.get("narration", "") or "")
         except Exception:
             script_text = ""
-        if not words:
-            from .captions import get_word_timestamps
-            words = get_word_timestamps(
-                voice,
-                model_size=str(settings.get("caption_local_model", "small") or "small"),
-                provider=str(settings.get("caption_provider", "auto") or "auto"),
-                script_text=script_text, language=m.language,
-                groq_model=str(settings.get("caption_model", "whisper-large-v3-turbo") or "whisper-large-v3-turbo"),
-                align_script=bool(settings.get("caption_align_script", True)),
-            ) or []
-        elif script_text and bool(settings.get("caption_align_script", True)):
-            from .captions import align_words_to_script
-            words = align_words_to_script(script_text, words, ndur)
-        cap = build_captions(words, os.path.join(D["captions"], "captions"),
-                             template=preset.get("caption_style", "HORMOZI"),
-                             aspect=m.aspect, W=m.width, H=m.height, duration=ndur)
+        if presentation.voiceover:
+            if not words:
+                from .captions import get_word_timestamps
+                words = get_word_timestamps(
+                    voice,
+                    model_size=str(settings.get("caption_local_model", "small") or "small"),
+                    provider=str(settings.get("caption_provider", "auto") or "auto"),
+                    script_text=script_text, language=m.language,
+                    groq_model=str(settings.get("caption_model", "whisper-large-v3-turbo") or "whisper-large-v3-turbo"),
+                    align_script=bool(settings.get("caption_align_script", True)),
+                ) or []
+            elif script_text and bool(settings.get("caption_align_script", True)):
+                from .captions import align_words_to_script
+                words = align_words_to_script(script_text, words, ndur)
+            cap = build_captions(words, os.path.join(D["captions"], "captions"),
+                                 template=preset.get("caption_style", "HORMOZI"),
+                                 aspect=m.aspect, W=m.width, H=m.height, duration=ndur)
+        else:
+            cap = {"ass": None, "srt": None, "events": 0, "warnings": [],
+                   "disabled": True, "reason": "voiceover_disabled"}
         if cap.get("warnings"):
             self.pm.log(job_id, "caption_timing_warning", {"warnings": cap["warnings"]})
             prog("⚠️ Caption timing needs review", 87, "; ".join(cap["warnings"]))
 
         pro_mode = str(settings.get("production_mode", "legacy") or "legacy").lower() == "youtube_pro"
-        caption_display = str(settings.get("caption_display", "auto") or "auto").lower()
-        if caption_display == "auto":
-            caption_display = "none" if pro_mode else "full"
+        caption_display = presentation.captions
         burn_ass = cap["ass"] if caption_display == "full" else None
 
         # v5.6 graphics replace the dead-end permanent transcript in YouTube
         # production mode. Full SRT/ASS files are still generated for YouTube CC.
         overlays = []
-        graphics_enabled = bool(settings.get("graphics_overlays", False) or pro_mode)
-        if graphics_enabled:
+        graphics_enabled = presentation.text_cards
+        if graphics_enabled or bool(settings.get("watermark", False)):
             try:
                 from .render.graphics import build_overlay_assets
                 overlays = build_overlay_assets(
@@ -2496,7 +2572,8 @@ class Factory:
                     channel_name=str(settings.get("channel_name", "") or ""),
                     logo_path=str(settings.get("channel_logo", "") or ""),
                     show_watermark=bool(settings.get("watermark", False)),
-                    actual_duration=ndur
+                    actual_duration=ndur, text_cards_enabled=graphics_enabled,
+                    style=presentation.card_style
                 )
                 _save_json(os.path.join(D["root"], "graphics_plan.json"), overlays)
             except Exception as ge:
@@ -2504,36 +2581,54 @@ class Factory:
                 self.pm.log(job_id, "graphics_overlay_failed", {"error": str(ge)[:300]})
 
         from .render.structured_graphics import build_structured_overlays
-        custom = build_structured_overlays(D["root"], ndur, m.width, m.height)
+        from .render.typography import resolve_style
+        card_style = resolve_style(presentation.card_style, m)
+        custom = (build_structured_overlays(D["root"], ndur, m.width, m.height, style=card_style)
+                  if graphics_enabled else [])
         if custom:
             overlays = [e for e in overlays if e.get("kind") == "watermark"] + custom
             _save_json(os.path.join(D["root"], "graphics_plan.json"), overlays)
 
-        music_mode = str(settings.get("background_music", "auto" if pro_mode else "off") or "off").lower()
+        # Always update the plan, so a disabled overlay is not resurrected by
+        # stale PNGs or a previous graphics_plan on a later render.
+        _save_json(os.path.join(D["root"], "graphics_plan.json"), overlays)
+        music_mode = presentation.music_mode
         music_meta = {"path": None, "source": "off"}
         if music_mode != "off":
-            try:
-                from .audio.music_provider import ensure_background_music
-                mood = str(settings.get("music_mood", "") or m.audio_mood or preset.get("music_style", "")
-                           or f"soft motivational {m.content_type} instrumental")
-                music_meta = ensure_background_music(mood, D["audio"], mode=music_mode)
-            except Exception as me:
-                music_meta = {"path": None, "source": "error", "error": str(me)[:300]}
+            if presentation.music_path:
+                local_music = os.path.abspath(os.path.expanduser(presentation.music_path))
+                if not os.path.isfile(local_music):
+                    raise ValueError("Background music file does not exist: " + local_music)
+                music_meta = {"path": local_music, "source": "local-user-supplied", "license": "User must verify music rights"}
+            else:
+                try:
+                    from .audio.music_provider import ensure_background_music
+                    mood = str(settings.get("music_mood", "") or m.audio_mood or preset.get("music_style", "")
+                               or f"soft motivational {m.content_type} instrumental")
+                    music_meta = ensure_background_music(mood, D["audio"], mode=music_mode)
+                except Exception as me:
+                    music_meta = {"path": None, "source": "error", "error": str(me)[:300]}
         music = music_meta.get("path")
         # Legacy local music remains available when the explicit provider is off.
         if not music and not pro_mode and music_mode != "off":
             music = pick_music(preset.get("music_style", ""))
-        amb = pick_ambience(m.shots[0].environment if m.shots else "")
-        sfx = plan_sfx(words, tl["segments"])
+        if not voice and music_mode != "off" and not music:
+            raise RuntimeError("Music-only edit requested but no music was obtained. Choose a licensed local track or explicitly select music off for a silent video. Accepted visuals were not regenerated.")
+        amb = pick_ambience(m.shots[0].environment if m.shots else "") if presentation.ambience else None
+        sfx = plan_sfx(words, tl["segments"]) if presentation.sound_effects else []
+        audio_expected = bool(voice or music or amb or any(e.get("path") for e in sfx))
         _save_json(os.path.join(D["audio"], "sound_plan.json"),
                    {"music": music_meta if music_meta.get("path") else music, "ambience": amb, "sfx": sfx,
-                    "caption_display": caption_display, "overlays": len([x for x in overlays if x.get("path")])})
+                    "caption_display": caption_display, "overlays": len([x for x in overlays if x.get("path")]),
+                    "voiceover_enabled": presentation.voiceover, "text_cards_enabled": graphics_enabled,
+                    "audio_expected": audio_expected, "music_volume": presentation.music_volume,
+                    "audio_mode": "voiceover" if voice else ("instrumental" if audio_expected else "silent")})
         prog("🎬 Rendering 1080p YouTube master..." if pro_mode else "🎬 Rendering 1080p...", 92)
         out = os.path.join(D["render"], f"{job_id}-final.mp4")
         try:
             r = render_ffmpeg(tl["segments"], voice, out, W=m.width, H=m.height,
                               ass_path=burn_ass, music=music, ambience=amb,
-                              sfx=sfx, overlays=overlays, music_volume=0.10 if pro_mode else 0.16,
+                              sfx=sfx, overlays=overlays, music_volume=presentation.music_volume,
                               stereo_master=True, quality=quality,
                               safe_concat=True, loop_short_segments=True,
                               progress_cb=lambda p, detail="": prog("🎬 Rendering", 92 + (float(p) * 0.06), detail))
@@ -2585,7 +2680,10 @@ class Factory:
                     "the slow MoviePy fallback. Replace/recover the affected source clip(s), then "
                     f"resume the same job. Technical detail: {render_error}") from e
             prog(f"FFmpeg pipeline failed ({str(e)[:80]}), trying full MoviePy fallback...", 93)
-            r = self._render_moviepy_fallback(m, D, tl, voice, out)
+            r = self._render_moviepy_fallback(m, D, tl, voice, out,
+                                              music=music, ambience=amb, sfx=sfx, overlays=overlays,
+                                              words=words, captions=caption_display == "full",
+                                              music_volume=presentation.music_volume, quality=quality)
             renderer = "moviepy-fallback"
         # metadata bundle + planned-vs-actual generation audit
         _save_json(os.path.join(D["root"], "shots.json"), [s.model_dump() for s in m.shots])
@@ -2691,7 +2789,7 @@ class Factory:
             "editorial_qc": bool(editorial_qc.get("passed", False)),
             "ai_script": not str(script_data.get("source", "planner")).startswith("planner"),
             "all_shots_accepted": not bool(unaccepted_shots),
-            "captions_present": bool(cap.get("events", 0)),
+            "captions_present": not presentation.voiceover or bool(cap.get("events", 0)),
             "caption_timing": not bool(cap.get("warnings")),
             "visual_diversity": (not diversity or float(diversity.get("unique_ratio", 1.0)) >= 0.70),
             "render_integrity": True,  # render_ffmpeg refuses broken black/missing outputs
@@ -2699,11 +2797,16 @@ class Factory:
         if pro_mode:
             readiness_checks.update({
                 "dynamic_media": dynamic_actual >= max(3, int(round(float(m.target_seconds or 300) / 60.0))),
-                "editorial_graphics": overlay_count >= 3,
+                "editorial_graphics": not graphics_enabled or overlay_count >= 3,
                 "stereo_master": True,
-                "outro_cta": any(x.get("kind") == "outro" and x.get("path") for x in overlays),
+                "outro_cta": (not graphics_enabled or m.content_type in {"kids_story", "kids", "cartoon_story", "cinematic_story", "storytelling"}
+                              or any(x.get("kind") == "outro" and x.get("path") for x in overlays)),
             })
         publish_warnings = list(cap.get("warnings", []))
+        failed_cards = [e for e in overlays if e.get("error")]
+        if failed_cards:
+            publish_warnings.extend("Text card needs review: " + e['error'] for e in failed_cards)
+            readiness_checks["card_layout"] = False
         if fallback_shots:
             publish_warnings.append(f"{len(fallback_shots)} planned AI-motion scene(s) used fallback media")
         if diversity and float(diversity.get("unique_ratio", 1.0)) < 0.80:
@@ -2724,6 +2827,10 @@ class Factory:
             "renderer": renderer,
             "production_mode": settings.get("production_mode", "legacy"),
             "caption_display": caption_display,
+            "voiceover_enabled": presentation.voiceover, "text_cards_enabled": graphics_enabled,
+            "text_card_style": card_style,
+            "checks_not_applicable": (["captions_present", "caption_timing"] if not voice else [])
+                                     + (["editorial_graphics", "outro_cta"] if not graphics_enabled else []),
             "graphics_overlays": overlay_count,
             "dynamic_media_clips": dynamic_actual,
             "background_music": music_meta if "music_meta" in locals() else {"path": music, "source": "legacy"},
@@ -2750,13 +2857,7 @@ class Factory:
                 "background_music": music_meta if "music_meta" in locals() else {},
                 "warnings": final_warnings + publish_warnings}
 
-    def _render_moviepy_fallback(self, m, D, tl, voice, out) -> dict:
-        from .video_builder import build_video_from_clips
-        clips = [s["src"] for s in tl["segments"]]
-        words_p = voice + ".words.json"
-        import json as _j
-        words = _j.load(open(words_p, encoding="utf-8")) if os.path.exists(words_p) else None
-        r = build_video_from_clips(clips, voice, "", [s["shot_id"] for s in tl["segments"]],
-                                   out, title=m.topic, vertical=(m.aspect == "9:16"),
-                                   words=words, caption_style="wordpop" if words else "classic")
-        return {"video": out, **r}
+    def _render_moviepy_fallback(self, m, D, tl, voice, out, **presentation) -> dict:
+        from .render.moviepy_renderer import render_moviepy
+        return render_moviepy(tl["segments"], voice, out, total=tl["total"],
+                              W=m.width, H=m.height, **presentation)

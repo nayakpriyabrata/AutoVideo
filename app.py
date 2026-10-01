@@ -226,14 +226,65 @@ def run_with_ui(job_id, dry_label):
         status.error(f"Failed: {e}")
 
 
+def presentation_editor(job_id):
+    from engine.presentation import resolve_presentation
+    current = F._settings(job_id)
+    recipe = resolve_presentation(current)
+    with st.expander("🎵 Audio & text cards — edit without regenerating visuals", expanded=True):
+        st.caption("These controls affect rendering only. They preserve accepted takes, Flow bindings and pending request journals. Speech captions are separate from text cards.")
+        modes = ["Voiceover", "Music only", "Silent"]
+        initial_mode = "Voiceover" if recipe.voiceover else ("Music only" if recipe.music_mode != "off" else "Silent")
+        edit_audio_mode = st.radio("Output audio mode", modes, index=modes.index(initial_mode),
+                                   horizontal=True, key=f"edit-audio-mode-{job_id}")
+        voice_on = edit_audio_mode == "Voiceover"
+        with st.form(f"presentation-{job_id}"):
+            a, b, c = st.columns(3)
+            a.caption("Voice synthesis enabled" if voice_on else "No voiceover / speech captions")
+            cards_on = b.checkbox("Include text cards", value=recipe.text_cards)
+            styles = ["auto", "bold", "playful", "clean"]
+            card_style = c.selectbox("Card style", styles, index=styles.index(recipe.card_style))
+            d, e = st.columns(2)
+            music_modes = ["off", "auto", "local", "browser"]
+            music_default = "auto" if edit_audio_mode == "Music only" and recipe.music_mode == "off" else recipe.music_mode
+            music_mode = d.selectbox("Background music", music_modes, index=music_modes.index(music_default), disabled=edit_audio_mode == "Silent")
+            music_path = e.text_input("Licensed local music path", value=recipe.music_path)
+            f, g = st.columns(2)
+            cap_modes = ["auto", "full", "none"]
+            cap_display = f.selectbox("Speech captions", cap_modes, index=cap_modes.index(str(current.get('caption_display', 'auto'))), disabled=not voice_on)
+            volume_default = .55 if not voice_on and recipe.voiceover else recipe.music_volume
+            volume = g.slider("Music gain", 0.0, 1.0, volume_default, .01)
+            h, i = st.columns(2)
+            sounds = h.checkbox("Sound effects", value=recipe.sound_effects if voice_on else False, disabled=edit_audio_mode == "Silent")
+            ambience = i.checkbox("Ambience", value=recipe.ambience if voice_on else False, disabled=edit_audio_mode == "Silent")
+            if st.form_submit_button("Save audio & text choices"):
+                F.set_presentation_options(job_id, voiceover_enabled=voice_on,
+                                           text_cards_enabled=cards_on, text_card_style=card_style,
+                                           background_music="off" if edit_audio_mode == "Silent" else music_mode, background_music_path=music_path,
+                                           caption_display=cap_display if voice_on else "none", music_volume=volume,
+                                           sound_effects_enabled=sounds if edit_audio_mode != "Silent" else False,
+                                           ambience_enabled=ambience if edit_audio_mode != "Silent" else False)
+                st.success("Saved. Use Render now below. No new visual generation was submitted.")
+        preview_style = st.selectbox("Preview typography", ["bold", "playful", "clean"], key=f"card-preview-style-{job_id}")
+        if st.button("Preview card — local only", key=f"card-preview-{job_id}"):
+            from engine.render.graphics import OverlayEvent, render_overlay_png
+            from PIL import Image
+            preview = os.path.join(F.pm.dirs(job_id)['render'], 'card-style-preview.png')
+            event = OverlayEvent('keypoint', 0, 3, 'Tiny steps. Big adventures.')
+            render_overlay_png(event, preview, 540, 960, style=preview_style)
+            with Image.open(preview) as image:
+                st.image(image, caption="Transparent overlay preview; the video remains visible behind it.")
+
+
 def pipeline_view(job_id):
     try:
         m = F.pm.load_manifest(job_id)
     except Exception:
         return
     D = F.pm.dirs(job_id)
+    from engine.presentation import resolve_presentation
+    recipe = resolve_presentation(F._settings(job_id))
     steps = [("SCRIPT", os.path.exists(os.path.join(D["root"], "script.json"))),
-             ("VOICE", os.path.exists(os.path.join(D["narration"], "voice.mp3"))),
+             ("VOICE", os.path.exists(os.path.join(D["narration"], "voice.mp3")) if recipe.voiceover else "OFF"),
              ("STORYBOARD", bool(m.shots)),
              ("FLOW", f"{m.accepted_count()}/{len(m.shots)}"),
              ("QC", f"{m.accepted_count()}/{len(m.shots)}"),
@@ -251,6 +302,9 @@ if queued_resume:
 if page == "STUDIO":
     st.title("🎛️ AutoVideoAI Studio")
     st.caption("Create from friendly controls. The same settings can be saved in video_config.yaml and reproduced from CLI.")
+    studio_audio_mode = st.radio("Audio mode", ["Voiceover", "Music only", "Silent"], horizontal=True, key="studio-audio-mode")
+    studio_voice_on = studio_audio_mode == "Voiceover"
+    st.caption("Music only skips voice synthesis and speech captions. Silent also turns music, ambience and SFX off. Text cards can be switched independently.")
     with st.form("studio-create"):
         topic = st.text_input("Topic / idea", placeholder="5 habits winners build for a successful life")
         a, b, c, d = st.columns(4)
@@ -260,7 +314,7 @@ if page == "STUDIO":
         profile = d.selectbox("Generation profile", PROFILES, index=0)
         e, f, g = st.columns(3)
         script_provider = e.selectbox("Script provider", ["auto", "gemini-web", "gemini", "groq", "openai", "planner"])
-        tts_provider = f.selectbox("TTS", ["auto", "gemini", "gemini-lite", "groq", "elevenlabs", "kokoro", "edge", "gtts"])
+        tts_provider = f.selectbox("TTS", ["auto", "gemini", "gemini-lite", "groq", "elevenlabs", "kokoro", "edge", "gtts"], disabled=not studio_voice_on)
         render_quality = g.selectbox("Render quality", ["high", "standard", "preview"])
         with st.expander("Flow, visuals, audio and branding", expanded=True):
             h, i, j = st.columns(3)
@@ -274,9 +328,18 @@ if page == "STUDIO":
             k, l, n = st.columns(3)
             reuse_mode = k.selectbox("Flow reuse scope", ["exact", "topic", "project"])
             gemini_cleanup = l.selectbox("Gemini temporary chat", ["delete-after-read", "keep"])
-            background_music = n.selectbox("Background music", ["off", "auto", "local", "browser"])
+            background_music = n.selectbox("Background music", ["off", "auto", "local", "browser"],
+                                           index=1 if studio_audio_mode == "Music only" else 0,
+                                           disabled=studio_audio_mode == "Silent")
+            music_path = st.text_input("Licensed local music path (optional)", help="Use a WSL/Linux path. Choose local above to avoid browser lookup.")
+            pc1, pc2, pc3 = st.columns(3)
+            text_cards_enabled = pc1.checkbox("Include text cards", value=True,
+                                               help="Title, chapter, key-point, recap and structured cards. Off is respected even in Pro mode.")
+            text_card_style = pc2.selectbox("Text card style", ["auto", "bold", "playful", "clean"],
+                                            help="auto selects rounded playful type for cartoon stories, bold display type otherwise.")
+            music_volume = pc3.slider("Music gain", 0.0, 1.0, .10 if studio_voice_on else .55, .01)
             o, p, q = st.columns(3)
-            caption_display = o.selectbox("Captions", ["auto", "full", "none"])
+            caption_display = o.selectbox("Speech captions", ["auto", "full", "none"], disabled=not studio_voice_on)
             channel_name = p.text_input("Channel name")
             channel_logo = q.text_input("Channel logo path")
             r1, r2, r3 = st.columns(3)
@@ -299,8 +362,14 @@ if page == "STUDIO":
                         "render_quality": render_quality, "flow_image_workers": flow_workers,
                         "frame_source": frame_source, "flow_approval": flow_approval,
                         "flow_project_url": flow_project_url.strip(), "flow_reuse_mode": reuse_mode,
-                        "gemini_chat_cleanup": gemini_cleanup, "background_music": background_music,
-                        "caption_display": "full" if production_mode == "reels_pro" and caption_display == "auto" else caption_display,
+                        "gemini_chat_cleanup": gemini_cleanup,
+                        "background_music": "off" if studio_audio_mode == "Silent" else background_music,
+                        "background_music_path": music_path.strip(), "music_volume": music_volume,
+                        "voiceover_enabled": studio_voice_on, "text_cards_enabled": text_cards_enabled,
+                        "text_card_style": text_card_style,
+                        "sound_effects_enabled": studio_voice_on, "ambience_enabled": studio_voice_on,
+                        "caption_display": ("none" if not studio_voice_on else
+                                            ("full" if production_mode == "reels_pro" and caption_display == "auto" else caption_display)),
                         "channel_name": channel_name, "channel_logo": channel_logo,
                         "max_credits": int(max_credits), "flow_scenes": int(flow_scenes) or None,
                         "images_per_shot": int(images_per_shot), "graphics_overlays": production_mode != "legacy"})
@@ -344,6 +413,8 @@ elif page == "CREATE":
                 st.session_state.job_id = qid
                 st.success(f"Job created: `{qid}`")
                 run_with_ui(qid, "🆓 LOCAL FREE ·")
+    create_audio_mode = st.radio("Audio mode", ["Voiceover", "Music only", "Silent"], horizontal=True, key="create-audio-mode")
+    create_voice_on = create_audio_mode == "Voiceover"
     with st.form("create"):
         topic = st.text_input("Topic / idea", placeholder="Why waking up at 5 AM doesn't automatically make you successful")
         c1, c2, c3 = st.columns(3)
@@ -351,14 +422,22 @@ elif page == "CREATE":
         duration = c2.slider("Target seconds", 15, 600, 45)
         content_type = c3.selectbox("Content type", CONTENT_TYPES)
         c4, c5, c6 = st.columns(3)
-        voice = c4.selectbox("Voice", VOICES)
+        voice = c4.selectbox("Voice", VOICES, disabled=not create_voice_on)
         preset = c5.selectbox("Style preset", PRESETS)
         profile = c6.selectbox("Quality profile", PROFILES, index=0, format_func=lambda p: f"{mode_badge[p]} {p}")
+        pr1, pr2 = st.columns(2)
+        create_cards = pr1.checkbox("Include text cards", value=False, help="Optional editorial cards; speech captions have a separate control below.")
+        create_card_style = pr2.selectbox("Text card style", ["auto", "bold", "playful", "clean"])
+        pm1, pm2, pm3 = st.columns(3)
+        create_music = pm1.selectbox("Background music", ["off", "auto", "local", "browser"],
+                                    index=1 if create_audio_mode == "Music only" else 0, disabled=create_audio_mode == "Silent")
+        create_music_path = pm2.text_input("Licensed local music path")
+        create_captions = pm3.selectbox("Speech captions", ["auto", "full", "none"], disabled=not create_voice_on)
         with st.expander("Advanced"):
             a1, a2, a3 = st.columns(3)
             tone = a1.selectbox("Tone", ["cinematic", "exciting", "calm", "funny", "documentary"])
             language = a2.selectbox("Language", ["en", "hi"])
-            tts_provider = a3.selectbox("TTS", ["edge", "gtts", "kokoro", "chatterbox"])
+            tts_provider = a3.selectbox("TTS", ["edge", "gtts", "kokoro", "chatterbox"], disabled=not create_voice_on)
             b1, b2 = st.columns(2)
             max_credits = b1.number_input("MAX CREDITS PER VIDEO", 0, 2000, 50,
                                           help="Storyboard Economy treats this as a hard planning ceiling; 0 = image/stock only.")
@@ -397,7 +476,13 @@ elif page == "CREATE":
                                    flow_scenes=(int(flow_scenes_ui) or None),
                                    max_flow_scenes=(int(max_flow_scenes_ui) or None),
                                    frame_source=frame_source, flow_approval=flow_approval,
-                                   max_generation_credits=int(max_generation_credits))
+                                   max_generation_credits=int(max_generation_credits),
+                                   voiceover_enabled=create_voice_on, text_cards_enabled=create_cards,
+                                   text_card_style=create_card_style,
+                                   background_music="off" if create_audio_mode == "Silent" else create_music,
+                                   background_music_path=create_music_path.strip(),
+                                   caption_display=create_captions if create_voice_on else "none",
+                                   sound_effects_enabled=create_voice_on, ambience_enabled=create_voice_on)
             st.session_state.job_id = job_id
             st.success(f"Job created: `{job_id}`" + (" — **DRY RUN** (no credits)" if dry else ""))
             run_with_ui(job_id, "🧪 DRY RUN ·" if dry else ("🌱 ECONOMY STORYBOARD ·" if profile == "STORYBOARD_ECONOMY" else ("💳 FLOW CREDITS ·" if profile.startswith("FLOW") or profile == "MANUAL_DIRECTOR" else "🆓 LOCAL FREE ·")))
@@ -517,6 +602,7 @@ elif page == "QUEUE":
         if selected_row.get("status") in ("paused", "assisted"):
             pause_panel(st.session_state.job_id)
             st.divider()
+        presentation_editor(st.session_state.job_id)
         c1, c2 = st.columns(2)
         if c1.button("▶️ Resume / continue job", type="primary"):
             run_with_ui(st.session_state.job_id, "")
@@ -800,7 +886,7 @@ elif page == "SETTINGS":
         bexe = st.text_input("Chrome executable override (optional)", value=br.get("executable", ""),
                              placeholder="e.g. /usr/bin/google-chrome (native path only — never a /mnt/c/... .exe from WSL)")
         if st.form_submit_button("💾 Save settings"):
-            yaml.safe_dump({"tts_provider": tts, "monthly_credits": monthly,
+            yaml.safe_dump({**cur, "tts_provider": tts, "monthly_credits": monthly,
                             "budgets": {"MAX_CREDITS_PER_VIDEO": maxv, "MAX_RETRIES_PER_SHOT": maxr,
                                         "MAX_QUALITY_GENERATIONS": maxq, "USER_RESERVE": reserve,
                                         "RETRY_RESERVE_PCT": retrypct},

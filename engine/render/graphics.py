@@ -7,7 +7,7 @@ which is far more reliable across WSL/Linux builds than complex drawtext chains.
 from __future__ import annotations
 import os
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Iterable
 
 try:
@@ -36,6 +36,9 @@ class OverlayEvent:
     anchor: str = "center"
     opacity: float = 1.0
     path: str = ""
+    layout: dict = field(default_factory=dict)
+    fade_in: float = 0.18
+    fade_out: float = 0.18
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -52,14 +55,8 @@ def _font_candidates(bold: bool = False) -> list[str]:
 
 
 def _font(size: int, bold: bool = False):
-    if ImageFont is None:
-        return None
-    for p in _font_candidates(bold):
-        try:
-            return ImageFont.truetype(p, size=size)
-        except Exception:
-            pass
-    return ImageFont.load_default()
+    from .typography import font
+    return font(size, bold=bold)
 
 
 def _wrap(text: str, max_chars: int) -> list[str]:
@@ -136,8 +133,8 @@ def plan_overlays(manifest, script_data: dict, channel_name: str = "",
 
     # Strong but brief hook/title card. Keep enough visual visible behind it.
     if total > 3 and topic:
-        events.append(OverlayEvent("intro", 0.35, min(5.2, total), _short_phrase(topic, 10),
-                                   "Watch to the end for the practical takeaway."))
+        events.append(OverlayEvent("intro", 0.35, min(3.2, total), _short_phrase(topic, 10),
+                                   ""))
 
     seen_sections: set[int] = set()
     section_events: list[OverlayEvent] = []
@@ -216,8 +213,12 @@ def plan_overlays(manifest, script_data: dict, channel_name: str = "",
         rows = []
         for e in section_events[:5]:
             rows.append(f"{e.title}. {e.body}")
-        events.append(OverlayEvent("recap", max(0.0, total - 12.0), max(0.1, total - 5.5),
-                                   "QUICK RECAP", "\n".join(rows)))
+        pages = [rows[i:i+2] for i in range(0, len(rows), 2)]
+        end = total - 5.5
+        start = max(0.0, end - len(pages)*3.2)
+        for i, page in enumerate(pages):
+            events.append(OverlayEvent("recap", start+i*3.2, min(end, start+(i+1)*3.2),
+                                       "QUICK RECAP", "\n".join(page)))
 
     # Subtle persistent channel identity. Keep clear of the final end screen.
     if show_watermark and channel_name and total > 12:
@@ -225,7 +226,7 @@ def plan_overlays(manifest, script_data: dict, channel_name: str = "",
                                    "", anchor="bottom-right", opacity=0.36))
 
     # Designed closure with CTA/end-screen breathing room.
-    if total > 12:
+    if total > 12 and str(getattr(manifest, "content_type", "")).lower() not in {"kids_story", "kids", "cartoon_story", "cinematic_story", "storytelling"}:
         start = max(0.0, total - 5.0)
         events.append(OverlayEvent("outro", start, total - 0.25,
                                    "LIKE  •  SUBSCRIBE  •  COMMENT",
@@ -234,8 +235,40 @@ def plan_overlays(manifest, script_data: dict, channel_name: str = "",
     # running beyond the video end.
     for event in events:
         event.end = min(total, event.end)
-    return sorted([e for e in events if 0 <= e.start < e.end <= total],
-                  key=lambda e: (e.start, e.kind))
+    # One readable card at a time. The old agenda/title/chapter layers could
+    # all stack at t=0, hiding one another even with a bigger font.
+    intro_end = max((e.end for e in events if e.kind == "intro"), default=0)
+    for e in events:
+        if e.kind not in {"intro", "watermark"} and e.start < intro_end:
+            duration = e.end-e.start
+            e.start = intro_end+.15
+            e.end = min(total, e.start+duration)
+        if e.kind == "progress_list":
+            chapter = next((c for c in section_events if c.title.lstrip('0') == e.title), None)
+            if chapter:
+                e.start = max(e.start, chapter.end+.15)
+            e.end = min(e.end, e.start+5)
+    priority = {"intro": 0, "chapter": 1, "recap": 0, "outro": 0, "keypoint": 2, "progress_list": 3}
+    scheduled = []
+    for event in sorted(events, key=lambda e: (e.start, priority.get(e.kind, 0))):
+        if event.kind == "watermark":
+            continue
+        if not 0 <= event.start < event.end <= total:
+            continue
+        prior = scheduled[-1] if scheduled else None
+        if prior and event.start < prior.end+.12:
+            if event.kind in {"outro", "recap"}:
+                prior.end = event.start-.12
+                if prior.end-prior.start < 1.5:
+                    scheduled.pop()
+            elif event.kind in {"progress_list", "keypoint"}:
+                continue  # Decorative callouts never compete with a section.
+            else:
+                event.start = prior.end+.12
+        if event.end-event.start >= 1.5:
+            scheduled.append(event)
+    scheduled += [e for e in events if e.kind == "watermark" and 0 <= e.start < e.end <= total]
+    return sorted(scheduled, key=lambda e: (e.start, e.kind))
 
 
 def _rounded_rect(draw, xy, radius, fill, outline=None, width=1):
@@ -256,142 +289,114 @@ def _draw_centered(draw, lines: Iterable[str], font, y: int, W: int, fill, spaci
 
 
 def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
-                       logo_path: str = "") -> str:
+                       logo_path: str = "", style: str = "bold") -> str:
+    from .typography import resolve_style, PALETTES, fit, draw_text, font
     if Image is None:
-        raise RuntimeError("Pillow is required for professional graphic overlays")
+        raise RuntimeError("Pillow is required for graphic overlays")
+    style = resolve_style(style)
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img, "RGBA")
-    scale = max(0.6, min(1.5, W / 1920.0))
-    white = (255, 255, 255, 245)
-    muted = (230, 233, 238, 225)
-    accent = (255, 196, 66, 245)
+    d = ImageDraw.Draw(img)
+    vertical = H > W
+    scale = min(W, H) / 1080.0
+    palette = PALETTES[style]
+    pad, stroke = max(12, int(30 * scale)), max(1, int(3 * scale))
+    left, right = int(W * .065), int(W * (.86 if vertical else .88))
+    top = int(H * (.13 if vertical else .15))
+    ink_boxes, sizes = [], []
 
-    if event.kind == "intro":
-        x0, x1 = int(W * 0.10), int(W * 0.90)
-        y0, y1 = int(H * 0.28), int(H * 0.67)
-        _rounded_rect(d, (x0, y0, x1, y1), int(28 * scale), (8, 12, 20, 72), (255,255,255,55), 2)
-        title_font = _font(int(66 * scale), True)
-        body_font = _font(int(30 * scale), False)
-        lines = _wrap(event.title.upper(), 30 if W >= H else 19)[:3]
-        yy = _draw_centered(d, lines, title_font, y0 + int(58*scale), W, white, int(10*scale))
-        d.rectangle((int(W*.34), yy + int(16*scale), int(W*.66), yy + int(22*scale)), fill=accent)
-        _draw_centered(d, _wrap(event.body, 55 if W >= H else 28)[:2], body_font, yy + int(48*scale), W, muted, 8)
+    def panel(box):
+        _rounded_rect(d, box, int(28 * scale), palette['panel'], (255, 255, 255, 65), max(1, int(2 * scale)))
+        # A short accent rail gives hierarchy without covering the footage.
+        x0, y0, x1, y1 = box
+        _rounded_rect(d, (x0+pad, y0+pad, x0+pad+int(72*scale), y0+pad+int(7*scale)), int(3*scale), palette['accent'])
 
-    elif event.kind == "chapter":
-        x0, x1 = int(W*.075), int(W*.67)
-        y0, y1 = int(H*.13), int(H*.31)
-        _rounded_rect(d, (x0, y0, x1, y1), int(24*scale), (8, 12, 20, 82))
-        num_font = _font(int(82*scale), True)
-        title_font = _font(int(38*scale), True)
-        d.text((x0 + int(34*scale), y0 + int(24*scale)), event.title, font=num_font, fill=accent)
-        tx = x0 + int(150*scale)
-        lines = _wrap(event.body.upper(), 28 if W >= H else 16)[:2]
-        yy = y0 + int(38*scale)
-        for line in lines:
-            d.text((tx, yy), line, font=title_font, fill=white)
-            yy += int(48*scale)
+    def text(value, box, *, title=False, size=None, minimum=None, align='left', color=None, lines=3):
+        layout = fit(d, value, box[2]-box[0], box[3]-box[1],
+                     size=size or (88 if title else 48)*scale,
+                     minimum=minimum or (62 if title else 40)*scale,
+                     style=style, bold=True, headline=title, max_lines=lines, stroke=stroke)
+        if layout:
+            ink_boxes.append(draw_text(d, layout, box, color or (255, 255, 255, 255), align=align))
+            sizes.append(layout.size)
+        return layout
 
-    elif event.kind == "keypoint":
-        x0, x1 = int(W*.12), int(W*.88)
-        y0, y1 = int(H*.70), int(H*.83)
-        _rounded_rect(d, (x0, y0, x1, y1), int(20*scale), (8, 12, 20, 68))
-        d.rectangle((x0, y0, x0 + int(9*scale), y1), fill=accent)
-        f = _font(int(36*scale), True)
-        lines = _wrap(event.title, 48 if W >= H else 24)[:2]
-        yy = y0 + int(30*scale)
-        for line in lines:
-            d.text((x0 + int(32*scale), yy), line, font=f, fill=white)
-            yy += int(44*scale)
+    if event.kind in {'intro', 'outro', 'keypoint', 'chapter'}:
+        # Top-third cards leave the centre action and caption/UI safe zone clear.
+        panel_h = int(H * (.25 if vertical else .30))
+        if event.kind != 'chapter' or not event.title.strip().isdigit():
+            body = event.body if event.kind != 'keypoint' else ''
+            heading = fit(d, event.title, right-left-2*pad,
+                          panel_h-2*pad-int(26*scale)-(int(92*scale) if body else 0),
+                          size=88*scale, minimum=62*scale, style=style, bold=True,
+                          headline=True, max_lines=3, stroke=stroke)
+            panel_h = min(panel_h, 2*pad+int(26*scale)+heading.height+(int(104*scale) if body else 0))
+        box = (left, top, right, top+panel_h)
+        panel(box)
+        content_top = top+pad+int(26*scale)
+        if event.kind == 'chapter' and event.title.strip().isdigit():
+            badge_w = int(120*scale)
+            text(event.title, (left+pad, content_top, left+pad+badge_w, top+panel_h-pad),
+                 title=True, size=90*scale, minimum=65*scale, color=palette['accent'], lines=1)
+            text(event.body, (left+pad+badge_w+pad//2, content_top, right-pad, top+panel_h-pad),
+                 title=True, size=76*scale, minimum=52*scale, lines=3)
+        else:
+            headline = event.title
+            body = event.body if event.kind != 'keypoint' else ''
+            head_bottom = top+panel_h-pad-(int(92*scale) if body else 0)
+            text(headline, (left+pad, content_top, right-pad, head_bottom), title=True,
+                 color=palette['accent'] if style == 'playful' else None, lines=3)
+            if body:
+                text(body, (left+pad, head_bottom+int(12*scale), right-pad, top+panel_h-pad),
+                     size=44*scale, minimum=38*scale, lines=2)
 
-    elif event.kind == "recap":
-        x0, x1 = int(W*.12), int(W*.88)
-        y0, y1 = int(H*.17), int(H*.82)
-        _rounded_rect(d, (x0, y0, x1, y1), int(24*scale), (8, 12, 20, 96), (255,255,255,55), 2)
-        title_font = _font(int(46*scale), True)
-        row_font = _font(int(30*scale), False)
-        d.text((x0 + int(42*scale), y0 + int(34*scale)), event.title, font=title_font, fill=accent)
-        yy = y0 + int(115*scale)
-        for row in (event.body or "").splitlines()[:5]:
-            lines = _wrap(row, 58 if W >= H else 26)[:2]
-            for li, line in enumerate(lines):
-                d.text((x0 + int(48*scale) + (int(18*scale) if li else 0), yy), line, font=row_font, fill=white if li == 0 else muted)
-                yy += int(42*scale)
-            yy += int(12*scale)
+    elif event.kind == 'progress_list':
+        # Six tiny truncated agenda rows became unreadable on phones. Show one
+        # current idea at a time, in full, instead of squeezing the entire list.
+        rows = event.body.splitlines() or [event.title]
+        current = next((row for row in rows if row.split('.', 1)[0].strip() == event.title.strip()), rows[0])
+        box = (left, top, right, top+int(H*(.23 if vertical else .29)))
+        panel(box)
+        text("CURRENT POINT", (left+pad+int(86*scale), top+pad, right-pad, top+pad+int(42*scale)),
+             size=34*scale, minimum=30*scale, color=palette['secondary'], lines=1)
+        text(current, (left+pad, top+pad+int(62*scale), right-pad, box[3]-pad),
+             title=True, size=74*scale, minimum=50*scale, lines=3)
 
-    elif event.kind == "progress_list":
-        # Reference-style agenda rail: occupy one side rather than dimming the
-        # entire shot. This keeps the speaker/footage readable behind the card.
-        landscape = W >= H
-        x0 = int(W * (.66 if landscape else .08))
-        x1 = int(W * (.97 if landscape else .92))
-        y0 = int(H * (.13 if landscape else .10))
-        rows = (event.body or "").splitlines()[:6]
-        row_h = int((60 if landscape else 76) * scale)
-        y1 = min(int(H * .88), y0 + int(62 * scale) + row_h * len(rows))
-        _rounded_rect(d, (x0, y0, x1, y1), int(18*scale),
-                      (246, 249, 250, 158), (255, 255, 255, 105), 2)
-        head_font = _font(int(25*scale), True)
-        row_font = _font(int(24*scale), True)
-        d.text((x0 + int(24*scale), y0 + int(18*scale)), "TODAY'S KEY POINTS",
-               font=head_font, fill=(22, 95, 72, 245))
-        yy = y0 + int(60*scale)
-        try:
-            current = int(event.title or 0)
-        except Exception:
-            current = 0
+    elif event.kind == 'recap':
+        rows = event.body.splitlines() or []
+        # Recaps are paginated by plan_overlays; reject an overloaded manual
+        # card rather than silently clipping or reducing type to unreadable size.
+        if len(rows) > 3:
+            raise ValueError("Recap needs timed pages of at most three full rows")
+        box = (left, top, right, top+int(H*(.40 if vertical else .62)))
+        panel(box)
+        text(event.title, (left+pad, top+pad+int(25*scale), right-pad, top+int(125*scale)),
+             title=True, size=70*scale, minimum=52*scale, color=palette['accent'], lines=1)
+        y = top+int(155*scale)
+        row_h = (box[3]-pad-y)/max(1, len(rows))
         for row in rows:
-            try:
-                number = int(row.split(".", 1)[0])
-            except Exception:
-                number = 0
-            active = number == current
-            if active:
-                _rounded_rect(d, (x0 + int(12*scale), yy - int(7*scale),
-                                  x1 - int(12*scale), yy + row_h - int(9*scale)),
-                              int(10*scale), (44, 190, 125, 205))
-            color = (255, 255, 255, 250) if active else (32, 40, 46, 225)
-            text = row if len(row) <= (34 if landscape else 25) else row[:31] + "…"
-            d.text((x0 + int(24*scale), yy), text, font=row_font, fill=color)
-            yy += row_h
+            text(row, (left+pad, y, right-pad, y+row_h-int(12*scale)),
+                 size=50*scale, minimum=40*scale, lines=3)
+            y += row_h
 
-    elif event.kind == "outro":
-        # Keep the final footage visible.  Older builds placed an opaque black
-        # full-frame card here, which made healthy video look blank.
-        x0, x1 = int(W*.08), int(W*.92)
-        y0, y1 = int(H*.31), int(H*.66)
-        _rounded_rect(d, (x0, y0, x1, y1), int(28*scale), (6, 9, 15, 78), (255,255,255,50), 2)
-        f1 = _font(int(58*scale), True)
-        f2 = _font(int(31*scale), False)
-        _draw_centered(d, _wrap(event.title, 42 if W >= H else 20)[:2], f1, int(H*.38), W, white, 10)
-        _draw_centered(d, _wrap(event.body, 60 if W >= H else 28)[:2], f2, int(H*.55), W, muted, 8)
-        # simple end-screen placeholders without copying any external design
-        if W >= H:
-            _rounded_rect(d, (int(W*.18), int(H*.70), int(W*.48), int(H*.90)), int(18*scale), (255,255,255,22), (255,255,255,80), 2)
-            _rounded_rect(d, (int(W*.55), int(H*.70), int(W*.82), int(H*.90)), int(18*scale), (255,255,255,22), (255,255,255,80), 2)
+    elif event.kind == 'watermark':
+        face = font(max(16, int(26*scale)), bold=True, style=style)
+        value = event.title.strip()
+        ink = d.textbbox((0, 0), value, font=face)
+        x = W-(ink[2]-ink[0])-int(W*.14 if vertical else 30*scale)
+        y = H-int(H*.23 if vertical else 44*scale)-(ink[3]-ink[1])
+        alpha = int(max(.15, min(1, event.opacity))*255)
+        d.text((x, y), value, font=face, fill=(255, 255, 255, alpha),
+               stroke_width=1, stroke_fill=(8, 13, 28, alpha))
+    else:
+        raise ValueError("Unknown editorial card: " + event.kind)
 
-    elif event.kind == "watermark":
-        f = _font(int(24*scale), True)
-        text = event.title.strip()
-        box = d.textbbox((0,0), text, font=f)
-        tw, th = box[2]-box[0], box[3]-box[1]
-        pad = int(14*scale)
-        x = W - tw - pad*3
-        y = H - th - pad*3
-        alpha = int(max(0.15, min(1.0, event.opacity))*255)
-        # Shadow only; no visible black label/card over the footage.
-        d.text((x+1, y+1), text, font=f, fill=(0,0,0,int(alpha*.65)))
-        d.text((x,y), text, font=f, fill=(255,255,255,alpha))
-
-    # Optional logo on intro/outro. Never fail the whole render on bad logo.
-    if logo_path and os.path.isfile(logo_path) and event.kind in {"intro", "outro"}:
-        try:
-            logo = Image.open(logo_path).convert("RGBA")
-            max_w = int(W*.11); max_h = int(H*.11)
-            logo.thumbnail((max_w,max_h), Image.Resampling.LANCZOS)
-            img.alpha_composite(logo, (int(W*.055), int(H*.055)))
-        except Exception:
-            pass
-
+    if logo_path and os.path.isfile(logo_path) and event.kind in {'intro', 'outro'}:
+        with Image.open(logo_path) as original:
+            logo = original.convert('RGBA')
+        logo.thumbnail((int(W*.10), int(H*.08)), Image.Resampling.LANCZOS)
+        img.alpha_composite(logo, (left, int(H*.04)))
+    event.layout = {'style': style, 'font_sizes': sizes, 'text_boxes': ink_boxes,
+                    'reading_floor': round(38*scale), 'canvas': [W, H]}
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     img.save(path)
     event.path = path
@@ -401,15 +406,20 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
 def build_overlay_assets(manifest, script_data: dict, out_dir: str,
                          channel_name: str = "", logo_path: str = "",
                          show_watermark: bool = True,
-                         actual_duration: float | None = None) -> list[dict]:
+                         actual_duration: float | None = None,
+                         text_cards_enabled: bool = True, style: str = "auto") -> list[dict]:
+    from .typography import resolve_style
+    style = resolve_style(style, manifest)
     os.makedirs(out_dir, exist_ok=True)
     events = plan_overlays(manifest, script_data, channel_name=channel_name,
                            show_watermark=show_watermark, actual_duration=actual_duration)
+    if not text_cards_enabled:
+        events = [e for e in events if e.kind == 'watermark']
     out = []
     for i, e in enumerate(events):
         path = os.path.join(out_dir, f"overlay_{i:02d}_{e.kind}.png")
         try:
-            render_overlay_png(e, path, int(manifest.width), int(manifest.height), logo_path=logo_path)
+            render_overlay_png(e, path, int(manifest.width), int(manifest.height), logo_path=logo_path, style=style)
             out.append(e.to_dict())
         except Exception as ex:
             out.append({**e.to_dict(), "path": "", "error": str(ex)[:180]})

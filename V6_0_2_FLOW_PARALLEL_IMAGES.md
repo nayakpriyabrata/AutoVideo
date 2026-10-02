@@ -24,5 +24,5 @@ The log provided for job `20261002-090603-naughty-lord-ganesh-play-8f6c` stopped
 ## Validation and limits
 
 - Regression suite: **470 passed, 5 skipped**; Python compileall passes.
-- Tests verify two Flow workers actually overlap, use distinct projects, use distinct CDP tabs without closing the user's tab, keep candidate assignment stable, never replace a pending Flow request with free output, and wait for the exact recorded image before downloading.
+- Tests verify two Flow workers actually overlap, use distinct projects, use distinct CDP tabs without closing the user's tab, preserve a candidate's worker assignment when another candidate is resumed, never replace a pending Flow request with free output, and wait for the exact recorded image before downloading.
 - No live authenticated Google Flow browser/WSL session is available in this environment. The suite validates orchestration and safety behavior, not Google's current UI, account limits, or real multi-session throughput. Parallel workers can still be throttled by Flow.

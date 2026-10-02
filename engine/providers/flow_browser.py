@@ -2122,7 +2122,7 @@ class FlowBrowser:
             if remaining <= 0:
                 return None
             if not announced:
-                print("[Flow] Waiting for the recorded image to appear in the recovered project gallery.")
+                print("[Flow] Waiting for the recorded media asset to appear in the recovered project gallery.")
                 announced = True
             try:
                 self._page.wait_for_timeout(min(500, max(50, int(remaining * 1000))))

@@ -296,7 +296,8 @@ def test_v571_parallel_image_workers_use_concurrent_isolated_projects(monkeypatc
     from engine.factory import Factory
     from engine.project.manifest import Shot
 
-    seen = {"projects": [], "worker_urls": [], "active": 0, "max_active": 0}
+    seen = {"projects": [], "assignments": {}, "active": 0,
+            "max_active": 0, "rendezvous_enabled": True}
     lock = threading.Lock()
     rendezvous = threading.Barrier(2)
 
@@ -323,12 +324,14 @@ def test_v571_parallel_image_workers_use_concurrent_isolated_projects(monkeypatc
 
         def generate_image(self, shot, compiled, out_path, vertical, dry_run=False):
             with lock:
-                seen["worker_urls"].append((compiled.get("project"), compiled.get("project_url")))
+                seen["assignments"][Path(out_path).name] = (
+                    compiled.get("project"), compiled.get("project_url"))
                 seen["active"] += 1
                 seen["max_active"] = max(seen["max_active"], seen["active"])
             # Both workers must reach generation concurrently; a shared Playwright
             # page/project would make this test fail rather than merely look parallel.
-            rendezvous.wait(timeout=5)
+            if seen["rendezvous_enabled"]:
+                rendezvous.wait(timeout=5)
             Path(out_path).write_bytes(b"x" * 6001)
             with lock:
                 seen["active"] -= 1
@@ -355,10 +358,22 @@ def test_v571_parallel_image_workers_use_concurrent_isolated_projects(monkeypatc
         {"flow_image_workers": 2}, 2)
 
     assert len(set(seen["projects"])) == 2
-    assert len({url for _, url in seen["worker_urls"]}) == 2
+    assert len({url for _, url in seen["assignments"].values()}) == 2
     assert seen["max_active"] == 2
     assert all(project.endswith("worker-1") or project.endswith("worker-2")
-               for project, _ in seen["worker_urls"])
+               for project, _ in seen["assignments"].values())
+
+    # Resume after one candidate was already saved. The missing output must keep
+    # its original worker/project binding instead of shifting with the task list.
+    original_assignment = seen["assignments"]["img_02.jpg"]
+    D = f.pm.dirs(job)
+    missing = Path(D["flow"]) / "shots" / "shot_001" / "images" / "img_02.jpg"
+    missing.unlink()
+    seen["rendezvous_enabled"] = False
+    f._generate_scene_images_parallel(
+        m, D, refs, True, 2, lambda *args: None,
+        {"flow_image_workers": 2}, 2)
+    assert seen["assignments"]["img_02.jpg"] == original_assignment
 
 
 def test_v571_old_pause_without_baseline_refuses_to_guess_latest_tile(tmp_path):

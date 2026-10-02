@@ -626,6 +626,65 @@ def _face_crop_x(path: str, start: float, duration: float) -> float:
     return 0.5
 
 
+def _normalize_word_timings(words: list[dict], offset: float = 0.0,
+                            total: float | None = None) -> list[dict]:
+    """Repair provider timing anomalies and return words in media-time order.
+
+    ASR providers can occasionally return a late word before an earlier one or
+    an end time just before its start. Timeline order is the authoritative order
+    for source-derived clips; normalize those provider records here rather than
+    weakening the shared caption renderer's strict authored-order validation.
+    """
+    normalized = []
+    for index, item in enumerate(words or []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("word", "") or "").strip()
+        if not text:
+            continue
+        try:
+            raw_start = float(item.get("start", 0))
+            raw_end = float(item.get("end", raw_start))
+            shift = float(offset)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not all(math.isfinite(value) for value in (raw_start, raw_end, shift)):
+            continue
+        start = max(0.0, raw_start) + shift
+        end = max(raw_end, raw_start + 0.02) + shift
+        if total is not None:
+            try:
+                bound = max(0.0, float(total))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not math.isfinite(bound):
+                continue
+            start = min(bound, start)
+            end = min(bound, max(start, end))
+        end = max(start, end)
+        normalized.append((index, {**item, "word": text,
+                                  "start": round(start, 3), "end": round(end, 3)}))
+    normalized.sort(key=lambda pair: (pair[1]["start"], pair[0]))
+    return [item for _, item in normalized]
+
+
+def _clip_word_timings(words: list[dict], start: float, end: float) -> list[dict]:
+    """Select source words for a highlight, clamp to its duration, and order them."""
+    start, end = float(start), float(end)
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+        raise ValueError("Invalid highlight timing window")
+    duration = end - start
+    selected = []
+    for item in _normalize_word_timings(words):
+        word_start, word_end = float(item["start"]), float(item["end"])
+        if word_end <= start or word_start >= end:
+            continue
+        clip_start = min(duration, max(0.0, word_start - start))
+        clip_end = min(duration, max(clip_start, word_end - start))
+        selected.append({**item, "start": round(clip_start, 3), "end": round(clip_end, 3)})
+    return selected
+
+
 def _transcribe_in_chunks(local: str, work: str, total: float,
                           provider: str, emit, language: str = 'en') -> list[dict]:
     """Transcribe compact audio chunks and restore source-relative timestamps.
@@ -663,16 +722,10 @@ def _transcribe_in_chunks(local: str, work: str, total: float,
                     "Use --caption-provider groq, or reinstall tokenizers and faster-whisper. "
                     f"Original error: {msg[:220]}") from exc
             raise
-        for w in words:
-            try:
-                start = max(0.0, float(w.get("start", 0))) + offset
-                end = max(float(w.get("end", w.get("start", 0))),
-                          float(w.get("start", 0)) + 0.02) + offset
-            except Exception:
-                continue
-            combined.append({"word": str(w.get("word", "")).strip(),
-                             "start": round(start, 3), "end": round(min(total, end), 3)})
-    return [w for w in combined if w["word"]]
+        combined.extend(_normalize_word_timings(words, offset=offset, total=total))
+    # Chunks are requested in order, but keep timestamp order explicit in case
+    # a provider returns a malformed/out-of-order segment within one chunk.
+    return _normalize_word_timings(combined, total=total)
 
 
 def framing_filter(mode, face_x=.5):
@@ -837,9 +890,7 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
     used_names: set[str] = {p.stem for p in Path(output_dir).glob("*.mp4")}
     for i, h in enumerate(highlights, 1):
         emit(f"Rendering highlight {i}/{len(highlights)}", 25 + int(70 * (i-1) / len(highlights)))
-        clip_words = [{**w, "start": max(0.0, float(w["start"]) - h["start"]),
-                       "end": max(0.04, float(w["end"]) - h["start"])}
-                      for w in words if float(w.get("end", 0)) > h["start"] and float(w.get("start", 0)) < h["end"]]
+        clip_words = _clip_word_timings(words, float(h["start"]), float(h["end"]))
         cap = build_captions(clip_words, os.path.join(work, f"clip_{i:02d}"),
                              template="OPUS", aspect="9:16", W=1080, H=1920,
                              duration=h["duration"])

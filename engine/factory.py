@@ -40,6 +40,10 @@ class AssistedNeeded(Exception):
             job_id, shot_id, prompt, watch_dir, reason
 
 
+class FlowRequestFailed(RuntimeError):
+    """A saved Flow request failed recovery without the user opting to pause."""
+
+
 def load_preset(name: str) -> dict:
     # Studio's older theme identifier must not silently load photorealism.
     name = "cartoon_story" if name == "cartoon_3d" else name
@@ -65,6 +69,84 @@ class Factory:
         self._write_pause_state(m.job_id, shot_id, str(error),
                                 kind="flow_download_or_ui", project_url=project_url)
         raise NeedsDecision(str(error), alternatives=[f"python3 cli.py v3 resume {m.job_id}"])
+
+    def _fail_pending_flow(self, m, shot_id, error, project_url=""):
+        """Stop without PAUSED when the user did not opt into Flow pauses.
+
+        Keep the request journal intact. In particular, this does not submit a
+        replacement video generation: an explicit Resume can retry the same
+        request's exact-asset download later.
+        """
+        current = self.pm.load_manifest(m.job_id)
+        current.status = "failed"
+        for shot in current.shots:
+            if shot.shot_id == shot_id and not shot.accepted_take:
+                shot.status = "failed"
+                break
+        self.pm.save_manifest(current)
+        self.db.upsert(m.job_id, status="failed")
+        self.pm.log(m.job_id, "flow_request_failed_without_pause", {
+            "shot": shot_id, "project_url": project_url,
+            "error_type": type(error).__name__,
+        })
+
+    def _archive_flow_request_for_fallback(self, out_path: str) -> str:
+        """Archive a pending Flow image request after a valid free fallback exists."""
+        journal = out_path + ".flow-request.json"
+        if not os.path.isfile(journal):
+            return ""
+        try:
+            with open(journal, encoding="utf-8") as handle:
+                request = json.load(handle)
+            request.update({"status": "abandoned_for_free_image_fallback",
+                            "fallback_provider": "free_image", "fallback_at": time.time()})
+            archive = out_path + ".flow-request.fallback.json"
+            if os.path.exists(archive):
+                archive = out_path + f".flow-request.fallback-{time.time_ns()}.json"
+            temporary = archive + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(request, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, archive)
+            os.remove(journal)
+            return archive
+        except Exception as exc:
+            # Keep the original request if audit archival/removal fails; the caller
+            # will not publish the fallback over an unarchived pending request.
+            print(f"[Flow] Could not archive abandoned image request: {type(exc).__name__}")
+            return ""
+
+    def _free_image_fallback(self, shot, compiled, out_path, vertical, free_provider,
+                             *, label="image"):
+        """Generate a local/free still atomically, then archive any Flow request."""
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        temporary = out_path + ".free-fallback.jpg"
+        if os.path.exists(temporary):
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
+        result = free_provider.generate_image(shot, compiled, temporary, vertical, dry_run=False)
+        generated = result.get("path")
+        if not generated or not self._is_valid_image_file(generated):
+            self._remove_invalid_image(temporary)
+            raise RuntimeError(f"{label}: {result.get('error', 'free provider returned no valid image')}")
+        if os.path.abspath(generated) != os.path.abspath(temporary):
+            shutil.copy2(generated, temporary)
+        if not self._is_valid_image_file(temporary):
+            self._remove_invalid_image(temporary)
+            raise RuntimeError("free provider returned a corrupt/incomplete image")
+        # Archive/remove the Flow request before publishing the fallback file. If
+        # the process stops in between, FlowBrowserProvider sees the archive and
+        # blocks a duplicate Flow submission until the free fallback is restored.
+        had_pending_request = os.path.isfile(out_path + ".flow-request.json")
+        if had_pending_request and not self._archive_flow_request_for_fallback(out_path):
+            self._remove_invalid_image(temporary)
+            raise RuntimeError("could not safely archive the pending Flow image request")
+        os.replace(temporary, out_path)
+        return out_path
+
     def __init__(self, outputs: str = "outputs", db_path: str = "data/jobs.db"):
         self.pm = ProjectManager(outputs)
         self.db = JobDB(db_path)
@@ -90,6 +172,7 @@ class Factory:
                    flow_reuse_project_media: bool = True,
                    flow_reuse_mode: str = "exact",
                    flow_image_workers: int = 1,
+                   flow_pause_on_unresolved_request: bool | None = None,
                    gemini_chat_cleanup: str = "keep",
                    script_provider: str = "auto", script_model: str = "auto",
                    script_quality: str = "publish", tts_model: str = "",
@@ -110,6 +193,19 @@ class Factory:
                    approved_plan_path: str = "", narration_input_path: str = "",
                    character_id: str = "") -> str:
         from .languages import language_pack, default_voice
+        if flow_pause_on_unresolved_request is None:
+            try:
+                with open("config/user_settings.yaml", encoding="utf-8") as handle:
+                    global_settings = yaml.safe_load(handle) or {}
+                flow_pause_on_unresolved_request = global_settings.get(
+                    "flow_pause_on_unresolved_request", False)
+            except Exception:
+                flow_pause_on_unresolved_request = False
+        if isinstance(flow_pause_on_unresolved_request, str):
+            flow_pause_on_unresolved_request = flow_pause_on_unresolved_request.strip().lower() in {
+                "1", "true", "yes", "on"}
+        else:
+            flow_pause_on_unresolved_request = bool(flow_pause_on_unresolved_request)
         language = language_pack(language).code
         if voice == 'en-IN-PrabhatNeural' and language != 'en':
             voice = default_voice(language)
@@ -164,6 +260,7 @@ class Factory:
                     "flow_reuse_project_media": bool(flow_reuse_project_media),
                     "flow_reuse_mode": str(flow_reuse_mode or "exact"),
                     "flow_image_workers": max(1, min(3, int(flow_image_workers or 1))),
+                    "flow_pause_on_unresolved_request": bool(flow_pause_on_unresolved_request),
                     "gemini_chat_cleanup": str(gemini_chat_cleanup or "keep"),
                     "script_provider": str(script_provider or "auto"),
                     "script_model": str(script_model or "auto"),
@@ -232,6 +329,7 @@ class Factory:
                     "flow_video_retries": 1, "flow_video_ready_grace_seconds": 20,
                     "flow_video_recovery_wait_seconds": 180, "flow_reuse_project_media": True,
                     "flow_reuse_mode": "exact", "flow_image_workers": 1,
+                    "flow_pause_on_unresolved_request": False,
                     "gemini_chat_cleanup": "keep",
                     "script_provider": "auto", "script_model": "auto", "script_quality": "publish",
                     "tts_model": "", "tts_voice": "", "tts_style": "",
@@ -261,8 +359,8 @@ class Factory:
                             "flow_capacity_wait_seconds", "flow_capacity_retries",
                             "flow_project_url", "flow_video_retries", "flow_video_ready_grace_seconds",
                             "flow_video_recovery_wait_seconds", "flow_reuse_project_media",
-                            "flow_reuse_mode", "flow_image_workers", "gemini_chat_cleanup",
-                        "script_provider", "script_model", "script_quality",
+                            "flow_reuse_mode", "flow_image_workers", "flow_pause_on_unresolved_request",
+                            "gemini_chat_cleanup", "script_provider", "script_model", "script_quality",
                             "tts_model", "tts_voice", "tts_style", "caption_provider",
                             "caption_model", "caption_local_model", "caption_align_script",
                             "max_tts_speedup", "auto_retime_script", "render_quality",
@@ -288,8 +386,8 @@ class Factory:
                         "flow_capacity_wait_seconds", "flow_capacity_retries",
                         "flow_project_url", "flow_video_retries", "flow_video_ready_grace_seconds",
                         "flow_video_recovery_wait_seconds", "flow_reuse_project_media",
-                        "flow_reuse_mode", "flow_image_workers", "gemini_chat_cleanup",
-                        "script_provider", "script_model", "script_quality",
+                        "flow_reuse_mode", "flow_image_workers", "flow_pause_on_unresolved_request",
+                        "gemini_chat_cleanup", "script_provider", "script_model", "script_quality",
                         "tts_model", "tts_voice", "tts_style", "caption_provider",
                         "caption_model", "caption_local_model", "caption_align_script",
                         "max_tts_speedup", "auto_retime_script", "render_quality",
@@ -302,6 +400,12 @@ class Factory:
                     merged[key] = j[key]
         except Exception:
             pass
+        pause_value = merged.get("flow_pause_on_unresolved_request", False)
+        if isinstance(pause_value, str):
+            merged["flow_pause_on_unresolved_request"] = pause_value.strip().lower() in {
+                "1", "true", "yes", "on"}
+        else:
+            merged["flow_pause_on_unresolved_request"] = bool(pause_value)
         return merged
 
     @staticmethod
@@ -492,6 +596,17 @@ class Factory:
         return updates
 
     # ---------------- main run (resumable) ----------------
+    def set_flow_pause_on_unresolved_request(self, job_id: str, enabled: bool) -> bool:
+        """Persist an explicit pause choice for a saved job before resume."""
+        self.pm.load_manifest(job_id)
+        path = os.path.join(self.pm.job_dir(job_id), "settings.json")
+        settings = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+        enabled = bool(enabled)
+        settings["flow_pause_on_unresolved_request"] = enabled
+        _save_json(path, settings)
+        self.pm.log(job_id, "flow_pause_policy_updated", {"pause_on_unresolved_request": enabled})
+        return enabled
+
     def set_gemini_cleanup(self, job_id, policy):
         if policy not in ("keep", "delete-after-read"):
             raise ValueError("Invalid Gemini cleanup policy")
@@ -971,23 +1086,33 @@ class Factory:
             try:
                 self._generate_economy_frames(m, D, refs, vertical, settings, bible, prog)
             except RuntimeError as e:
-                # Strict Flow-frame jobs are intentionally resumable. Keep every
-                # completed/downloaded frame and return a clean PAUSED result instead
-                # of ending with a raw traceback after a network/UI interruption.
+                # Pausing is explicitly opt-in. In strict Flow mode, retain all
+                # cached frames and either pause by request or fail cleanly; never
+                # report a failed image request as PAUSED by default.
                 msg = str(e)
                 if "Strict --frame-source flow" in msg:
+                    pause_requested = bool(settings.get("flow_pause_on_unresolved_request", False))
                     m2 = self.pm.load_manifest(job_id)
-                    m2.status = "paused"
+                    m2.status = "paused" if pause_requested else "failed"
                     self.pm.save_manifest(m2)
-                    self.db.upsert(job_id, status="paused")
-                    self.pm.log(job_id, "flow_frames_paused", {"error": msg[:1200]})
-                    prog("⏸️ Flow frame generation paused; completed frames are cached.", 26)
+                    self.db.upsert(job_id, status=m2.status)
+                    event = "flow_frames_paused" if pause_requested else "flow_frames_failed_without_pause"
+                    self.pm.log(job_id, event, {"error": msg[:1200]})
+                    if pause_requested:
+                        prog("⏸️ Flow frame generation paused by your setting; completed frames are cached.", 26)
+                    else:
+                        prog("❌ Strict Flow frame generation failed; automatic pause is disabled. Completed frames are cached.", 26)
                     return {
-                        "job_id": job_id, "status": "paused",
+                        "job_id": job_id, "status": m2.status,
                         "message": msg,
                         "resume": f"python3 cli.py v3 resume {job_id}",
                     }
-                raise
+                m2 = self.pm.load_manifest(job_id)
+                m2.status = "failed"
+                self.pm.save_manifest(m2)
+                self.db.upsert(job_id, status="failed")
+                self.pm.log(job_id, "flow_frames_failed", {"error": msg[:1200]})
+                return {"job_id": job_id, "status": "failed", "message": msg}
             m = self.pm.load_manifest(job_id)
         elif K > 0 and not dry and m.profile in FLOW_PROFILES and not needs_approval and not movieflow_full:
             self._generate_scene_images(m, D, refs, vertical, K, prog, settings=settings)
@@ -1001,7 +1126,12 @@ class Factory:
             return {"job_id": job_id, "status": "review",
                     "message": "MANUAL_DIRECTOR: approve shots in STORYBOARD, then resume."}
 
-        self._generate_all(m, D, refs, router, vertical, dry, prog, settings)
+        try:
+            self._generate_all(m, D, refs, router, vertical, dry, prog, settings)
+        except FlowRequestFailed as e:
+            prog("❌ Flow request recovery failed; automatic pause is disabled.", 82)
+            return {"job_id": job_id, "status": "failed", "message": str(e),
+                    "resume": f"python3 cli.py v3 resume {job_id}"}
 
         if dry:
             self.db.upsert(job_id, status="dry_complete")
@@ -1509,10 +1639,12 @@ class Factory:
                         if bound:
                             comp["project_url"] = bound
                         if r.get("path") and self._is_valid_image_file(r["path"]):
-                            if reuse_project_media and comp.get("project_url"):
+                            result_source = str(r.get("provider") or "flow")
+                            if (result_source == "flow" and reuse_project_media
+                                    and comp.get("project_url")):
                                 self._flow_frame_cache_put(comp["project_url"], prompt, vertical,
                                                            label, r["path"], m.job_id)
-                            return r["path"], "flow"
+                            return r["path"], ("free" if result_source == "image" else result_source)
                         if r.get("path") and os.path.exists(r["path"]):
                             self._remove_invalid_image(r["path"])
                             errtxt = "Flow returned a corrupt/incomplete image file; removed it and will retry"
@@ -1530,7 +1662,12 @@ class Factory:
                                 continue
                         errors.append(f"Flow attempt {attempt}: {errtxt}")
                     except FlowRequestPending as e:
-                        self._pause_pending_flow(m, shot.shot_id, e, comp.get("project_url", ""))
+                        if settings.get("flow_pause_on_unresolved_request", False):
+                            self._pause_pending_flow(m, shot.shot_id, e, comp.get("project_url", ""))
+                        errors.append(f"Flow image recovery remains ambiguous: {e}")
+                        if source == "auto":
+                            prog(f"↪️ {shot.shot_id} {label}: exact Flow image recovery was ambiguous; using the configured free fallback.", 26)
+                        break
                     except FlowServiceBusy as e:
                         # High-demand throttling is handled internally with bounded
                         # Try-again/backoff. If that window expires, pause/fallback
@@ -1542,8 +1679,8 @@ class Factory:
                             except Exception:
                                 pass
                             raise RuntimeError(
-                                f"Strict --frame-source flow: {shot.shot_id} {label} paused because Flow Agent remained at high demand. "
-                                f"No normal frame retry was consumed. Completed frames are cached; run `python3 cli.py v3 resume {m.job_id}` later. "
+                                f"Strict --frame-source flow: {shot.shot_id} {label} could not proceed because Flow Agent remained at high demand. "
+                                f"No normal frame retry was consumed. Completed frames are cached; explicitly resume `{m.job_id}` later if desired. "
                                 + str(e)[-500:]
                             )
                         break
@@ -1582,14 +1719,8 @@ class Factory:
                 self.pm.log(m.job_id, "flow_frame_fallback", {
                     "shot": shot.shot_id, "label": label, "errors": errors[-max_attempts:], "to": "free"})
             try:
-                r = freep.generate_image(shot, comp, out, vertical, dry_run=False)
-                if r.get("path") and self._is_valid_image_file(r["path"]):
-                    return r["path"], "free"
-                if r.get("path") and os.path.exists(r["path"]):
-                    self._remove_invalid_image(r["path"])
-                    errors.append("free provider returned a corrupt/incomplete image")
-                else:
-                    errors.append(r.get("error", "free provider returned no image"))
+                return self._free_image_fallback(
+                    shot, comp, out, vertical, freep, label=label), "free"
             except Exception as e:
                 errors.append(str(e))
             raise RuntimeError("; ".join(errors)[-800:])
@@ -1882,7 +2013,16 @@ class Factory:
                     else:
                         raise RuntimeError(res.get("error", "no image returned"))
                 except FlowRequestPending as e:
-                    self._pause_pending_flow(m, s.shot_id, e, project_url)
+                    if (settings or {}).get("flow_pause_on_unresolved_request", False):
+                        self._pause_pending_flow(m, s.shot_id, e, project_url)
+                    self.pm.log(m.job_id, "scene_image_flow_pending_fallback", {
+                        "shot": s.shot_id, "reason": "unresolved_exact_flow_asset", "to": "free"})
+                    try:
+                        got.append(self._free_image_fallback(
+                            s, comp, out, vertical, freeprov, label=f"image {k + 1}"))
+                    except Exception as fallback_error:
+                        self.pm.log(m.job_id, "scene_image_failed", {
+                            "shot": s.shot_id, "error": str(fallback_error)[:150]})
                 except (FlowAuthNeeded, FlowQuotaExceeded) as e:
                     try:
                         bound = self._remember_flow_project_url(m.job_id, fprov.current_project_url())
@@ -1999,28 +2139,26 @@ class Factory:
 
             def fallback(shot, out, project_url, flow_error):
                 journal = out + ".flow-request.json"
-                if os.path.isfile(journal):
-                    # Never route a submitted/pending Flow request to another
-                    # provider; keep its project binding available to Resume.
+                if (os.path.isfile(journal)
+                        and settings.get("flow_pause_on_unresolved_request", False)):
+                    # User opted in to preserving unresolved Flow requests as a
+                    # pause. Otherwise the configured free image fallback below
+                    # may replace the local output, never the Flow gallery asset.
                     try:
                         with open(journal, encoding="utf-8") as handle:
                             pending_url = json.load(handle).get("project_url", "")
                     except Exception:
                         pending_url = project_url
                     pending = FlowRequestPending(
-                        "A saved Flow image request is still pending; worker recovery failed, "
-                        "so no replacement provider or prompt was submitted.")
+                        "A saved Flow image request is still pending; pausing by user choice.")
                     return (shot, "", pending_url, "failed", str(pending), pending)
                 try:
-                    result = free_provider.generate_image(shot, {
+                    fallback_path = self._free_image_fallback(shot, {
                         "prompt": shot.compiled_prompt, "negative": shot.negative,
                         "project": project, "project_url": project_url,
-                    }, out, vertical, dry_run=False)
-                    fallback_path = result.get("path")
-                    if fallback_path and self._is_valid_image_file(fallback_path):
-                        return (shot, fallback_path, project_url, "free",
-                                f"Flow failed: {str(flow_error)[:180]}", None)
-                    fallback_error = result.get("error", "free provider returned no valid image")
+                    }, out, vertical, free_provider, label="parallel image")
+                    return (shot, fallback_path, project_url, "free",
+                            f"Flow failed: {str(flow_error)[:180]}", None)
                 except Exception as fallback_exc:
                     fallback_error = str(fallback_exc)
                 detail = f"Flow failed: {flow_error}; free fallback failed: {fallback_error}"[:300]
@@ -2058,11 +2196,18 @@ class Factory:
                         if not result.get("path") or not os.path.isfile(result["path"]):
                             raise RuntimeError(result.get("error", "no image returned"))
                         results.append((shot, out, project_url, "flow", "", None))
-                    except (FlowAuthNeeded, FlowQuotaExceeded, FlowRequestPending) as error:
-                        # A pending exact Flow request must never be replaced by
-                        # a different provider or another generation attempt.
+                    except (FlowAuthNeeded, FlowQuotaExceeded) as error:
                         results.append((shot, "", project_url, "failed", str(error)[:300], error))
                         break
+                    except FlowRequestPending as error:
+                        if settings.get("flow_pause_on_unresolved_request", False):
+                            # Keep the exact request journal and pause only because
+                            # the user explicitly chose that recovery policy.
+                            results.append((shot, "", project_url, "failed", str(error)[:300], error))
+                            break
+                        results.append(fallback(shot, out, project_url, error))
+                        if results[-1][5] is not None:
+                            break
                     except Exception as error:
                         results.append(fallback(shot, out, project_url, error))
                         if results[-1][5] is not None:
@@ -2113,8 +2258,13 @@ class Factory:
         if auth_error:
             shot, error = auth_error
             if isinstance(error, FlowRequestPending):
-                self._pause_pending_flow(m, shot.shot_id, error,
-                                         project_url=getattr(error, "project_url", ""))
+                project_url = getattr(error, "project_url", "")
+                if settings.get("flow_pause_on_unresolved_request", False):
+                    self._pause_pending_flow(m, shot.shot_id, error, project_url=project_url)
+                self._fail_pending_flow(m, shot.shot_id, error, project_url=project_url)
+                raise RuntimeError(
+                    f"Flow image request for {shot.shot_id} remains unresolved. Automatic pause is off; "
+                    "no different image was selected. The saved Flow request remains available for explicit Resume.") from error
             raise AssistedNeeded(m.job_id, shot.shot_id, shot.compiled_prompt,
                                  D["downloads"], f"{type(error).__name__}: {error}")
 
@@ -2238,7 +2388,13 @@ class Factory:
                                 res = prov.generate(s, compiled, shot_refs, take_path, vertical, dry_run=dry)
                         except (FlowBrowserClosedError, FlowServiceBusy, FlowUIChanged) as e:
                             if isinstance(e, FlowRequestPending):
-                                self._pause_pending_flow(m, s.shot_id, e, compiled.get("project_url", ""))
+                                project_url = compiled.get("project_url", "")
+                                if (settings or {}).get("flow_pause_on_unresolved_request", False):
+                                    self._pause_pending_flow(m, s.shot_id, e, project_url)
+                                self._fail_pending_flow(m, s.shot_id, e, project_url)
+                                raise FlowRequestFailed(
+                                    f"Flow video request for {s.shot_id} remains unresolved. Automatic pause is off; "
+                                    "no duplicate video generation was submitted. The saved request remains available for explicit Resume.") from e
                             # The Flow provider owns post-submit recovery. Do not
                             # start another full recovery timer here; v5.3.2 could
                             # stack multiple 179s waits for one shot. A browser-
@@ -2302,6 +2458,9 @@ class Factory:
                                 compiled["project_url"] = bound
                         except Exception:
                             pass
+                    if (m.profile == "STORYBOARD_ECONOMY" and avail.get("image")
+                            and (settings or {}).get("flow_pause_on_unresolved_request", False)):
+                        self._pause_pending_flow(m, s.shot_id, e, compiled.get("project_url", ""))
                     if m.profile == "STORYBOARD_ECONOMY" and avail.get("image"):
                         fallback_reason = f"Flow generation failure after retry: {str(e)[:180]}"
                         prog(f"⚠️ {s.shot_id}: Flow unavailable after retry -> image-motion fallback", min(82, pct))
@@ -2323,56 +2482,68 @@ class Factory:
                         raise AssistedNeeded(m.job_id, s.shot_id, s.compiled_prompt,
                                              D["downloads"], f"{type(e).__name__}: {e}")
                     else:
+                        project_url = compiled.get("project_url", "")
+                        if (settings or {}).get("flow_pause_on_unresolved_request", False):
+                            s.status = "failed"
+                            self.pm.update_shot(m.job_id, s)
+                            m2 = self.pm.load_manifest(m.job_id)
+                            m2.status = "paused"
+                            self.pm.save_manifest(m2)
+                            self.db.upsert(m.job_id, status="paused")
+                            if isinstance(e, FlowQuotaExceeded):
+                                kind = "flow_usage_limit"
+                            elif isinstance(e, FlowServiceBusy):
+                                kind = "flow_capacity"
+                            else:
+                                kind = "flow_download_or_ui"
+                            state = self._write_pause_state(
+                                m.job_id, s.shot_id, f"{type(e).__name__}: {e}",
+                                kind=kind, project_url=project_url,
+                                baseline_signatures=flow_baseline)
+                            next_step = (
+                                "Scan for media newer than the saved pre-generation baseline before any retry."
+                                if state.get("safe_automatic_recovery") else
+                                "Wait for Flow access to reset, then resume this same saved job."
+                            )
+                            raise NeedsDecision(
+                                f"Flow paused at {s.shot_id} by your setting. Existing generated media and "
+                                f"{state['accepted_shots']}/{state['total_shots']} accepted shots are safe. "
+                                f"{next_step} Reason: {type(e).__name__}: {e}",
+                                alternatives=[x["command"] for x in state["actions"]])
+                        self._fail_pending_flow(m, s.shot_id, e, project_url)
+                        raise FlowRequestFailed(
+                            f"Flow failed at {s.shot_id}. Automatic pause is off; no replacement video request was submitted. "
+                            "The saved job remains available for explicit Resume. "
+                            f"Reason: {type(e).__name__}: {e}") from e
+
+                # A provider can report a download/detection failure as a normal
+                # result after Flow has already spent the credits. Never silently
+                # submit another video. Pause only when the user opted in; otherwise
+                # fail cleanly and leave explicit Resume available for recovery.
+                if (not dry and current_prov == "flow" and not res.get("path")
+                        and m.profile != "STORYBOARD_ECONOMY"):
+                    reason = str(res.get("error") or "Flow media was generated but no valid video was downloaded")
+                    if (settings or {}).get("flow_pause_on_unresolved_request", False):
                         s.status = "failed"
                         self.pm.update_shot(m.job_id, s)
                         m2 = self.pm.load_manifest(m.job_id)
                         m2.status = "paused"
                         self.pm.save_manifest(m2)
                         self.db.upsert(m.job_id, status="paused")
-                        if isinstance(e, FlowQuotaExceeded):
-                            kind = "flow_usage_limit"
-                        elif isinstance(e, FlowServiceBusy):
-                            kind = "flow_capacity"
-                        else:
-                            kind = "flow_download_or_ui"
                         state = self._write_pause_state(
-                            m.job_id, s.shot_id, f"{type(e).__name__}: {e}",
-                            kind=kind, project_url=compiled.get("project_url", ""),
-                            baseline_signatures=flow_baseline)
-                        next_step = (
-                            "Scan for media newer than the saved pre-generation baseline before any retry."
-                            if state.get("safe_automatic_recovery") else
-                            "Wait for Flow access to reset, then resume this same saved job."
-                        )
+                            m.job_id, s.shot_id, reason, kind="flow_existing_video_recovery",
+                            project_url=compiled.get("project_url", ""),
+                            baseline_signatures=set(getattr(
+                                providers.get("flow"), "_last_video_baseline", set()) or set()))
                         raise NeedsDecision(
-                            f"Flow paused at {s.shot_id}. Existing generated media and "
-                            f"{state['accepted_shots']}/{state['total_shots']} accepted shots are safe. "
-                            f"{next_step} "
-                            f"Reason: {type(e).__name__}: {e}",
+                            f"Flow may already contain the finished video for {s.shot_id}; the job was paused by your setting "
+                            f"before any retry could spend more credits. {reason}",
                             alternatives=[x["command"] for x in state["actions"]])
-
-                # A provider can report a download/detection failure as a normal
-                # result after Flow has already spent the credits. For strict
-                # Flow profiles, pause and scan the bound project instead of
-                # silently submitting another request on recursive resume.
-                if (not dry and current_prov == "flow" and not res.get("path")
-                        and m.profile != "STORYBOARD_ECONOMY"):
-                    s.status = "failed"
-                    self.pm.update_shot(m.job_id, s)
-                    m2 = self.pm.load_manifest(m.job_id)
-                    m2.status = "paused"
-                    self.pm.save_manifest(m2)
-                    self.db.upsert(m.job_id, status="paused")
-                    reason = str(res.get("error") or "Flow media was generated but no valid video was downloaded")
-                    state = self._write_pause_state(
-                        m.job_id, s.shot_id, reason, kind="flow_existing_video_recovery",
-                        project_url=compiled.get("project_url", ""),
-                        baseline_signatures=set(getattr(
-                            providers.get("flow"), "_last_video_baseline", set()) or set()))
-                    raise NeedsDecision(
-                        f"Flow may already contain the finished video for {s.shot_id}; the job is paused "
-                        f"before any retry can spend more credits. {reason}",
-                        alternatives=[x["command"] for x in state["actions"]])
+                    self._fail_pending_flow(m, s.shot_id, RuntimeError(reason), compiled.get("project_url", ""))
+                    raise FlowRequestFailed(
+                        f"Flow may have generated the video for {s.shot_id}, but no valid download was saved. "
+                        "Automatic pause is off; no duplicate generation was submitted. Explicitly Resume this saved job to retry recovery. "
+                        + reason)
                 if not dry and not res.get("path") and current_prov == "movieflow" and movieflow_full:
                     s.status = "failed"
                     self.pm.update_shot(m.job_id, s)

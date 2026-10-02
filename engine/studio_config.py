@@ -56,6 +56,7 @@ DEFAULTS = {
     "watermark": False,
     "images_per_shot": 2,
     "flow_image_workers": 1,
+    "flow_pause_on_unresolved_request": None,
     "video_share": 0.20,
     "stock_share": 0.60,
     "flow_scenes": None,

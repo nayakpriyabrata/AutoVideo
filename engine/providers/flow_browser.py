@@ -3399,6 +3399,36 @@ class FlowBrowserProvider(VideoProvider):
         except Exception:
             return False
 
+    @staticmethod
+    def _fresh_asset_candidates(assets, baseline, kind=None):
+        """Return distinct post-baseline assets using Flow's strict URL identity."""
+        baseline = list(baseline or [])
+        candidates = []
+        for asset in assets or []:
+            signature = asset.get("sig")
+            if (not signature or (kind and str(asset.get("kind", "")).lower() != kind)
+                    or any(media_signature_matches(signature, old) for old in baseline)):
+                continue
+            if not any(media_signature_matches(signature, item.get("sig")) for item in candidates):
+                candidates.append(asset)
+        return candidates
+
+    def _identify_single_fresh_asset(self, bridge, request, kind, timeout_ms=15000):
+        """Poll briefly for exactly one new, typed asset; never guess among tiles."""
+        baseline = request.get("baseline") or []
+        if isinstance(baseline, str):
+            baseline = [baseline]
+        deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+        while True:
+            assets = bridge.media_assets()
+            candidates = self._fresh_asset_candidates(assets, baseline, kind=kind)
+            if len(candidates) == 1:
+                return str(candidates[0].get("sig") or "")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ""
+            bridge._page.wait_for_timeout(min(500, max(50, int(remaining * 1000))))
+
     def _guarded_generation(self, shot, compiled, refs, out_path, vertical, dry_run, kind):
         if kind != "image" or dry_run:
             return self._guarded_generation_once(shot, compiled, refs, out_path, vertical, dry_run, kind)
@@ -3427,11 +3457,12 @@ class FlowBrowserProvider(VideoProvider):
                                              project_url=request["project_url"])
                     # download_latest_asset now polls the live project for this
                     # exact signature; do not burn a blind delay between scans.
-                    print("[Flow] Will rescan the exact recorded image after restoring the project; no prompt will be submitted.")
+                    print("[Flow] Will rescan the saved project for the exact signature (or one unique fresh image if the signature is blank); no prompt will be submitted.")
                 except Exception:
                     pass
         # A failed download of a visible asset is NOT permission to regenerate.
-        # Only replace an identified image absent on two successful project scans.
+        # Replace only after the exact target is absent, or a signature-less
+        # request has no fresh assets, on two successful full-baseline scans.
         archive = out_path + ".flow-request.before-regeneration.json"
         if attempts and compiled.get("flow_image_auto_regenerate", True) and not os.path.exists(archive):
             try:
@@ -3441,7 +3472,7 @@ class FlowBrowserProvider(VideoProvider):
                     compiled.get("prompt", ""), vertical], sort_keys=True).encode()).hexdigest()
                 bound = FlowBrowser.normalize_project_url(compiled.get("project_url"))
                 eligible = (request.get("request_hash") == key and request.get("kind") == "image"
-                            and request.get("signature") and request.get("project_url")
+                            and request.get("project_url")
                             and time.time() - float(request.get("submitted_at", time.time())) >= 360
                             and (not bound or bound == request["project_url"]))
                 if eligible:
@@ -3455,16 +3486,17 @@ class FlowBrowserProvider(VideoProvider):
                         if any(word in body for word in ("generating", "creating image", "in progress", "queued")):
                             absent = False
                             break
-                        # Empty/loading grids cannot establish absence.
+                        # Empty/loading grids cannot establish absence. Require
+                        # every saved pre-request asset to be visible and no new
+                        # post-baseline media of any kind; for a blank signature
+                        # this is the only safe proof that replacement is warranted.
                         baseline = request.get("baseline") or []
-                        # Require the entire saved pre-submission baseline to be
-                        # visible, not merely an arbitrary nonempty gallery slice.
+                        fresh_assets = self._fresh_asset_candidates(assets, baseline)
                         if (not assets or not baseline
                                 or b.current_project_url() != request["project_url"]
                                 or not all(any(media_signature_matches(a.get("sig"), old)
                                                for a in assets) for old in baseline)
-                                or any(media_signature_matches(a.get("sig"), request["signature"])
-                                       for a in assets)):
+                                or fresh_assets):
                             absent = False
                             break
                         if scan == 0:
@@ -3497,6 +3529,15 @@ class FlowBrowserProvider(VideoProvider):
             compiled.get("prompt", ""), vertical], sort_keys=True).encode()).hexdigest()
         self._active_request_hash = key
         journal = out_path + ".flow-request.json"
+        if kind == "image":
+            fallback_archives = glob.glob(out_path + ".flow-request.fallback*.json")
+            if fallback_archives:
+                if self._asset_valid(out_path, kind):
+                    return {"path": out_path, "provider": "image", "model": "free_fallback",
+                            "credits": 0, "log": "Using the committed free fallback for an abandoned Flow request"}
+                raise FlowRequestPending(
+                    "A prior Flow request was abandoned for a free image fallback, but the fallback file is missing; "
+                    "restore or recreate the local image instead of submitting another Flow prompt")
         try:
             if os.path.exists(journal):
                 with open(journal, encoding="utf-8") as f:
@@ -3514,12 +3555,12 @@ class FlowBrowserProvider(VideoProvider):
                     print(f"[Flow] Download-only recovery of pending {kind}; no new prompt will be submitted: {url}")
                     b.ensure_project(compiled.get("project") or "AutoVideoAI", project_url=url)
                     if not request.get("signature"):
-                        baseline = set(request.get("baseline", []))
-                        fresh = [a for a in b.media_assets() if a.get("kind") == kind
-                                 and a.get("sig") and not any(media_signature_matches(a["sig"], old) for old in baseline)]
-                        if len(fresh) != 1:
-                            raise FlowRequestPending("Existing request has no single identifiable asset; no recovery click submitted")
-                        request["signature"] = fresh[0]["sig"]
+                        request["signature"] = self._identify_single_fresh_asset(
+                            b, request, kind, timeout_ms=int(compiled.get("flow_image_signature_wait_ms", 15000)))
+                        if not request["signature"]:
+                            raise FlowRequestPending(
+                                "Existing request still has no single identifiable asset after bounded gallery scans; "
+                                "no recovery click submitted")
                         self._save_request(out_path, request)
                     if not request.get("signature"):
                         raise FlowRequestPending("No unambiguous recorded asset; assisted recovery is required")

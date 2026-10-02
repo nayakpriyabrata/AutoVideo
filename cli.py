@@ -166,6 +166,9 @@ def main_v3(argv):
                    help="hard cap on paid Flow motion scenes (not a requested count; budget cap still applies)")
     c.add_argument("--frame-source", default="auto", choices=["auto", "flow", "free"],
                    help="opening/closing stills: auto=retry Flow then visibly fall back; flow=strict Flow only; free=free provider only")
+    c.add_argument("--pause-on-unresolved-flow-request", dest="flow_pause_on_unresolved_request",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="opt in to PAUSED jobs when a Flow request cannot be safely recovered; default is no automatic pause. Image recovery retries downloads first and permits at most one credit-bearing replacement after two scans prove absence")
     c.add_argument("--flow-approval", default="once", choices=["once", "manual", "always"],
                    help="Flow Agent credit confirmation behavior for paid motion scenes")
     c.add_argument("--max-generation-credits", type=int, default=10,
@@ -207,6 +210,9 @@ def main_v3(argv):
     r.add_argument("job_id")
     r.add_argument("--gemini-chat-cleanup", choices=["keep", "delete-after-read"], default=None,
                    help="Persist this cleanup policy for the existing job before resuming")
+    r.add_argument("--pause-on-unresolved-flow-request", dest="flow_pause_on_unresolved_request",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="explicitly enable/disable PAUSED status for unresolved Flow requests on this job")
 
     rv = sub.add_parser(
         "recover-flow-video",
@@ -545,7 +551,8 @@ def main_v3(argv):
                             flow_video_ready_grace_seconds=args.flow_video_ready_grace_seconds,
                             flow_video_recovery_wait_seconds=args.flow_video_recovery_wait_seconds,
                             flow_reuse_project_media=args.flow_reuse_project_media,
-                            flow_reuse_mode=args.flow_reuse_mode)
+                            flow_reuse_mode=args.flow_reuse_mode,
+                            flow_pause_on_unresolved_request=args.flow_pause_on_unresolved_request)
         print("JOB:", job)
         if args.plan_only:
             print("(plan-only created the job configuration only; run 'v3 resume' to execute script/TTS/media generation)")
@@ -587,6 +594,9 @@ def main_v3(argv):
     elif args.cmd == "resume":
         if args.gemini_chat_cleanup is not None:
             f.set_gemini_cleanup(args.job_id, args.gemini_chat_cleanup)
+        if args.flow_pause_on_unresolved_request is not None:
+            f.set_flow_pause_on_unresolved_request(
+                args.job_id, args.flow_pause_on_unresolved_request)
         print(f.run_job(args.job_id, progress_cb=cb))
     elif args.cmd == "recover-flow-video":
         print(f.recover_flow_video(args.job_id, shot_id=args.shot_id or None,

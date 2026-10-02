@@ -47,6 +47,19 @@ from engine.studio_config import DEFAULTS, THEMES, config_to_factory_kwargs
 F = Factory()
 DB = JobDB()
 
+
+def _flow_pause_setting_default():
+    """Read only the non-sensitive global opt-in preference for new jobs."""
+    try:
+        with open("config/user_settings.yaml", encoding="utf-8") as handle:
+            value = (yaml.safe_load(handle) or {}).get("flow_pause_on_unresolved_request", False)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    except Exception:
+        return False
+
+
 PROFILES = ["STORYBOARD_ECONOMY", "FLOW_CINEMATIC", "FLOW_BALANCED", "FLOW_ECONOMY", "LOCAL_FREE", "FREE_HYBRID", "MANUAL_DIRECTOR"]
 PRESETS = sorted([os.path.splitext(f)[0] for f in os.listdir("config/presets") if f.endswith(".yaml")])
 CONTENT_TYPES = ["education", "storytelling", "cinematic_story", "documentary", "motivation",
@@ -136,8 +149,8 @@ def pause_panel(job_id, reason=""):
                     st.error(f"Recovery did not find a usable new video yet: {e}")
         resume_clicked = c2.button("▶️ Resume saved job", key=f"resume-paused-{job_id}")
     else:
-        st.info("Resume checks the saved request for the exact pending image or video. Image download failures retry automatically; an older missing image may be regenerated once (may use image credits). "
-                "An unresolved request remains paused without generating again. "
+        st.info("You opted in to pausing unresolved Flow requests. Resume checks the saved request for the exact pending image or video; image downloads retry without a new prompt, and one replacement is allowed only after the original asset is proven absent (may use image credits). "
+                "With this option off, auto-mode images use the free fallback; strict Flow/video requests fail without another generation and remain available for explicit Resume. "
                 "See the request's recovery.json diagnostic if the asset cannot be matched.")
         resume_clicked = st.button("▶️ Retry saved request and resume",
                                    key=f"resume-paused-{job_id}", type="primary")
@@ -203,7 +216,16 @@ def run_with_ui(job_id, dry_label):
                 raise box["error"]
             r = box.get("result", {})
         bar.progress(100)
-        status.success(f"{r.get('status')}: {r.get('message', r.get('video', ''))}")
+        result_message = f"{r.get('status')}: {r.get('message', r.get('video', ''))}"
+        if r.get("status") == "failed":
+            status.error(result_message)
+        elif r.get("status") == "paused":
+            status.warning(result_message)
+        else:
+            status.success(result_message)
+        if r.get("status") == "failed" and r.get("resume"):
+            st.caption("This request was not paused automatically. If you want to retry its exact recovery, run:")
+            st.code(r["resume"], language="bash")
         if r.get("video"):
             st.video(r["video"])
             with open(r["video"], "rb") as f:
@@ -333,6 +355,10 @@ if page == "STUDIO":
             flow_project_url = st.text_input("Existing Google Flow project URL (optional)",
                                              placeholder="https://flow.google.com/project/<uuid>",
                                              help="Stored with the job and automatically reused on resume.")
+            flow_pause_on_unresolved_request = st.checkbox(
+                "Pause when a Flow request cannot be safely recovered (opt-in)",
+                value=_flow_pause_setting_default(),
+                help="Off by default: ambiguous images use the free fallback in auto mode; strict image/video requests fail without PAUSED status and can be explicitly resumed. On: save the request and pause for your choice. Recovery retries download-only first; at most one replacement may use image credits, and only after two full scans prove the original absent.")
             k, l, n = st.columns(3)
             reuse_mode = k.selectbox("Flow reuse scope", ["exact", "topic", "project"])
             gemini_cleanup = l.selectbox("Gemini temporary chat", ["delete-after-read", "keep"])
@@ -372,6 +398,7 @@ if page == "STUDIO":
                         "render_quality": render_quality, "flow_image_workers": flow_workers,
                         "frame_source": frame_source, "flow_approval": flow_approval,
                         "flow_project_url": flow_project_url.strip(), "flow_reuse_mode": reuse_mode,
+                        "flow_pause_on_unresolved_request": flow_pause_on_unresolved_request,
                         "gemini_chat_cleanup": gemini_cleanup,
                         "background_music": "off" if studio_audio_mode == "Silent" else background_music,
                         "background_music_path": music_path.strip(), "music_volume": music_volume,
@@ -472,6 +499,10 @@ elif page == "CREATE":
                                          help="once is safest: AutoVideoAI only approves a generation within your per-generation cap.")
             max_generation_credits = f3.number_input("Max credits per Flow generation", 0, 200, 10,
                                                      help="Credit guard. If Flow asks for more, AutoVideoAI leaves it unapproved.")
+            flow_pause_on_unresolved_request = st.checkbox(
+                "Pause when a Flow request cannot be safely recovered (opt-in)",
+                value=_flow_pause_setting_default(),
+                help="Off by default: ambiguous images use the free fallback in auto mode; strict image/video requests fail without PAUSED status and can be explicitly resumed. On: save the request and pause for your choice. Recovery retries download-only first; at most one replacement may use image credits, and only after two full scans prove the original absent.")
         dry = st.checkbox("DRY RUN (plan + estimate, spend nothing)", value=("FLOW" in profile or "MANUAL" in profile or profile == "STORYBOARD_ECONOMY"))
         submitted = st.form_submit_button("🚀 GENERATE", type="primary")
     if submitted:
@@ -489,6 +520,7 @@ elif page == "CREATE":
                                    max_flow_scenes=(int(max_flow_scenes_ui) or None),
                                    frame_source=frame_source, flow_approval=flow_approval,
                                    max_generation_credits=int(max_generation_credits),
+                                   flow_pause_on_unresolved_request=flow_pause_on_unresolved_request,
                                    voiceover_enabled=create_voice_on, text_cards_enabled=create_cards,
                                    text_card_style=create_card_style,
                                    background_music="off" if create_audio_mode == "Silent" else create_music,
@@ -611,6 +643,16 @@ elif page == "QUEUE":
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
     if st.session_state.job_id:
         selected_row = DB.get(st.session_state.job_id) or {}
+        current_flow_pause = bool(F._settings(st.session_state.job_id).get(
+            "flow_pause_on_unresolved_request", False))
+        with st.expander("Flow recovery behavior", expanded=False):
+            pause_flow_choice = st.checkbox(
+                "Pause this job if a Flow request cannot be safely recovered",
+                value=current_flow_pause, key=f"flow-pause-policy-{st.session_state.job_id}",
+                help="Off: auto-frame images use a free fallback; strict Flow/video requests fail without automatic PAUSED status. On: preserve the request and pause. One proven-missing image replacement is bounded and may use image credits.")
+            if st.button("Save Flow recovery choice", key=f"save-flow-pause-policy-{st.session_state.job_id}"):
+                F.set_flow_pause_on_unresolved_request(st.session_state.job_id, pause_flow_choice)
+                st.success("Saved. This choice applies the next time the job is resumed.")
         if selected_row.get("status") in ("paused", "assisted"):
             pause_panel(st.session_state.job_id)
             st.divider()
@@ -1027,6 +1069,10 @@ elif page == "SETTINGS":
         ap_opts = ["once", "manual", "always"]
         g_approval = ec5.selectbox("Default Flow approval", ap_opts, index=ap_opts.index(cur.get("flow_approval", "once")) if cur.get("flow_approval", "once") in ap_opts else 0)
         g_gen_cap = ec6.number_input("Default per-generation credit cap", 0, 200, int(cur.get("max_generation_credits", 10)))
+        g_pause_flow = st.checkbox(
+            "Pause unresolved Flow requests by default (opt-in)",
+            value=_flow_pause_setting_default(),
+            help="When off, unresolved images fall back only in auto frame mode; strict images and videos fail without entering PAUSED. When on, they are saved and paused for a deliberate Resume. Recovery retries download-only first; a replacement may use image credits, but only once after two full scans prove the original absent.")
         st.markdown("**🌐 Flow browser** (which Chrome to drive)")
         br = cur.get("browser", {}) or {}
         bmodes = ["auto", "system", "bundled", "cdp"]
@@ -1051,6 +1097,7 @@ elif page == "SETTINGS":
                             "max_flow_scenes": (int(g_max_flow) or None),
                             "frame_source": g_frame_source, "flow_approval": g_approval,
                             "max_generation_credits": int(g_gen_cap),
+                            "flow_pause_on_unresolved_request": g_pause_flow,
                             "browser": {"mode": bmode, "channel": bchan,
                                         "executable": bexe, "cdp_url": bcdp}},
                            open(usp, "w", encoding="utf-8"))

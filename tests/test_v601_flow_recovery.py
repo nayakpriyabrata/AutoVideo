@@ -68,6 +68,48 @@ def test_replacement_is_bounded_and_only_missing(tmp_path, visible, recent, expe
     assert len(calls) == expected
 
 
+def test_missing_signature_gets_one_replacement_only_after_two_clean_scans(tmp_path):
+    p = object.__new__(FlowBrowserProvider)
+    out = str(tmp_path / "shot_007_close.jpg")
+    shot = NS(shot_id="shot_007")
+    prompt = "A kite above the sea"
+    url = "https://flow.google.com/project/test"
+    key = hashlib.sha256(json.dumps(
+        ["image", shot.shot_id, prompt, False], sort_keys=True).encode()).hexdigest()
+    p._save_request(out, dict(kind="image", request_hash=key, signature="", baseline=["old"],
+                              project_url=url, submitted_at=time.time() - 500))
+    submissions = []
+
+    def once(*_args):
+        if not Path(out + ".flow-request.json").exists():
+            submissions.append("one bounded replacement")
+            p._save_request(out, dict(kind="image", request_hash=key, signature="", baseline=["old"],
+                                      project_url=url, submitted_at=time.time()))
+        raise FlowRequestPending("asset still unavailable")
+
+    class Bridge:
+        _page = NS(wait_for_timeout=lambda _ms: None,
+                   locator=lambda _selector: NS(inner_text=lambda **_kwargs: "ready"))
+
+        def ensure_project(self, *_args, **_kwargs):
+            pass
+
+        def current_project_url(self):
+            return url
+
+        def media_assets(self):
+            return [{"sig": "old", "kind": "image"}]
+
+    p._guarded_generation_once = once
+    p.recover_browser = lambda *_args, **_kwargs: True
+    p._ensure = lambda: Bridge()
+    with pytest.raises(FlowRequestPending):
+        p.generate_image(shot, {"prompt": prompt}, out, False)
+
+    assert submissions == ["one bounded replacement"]
+    assert Path(out + ".flow-request.before-regeneration.json").is_file()
+
+
 def test_crash_reservation_blocks_new_submission(tmp_path):
     p = object.__new__(FlowBrowserProvider)
     out = str(tmp_path/'image.jpg')

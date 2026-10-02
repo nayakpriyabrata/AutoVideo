@@ -69,7 +69,7 @@ def fetch_trend_ideas(region: str = "IN", count: int = 10) -> list[dict]:
 
     response = requests.get(
         TREND_RSS_URL.format(geo=geo),
-        headers={"User-Agent": "AutoVideoAI-TrendIdeas/6.0.5"},
+        headers={"User-Agent": "AutoVideoAI-TrendIdeas/6.0.6"},
         timeout=(5, 20),
         stream=True,
     )

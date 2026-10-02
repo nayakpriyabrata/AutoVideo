@@ -592,8 +592,54 @@ class FlowBrowser:
             self._owns_page = True
             print("[Flow] Parallel image worker attached to CDP in a dedicated tab.")
         else:
-            self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
-            self._owns_page = not bool(ctxs and self._ctx.pages)
+            # A resumed job often attaches to a Chrome session with several tabs,
+            # including an initial about:blank tab. Prefer an existing Flow tab;
+            # otherwise reuse a blank tab before creating anything. Never
+            # commandeer an unrelated user tab (mail/docs/etc.) just because it
+            # happens to be pages[0].
+            try:
+                candidates = list(self._ctx.pages or [])
+            except Exception:
+                candidates = []
+            pages = []
+            for pg in candidates:
+                try:
+                    if not pg.is_closed():
+                        pages.append(pg)
+                except Exception:
+                    continue
+
+            def page_url(pg):
+                try:
+                    return str(getattr(pg, "url", "") or "").strip()
+                except Exception:
+                    return ""
+
+            try:
+                from urllib.parse import urlsplit
+                flow_pages = [pg for pg in pages
+                              if urlsplit(page_url(pg)).hostname == "flow.google.com"]
+            except Exception:
+                flow_pages = []
+            blank_pages = [pg for pg in pages
+                           if page_url(pg).lower() in ("", "about:blank", "chrome://newtab/", "edge://newtab/")]
+            if flow_pages:
+                self._page = flow_pages[-1]
+                self._owns_page = False
+                print("[Flow] Reusing an existing Google Flow tab from the attached browser.")
+            elif blank_pages:
+                self._page = blank_pages[-1]
+                self._owns_page = False
+                print("[Flow] Reusing an existing blank tab for Flow; no additional tab opened.")
+            else:
+                self._page = self._ctx.new_page()
+                # This tab lives inside the user's CDP context. Keep the single
+                # dedicated Flow tab open after a provider call so the next
+                # resumed shot can reuse it instead of opening/closing about:blank
+                # tabs repeatedly. Parallel worker tabs above remain owned and are
+                # still closed when their worker finishes.
+                self._owns_page = False
+                print("[Flow] Opened a reusable Flow tab; existing non-Flow tabs were left untouched.")
         self.active_browser = f"attached browser ({url})"
 
     def ensure_session(self, visible_login_seconds: int = 240):
@@ -640,7 +686,19 @@ class FlowBrowser:
 
     def _post_connect(self, visible_login_seconds: int):
         self._set(FlowState.WAITING_FOR_UI)
-        self._page.goto(self.ui.get("flow_url", "https://flow.google.com/"), timeout=60000)
+        current_url = str(getattr(self._page, "url", "") or "")
+        try:
+            from urllib.parse import urlsplit
+            already_on_flow = urlsplit(current_url).hostname == "flow.google.com"
+        except Exception:
+            already_on_flow = False
+        if not already_on_flow:
+            self._page.goto(self.ui.get("flow_url", "https://flow.google.com/"), timeout=60000)
+        else:
+            # Keep the user's existing project route. ensure_project() will bind
+            # the saved job URL after attachment; navigating to Flow home first
+            # caused needless route churn (and blank-tab flicker) on Resume.
+            print("[Flow] Attached on an existing Flow tab; preserving its current route.")
         # If Google shows sign-in, wait for the USER to complete it manually.
         deadline = time.time() + visible_login_seconds
         while time.time() < deadline:
@@ -665,13 +723,15 @@ class FlowBrowser:
     def close(self):
         """Release our Playwright resources without killing a user-owned CDP browser.
 
-        Older builds unconditionally closed ``self._ctx``.  When attached over CDP
-        this can close the visible Chrome session that the user is interacting with.
-        v4.9 closes only contexts launched/owned by AutoVideoAI; CDP-attached browser
-        contexts are left alive and Playwright simply disconnects.
+        Older builds unconditionally closed ``self._ctx``. When attached over CDP
+        this could close the visible Chrome session the user is interacting with.
+        CDP contexts are left alive; their ordinary Flow tab is deliberately kept
+        open for reuse across resumed shots. Isolated parallel-worker tabs are
+        owned and closed, while Playwright simply disconnects from the CDP browser.
         """
-        # Parallel workers may attach to a shared CDP context. Close only the
-        # tabs they created, not the user's context or pre-existing browser tabs.
+        # Close only tabs explicitly owned by this worker. In a shared CDP context
+        # the dedicated normal Flow tab is intentionally marked reusable, avoiding
+        # a new about:blank tab on each provider reconnect.
         for page, owned in ((getattr(self, "_page", None), getattr(self, "_owns_page", False)),
                             (getattr(self, "_guard_page", None), getattr(self, "_owns_guard_page", False))):
             if owned and page is not None:
@@ -972,13 +1032,20 @@ class FlowBrowser:
             return True
         return False
 
+    def _keep_shared_cdp_tabs(self) -> bool:
+        """Keep normal Flow tabs in a user-owned CDP context for later resumes."""
+        return bool(getattr(self, "_cdp", None) is not None
+                    and not getattr(self, "_own_context", False)
+                    and not getattr(self, "_isolated_worker", False))
+
     def _ensure_project_guard_page(self, project_url: str | None = None) -> bool:
         """Keep one stable project tab alive while media editor/download tabs may close.
 
         Flow occasionally destroys the active detail/editor page after a generated
-        asset is opened or downloaded.  If that was the only page, older recovery
-        code escalated to a full browser restart.  The guard tab keeps the browser
-        context alive so a page-target closure stays a cheap tab-level event.
+        asset is opened or downloaded. If that was the only page, older recovery
+        code escalated to a full browser restart. In a user-owned CDP context, reuse
+        an existing canonical project tab before opening a guard, and retain any
+        dedicated guard for later resume calls.
         """
         wanted = self.normalize_project_url(project_url) or self.current_project_url()
         if not wanted or not self._ctx:
@@ -989,12 +1056,27 @@ class FlowBrowser:
                 return True
         except Exception:
             self._guard_page = None
+        if self._keep_shared_cdp_tabs():
+            try:
+                candidates = list(self._ctx.pages or [])
+            except Exception:
+                candidates = []
+            for candidate in reversed(candidates):
+                try:
+                    if candidate is self._page or candidate.is_closed():
+                        continue
+                    if self.normalize_project_url(getattr(candidate, "url", "")) == wanted:
+                        self._guard_page = candidate
+                        self._owns_guard_page = False
+                        return True
+                except Exception:
+                    continue
         try:
             gp = self._ctx.new_page()
             gp.goto(wanted, wait_until='domcontentloaded', timeout=18000)
             gp.wait_for_timeout(500)
             self._guard_page = gp
-            self._owns_guard_page = True
+            self._owns_guard_page = not self._keep_shared_cdp_tabs()
             return True
         except Exception:
             self._guard_page = None
@@ -1011,11 +1093,17 @@ class FlowBrowser:
         wanted = self.normalize_project_url(project_url) or getattr(self, '_project_url', '') or ''
         if self._adopt_live_flow_page(wanted):
             try:
-                if self._composer_visible(min(5000, timeout_ms)):
+                if self._composer_visible(min(7000, timeout_ms)):
                     self._project_url = self.normalize_project_url(getattr(self._page, 'url', '')) or wanted
                     return True
             except Exception:
                 pass
+            # If the exact saved project tab is already alive but its composer is
+            # not ready, do not open another tab on every Resume poll. Let the
+            # caller surface/retry the same target instead of spawning more blank
+            # tabs while the SPA/auth page is still loading.
+            if self.normalize_project_url(getattr(self._page, "url", "")) == wanted:
+                return False
         if not wanted or not self._ctx:
             return False
         try:
@@ -1025,7 +1113,7 @@ class FlowBrowser:
             old = self._page
             old_owned = getattr(self, "_owns_page", False)
             self._page = pg
-            self._owns_page = True
+            self._owns_page = not self._keep_shared_cdp_tabs()
             self.dismiss_onboarding(rounds=1)
             if self._composer_visible(min(7000, timeout_ms)):
                 self._project_url = wanted
@@ -3582,7 +3670,10 @@ class FlowBrowserProvider(VideoProvider):
             result = generate_once(*args, dry_run=False)
             if os.path.exists(journal):
                 if not result.get("path") or not self._asset_valid(out_path, kind):
-                    raise FlowRequestPending("Submitted Flow request has no validated local asset")
+                    detail = str(result.get("error") or result.get("log") or "").strip()
+                    detail = f"; Flow adapter reported: {detail[:360]}" if detail else ""
+                    raise FlowRequestPending(
+                        f"Submitted Flow request has no validated local {kind} asset{detail}")
                 with open(journal, encoding="utf-8") as f:
                     request = json.load(f)
                 request["status"] = "downloaded"
@@ -3600,10 +3691,15 @@ class FlowBrowserProvider(VideoProvider):
                     print(f"[Flow] Could not save recovery diagnostic: {type(diagnostic_error).__name__}; request retained")
                 details = (f"Recovery details: {diagnostic}. " if os.path.isfile(diagnostic)
                            else "Recovery diagnostic unavailable; inspect pause_state.json and the saved request. ")
+                if kind == "video":
+                    guidance = ("Resume/recover this exact video with download-only recovery. "
+                                "Do not manually associate a different MP4 or click Generate again.")
+                else:
+                    guidance = ("Resume/recover this exact image using its recorded media signature; "
+                                "do not substitute a different image file.")
                 raise FlowRequestPending(
                     f"Flow {kind} request is saved at {journal}. Generation is blocked to avoid spending again. "
-                    "Resume attempts download only. No manual MP4 step is required for an image request. "
-                    f"{details}Cause: {type(exc).__name__}: {str(exc)[:300]}") from exc
+                    f"{guidance} {details}Cause: {type(exc).__name__}: {str(exc)[:360]}") from exc
             raise
 
     def _record_failure_diagnostic(self, out_path, error):

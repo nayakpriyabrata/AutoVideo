@@ -246,6 +246,26 @@ def run_with_ui(job_id, dry_label):
         pause_panel(job_id, e.reason)
     except Exception as e:
         status.error(f"Failed: {e}")
+        if "Coverage QC:" in str(e):
+            D = F.pm.dirs(job_id)
+            coverage_path = os.path.join(D["render"], "coverage_qc.json")
+            st.warning("The render stopped before encoding because at least one shot is not accepted. This is a deliberate review gate; no replacement media or Flow generation was submitted.")
+            try:
+                with open(coverage_path, encoding="utf-8") as handle:
+                    coverage = json.load(handle)
+                for issue in coverage.get("issues", []):
+                    st.write(f"- {issue}")
+                st.caption(f"Read-only report: `{coverage_path}`. Review the listed shot in STORYBOARD or DIRECTOR REVIEW, then render the same job after resolving its acceptance state.")
+                with st.expander("Unaccepted shot statuses — no provider calls"):
+                    manifest = F.pm.load_manifest(job_id)
+                    rows = [{"shot_id": shot.shot_id, "status": shot.status,
+                             "provider": shot.actual_provider or shot.provider,
+                             "model": shot.actual_model or shot.model,
+                             "accepted_take": shot.accepted_take or ""}
+                            for shot in manifest.shots if shot.status != "accepted"]
+                    st.dataframe(rows, use_container_width=True)
+            except (OSError, ValueError, KeyError) as report_error:
+                st.caption(f"Coverage details remain saved at `{coverage_path}` ({type(report_error).__name__}).")
 
 
 def presentation_editor(job_id):

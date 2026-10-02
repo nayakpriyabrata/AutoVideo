@@ -210,8 +210,9 @@ def test_recreation_identity_block_contains_no_old_person(tmp_path,monkeypatch,f
 def test_new_content_pages_render_without_provider_calls(tmp_path,monkeypatch):
     from tests.test_presentation_dashboard import dashboard
     f,app=dashboard(tmp_path,monkeypatch)
-    for page in ('CONTENT INBOX','CHARACTER LIBRARY','AI RECREATE','PUBLISHING DESK','CLIP STUDIO'):
+    for page in ('CONTENT INBOX','CHARACTER LIBRARY','AI RECREATE','PUBLISHING DESK','CLIP STUDIO','MINI REELS'):
         next(r for r in app.radio if r.label=='Navigate').set_value(page).run()
         assert not app.exception,[e.message for e in app.exception]
+    next(r for r in app.radio if r.label=='Navigate').set_value('CLIP STUDIO').run()
     checkbox=next(x for x in app.checkbox if x.label=='Add soft background music')
     assert checkbox.value is False

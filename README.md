@@ -1,9 +1,10 @@
-# AutoVideoAI v6.0.0 Content Studio — video generation and production review
+# AutoVideoAI v6.0.5 Mini Reels — Gemini Web → Google Flow/Veo
 
-This repository includes **editable application source**, based on the uploaded
-v5.8.4 Settings Hotfix release. Run commands from the folder containing `cli.py`
-and `app.py`. The original v5.8.4 ZIP is preserved as a reference archive, not the
-updated build.
+This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. The original release archives are preserved as reference builds, not the updated build.
+
+**New in v6.0.5:** [Mini Reels workflow](V6_0_5_MINI_REELS.md). Discover current Google Trends search ideas, ask the visible Gemini Web session for an original short-form prompt, then review and generate one vertical Flow/Veo clip in-browser. Native Flow voiceover/ambience is optional and best-effort; no separate TTS is run, and uncertain video requests are recovered without blind re-submission.
+
+**Previous in v6.0.4:** [long-form voiceover resilience](V6_0_4_LONGFORM_VOICEOVER_ROBUSTNESS.md). Adds duration headroom and deterministic caption-timing fallback for robust long-form production.
 
 **New in v6.0.0:** [Content Studio testing guide](V6_0_0_CONTENT_STUDIO.md).
 English/Hindi/Odia configuration and shaped text, source/approved-script imports,
@@ -50,7 +51,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.0
+# ZIP download: cd AutoVideoAI-v6.0.5
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -91,6 +92,8 @@ On WSL, the most reliable way to reuse signed-in Windows Chrome is `chrome-debug
 ```
 
 Open <http://localhost:8501>. **STUDIO** provides controls for production mode, theme, script/TTS providers, Flow workers, frame source, project reuse, Gemini cleanup, music, captions, branding, credits, and render quality.
+
+Select **MINI REELS** for the separate 8-second vertical workflow: optional Google Trends ideas → visible Gemini Web prompt → reviewed Flow/Veo generation. The page can request Flow-native voiceover/ambience but does not run separate TTS; see [v6.0.5 notes](V6_0_5_MINI_REELS.md) for account, audio, credit, and recovery limitations.
 
 The dashboard and CLI use the same engine. The dashboard refreshes the log while Flow is waiting; it no longer updates only when a pipeline stage finishes. Progress is shown on screen and written to:
 

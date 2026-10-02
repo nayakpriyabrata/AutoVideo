@@ -75,7 +75,7 @@ if "job_id" not in st.session_state:
 st.sidebar.title(f"🎬 AutoVideoAI v{APP_VERSION} Studio")
 mode_badge = {"STORYBOARD_ECONOMY": "🌱", "FLOW_CINEMATIC": "💎", "FLOW_BALANCED": "⚖️", "FLOW_ECONOMY": "💰",
               "LOCAL_FREE": "🖥️", "FREE_HYBRID": "🆓", "MANUAL_DIRECTOR": "🎥"}
-page = st.sidebar.radio("Navigate", ["STUDIO", "CREATE", "STORYBOARD", "DIRECTOR REVIEW", "QUEUE",
+page = st.sidebar.radio("Navigate", ["STUDIO", "MINI REELS", "CREATE", "STORYBOARD", "DIRECTOR REVIEW", "QUEUE",
                                      "FLOW SESSION", "CLIP STUDIO", "CONTENT INBOX", "CHARACTER LIBRARY", "AI RECREATE", "PUBLISHING DESK", "PRODUCTION QC", "ASSETS", "RENDER", "HISTORY",
                                      "SETTINGS", "Quick (v2)"])
 st.sidebar.divider()
@@ -430,6 +430,207 @@ if page == "STUDIO":
     if st.session_state.job_id:
         st.divider()
         pipeline_view(st.session_state.job_id)
+
+# ================= MINI REELS =================
+elif page == "MINI REELS":
+    st.title("📱 Mini Reels · Gemini Web → Google Flow/Veo")
+    st.caption("Trend idea → a reviewable prompt from your visible Gemini Web session → one 8-second, 9:16 Flow/Veo clip in your browser. This is separate from the long-form storyboard, voiceover, and render pipeline.")
+    st.info("Google Trends supplies search-interest ideas, not a promise of social virality. Gemini Web must be signed in through AutoVideoAI's browser session; there is no Gemini API fallback. You review the final prompt before any Flow generation.")
+
+    from engine.mini_reels import (
+        AUDIO_LABELS, FLOW_MODEL_LABELS, LANGUAGE_LABELS, TREND_REGIONS,
+        VISUAL_STYLES, compose_flow_prompt, fetch_trend_ideas,
+        generate_flow_reel, generate_prompt_brief, list_pending_reels,
+        new_reel_id, read_reel, recover_flow_reel,
+    )
+
+    left, right = st.columns([2, 1])
+    region_name = left.selectbox("Google Trends region", list(TREND_REGIONS), index=0,
+                                 key="mini-reel-region")
+    region_code = TREND_REGIONS[region_name]
+    if right.button("↻ Refresh trend ideas", key="mini-reel-refresh-trends"):
+        try:
+            found = fetch_trend_ideas(region_code, count=10)
+            cache = dict(st.session_state.get("mini_reel_trends", {}))
+            cache[region_code] = found
+            st.session_state["mini_reel_trends"] = cache
+            st.success(f"Loaded {len(found)} current Google Trends search ideas for {region_name}.")
+        except Exception as exc:
+            st.warning(f"Trend feed unavailable: {exc}. You can enter an idea manually.")
+
+    trends_by_region = st.session_state.get("mini_reel_trends", {})
+    trend_rows = trends_by_region.get(region_code, [])
+    trend_titles = [str(row.get("title", "")) for row in trend_rows if row.get("title")]
+    selected_trend = st.selectbox("Recent search trend (optional)", [""] + trend_titles,
+                                  format_func=lambda value: value or "Choose a trend or enter your own idea",
+                                  key="mini-reel-trend-choice")
+    if selected_trend and st.session_state.get("_mini_reel_last_trend") != selected_trend:
+        st.session_state["mini-reel-topic"] = selected_trend
+        st.session_state["_mini_reel_last_trend"] = selected_trend
+    idea = st.text_input("Trend or starting idea", key="mini-reel-topic",
+                         placeholder="Choose a trend above, or type a fresh idea")
+    if selected_trend:
+        matched = next((row for row in trend_rows if row.get("title") == selected_trend), {})
+        details = " · ".join(x for x in (matched.get("approx_traffic", ""), matched.get("published", "")) if x)
+        st.caption(f"Google Trends daily RSS · {region_name}" + (f" · {details}" if details else ""))
+
+    c1, c2, c3 = st.columns(3)
+    style_keys = list(VISUAL_STYLES)
+    visual_style = c1.selectbox(
+        "Visual treatment", style_keys, index=0,
+        format_func=lambda key: {
+            "miniature-diorama": "Miniature diorama / macro",
+            "miniature-stop-motion": "Miniature stop-motion",
+            "macro-realism": "Macro realism",
+            "cinematic-short": "Cinematic short",
+            "playful-3d": "Playful original 3D",
+        }.get(key, key), key="mini-reel-style")
+    language = c2.selectbox("Voiceover language (when requested)", list(LANGUAGE_LABELS),
+                            format_func=lambda key: LANGUAGE_LABELS[key], key="mini-reel-language")
+    audio_modes = list(AUDIO_LABELS)
+    audio_mode = c3.selectbox("Flow audio request", audio_modes,
+                               format_func=lambda key: AUDIO_LABELS[key], key="mini-reel-audio")
+    st.caption("Audio intent is included in the prompt to Flow/Veo. Native speech/ambience—and even a silence request—depends on the selected model and account. AutoVideoAI makes no separate TTS request; review the returned clip and any Hindi/Odia pronunciation.")
+
+    d1, d2, d3 = st.columns(3)
+    model_options = list(FLOW_MODEL_LABELS)
+    model = d1.selectbox("Flow/Veo model", model_options, index=1,
+                         format_func=lambda key: FLOW_MODEL_LABELS[key], key="mini-reel-model")
+    flow_project_url = d2.text_input("Existing Flow project URL (optional)", key="mini-reel-project-url",
+                                     placeholder="https://flow.google.com/project/…")
+    max_generation_credits = d3.number_input("Flow Agent approval cap (when shown)", min_value=0, max_value=5000,
+                                              value=30, step=1, key="mini-reel-max-credits",
+                                              help="Applied when Flow's current Agent UI exposes a credit-approval card. This is not a price estimate and may not be enforceable in every Flow UI mode; review any Flow credit prompt and your account's terms before proceeding.")
+    st.caption("The numeric cap is conditional on Flow showing a credit-approval card. If your current Flow UI does not show one, account-level pricing/limits apply; AutoVideoAI still requires this separate one-generation confirmation and never automatically re-submits an uncertain request.")
+
+    pending_reels = list_pending_reels()
+    draft = st.session_state.get("mini_reel_draft")
+    if st.button("✨ Ask Gemini Web for an original reel prompt", type="primary",
+                 key="mini-reel-generate-prompt"):
+        if not idea.strip():
+            st.warning("Choose a trend or enter an idea first.")
+        else:
+            try:
+                with st.spinner("Asking the visible Gemini Web session for one original eight-second concept…"):
+                    brief = generate_prompt_brief(idea, visual_style=visual_style,
+                                                  language=language, audio_mode=audio_mode)
+                    flow_prompt = compose_flow_prompt(
+                        brief, visual_style=visual_style, language=language,
+                        audio_mode=audio_mode, model=model)
+                draft = {
+                    "reel_id": new_reel_id(), "brief": brief, "flow_prompt": flow_prompt,
+                    "visual_style": visual_style, "language": language,
+                    "audio_mode": audio_mode, "model": model,
+                    "flow_project_url": flow_project_url.strip(),
+                }
+                st.session_state["mini_reel_draft"] = draft
+                st.success("Gemini Web returned a draft. Review or edit the exact Flow prompt below; no video has been generated yet.")
+            except Exception as exc:
+                st.error(f"Could not create a prompt with Gemini Web: {exc}")
+
+    draft = st.session_state.get("mini_reel_draft")
+    if draft:
+        st.divider()
+        st.subheader(f"Review draft · {draft['brief'].get('title', 'Mini reel')}")
+        st.write(draft["brief"].get("angle", ""))
+        st.caption(f"Gemini Web · {draft['brief'].get('idea', '')} · 8 seconds · 9:16 · {FLOW_MODEL_LABELS.get(draft.get('model'), draft.get('model'))}")
+        if draft["brief"].get("voiceover_line"):
+            st.markdown("**Requested voiceover:** " + draft["brief"]["voiceover_line"])
+        if draft["brief"].get("caption"):
+            st.markdown("**Suggested post caption:** " + draft["brief"]["caption"])
+        if draft["brief"].get("hashtags"):
+            st.caption(" ".join(draft["brief"]["hashtags"]))
+        prompt_key = f"mini-reel-flow-prompt-{draft['reel_id']}"
+        flow_prompt = st.text_area("Final Flow prompt (editable)", value=draft["flow_prompt"],
+                                   height=220, key=prompt_key)
+        project_key = f"mini-reel-project-{draft['reel_id']}"
+        project_for_draft = st.text_input("Flow project URL for this reel (optional)",
+                                          value=draft.get("flow_project_url", ""), key=project_key,
+                                          placeholder="https://flow.google.com/project/…")
+        approval_key = f"mini-reel-credit-approval-{draft['reel_id']}"
+        credit_acknowledged = st.checkbox(
+            "I reviewed this prompt and approve one Flow/Veo generation using my signed-in Google account. Flow may use my account credits at the price shown by Flow.",
+            value=False, key=approval_key)
+        saved = None
+        try:
+            saved = read_reel(draft["reel_id"])
+        except (FileNotFoundError, OSError, ValueError):
+            pass
+        if saved and saved.get("status") == "complete" and Path(saved.get("output_path", "")).is_file():
+            st.success("This reel is already generated. Reopening it will not submit another video request.")
+            st.video(saved["output_path"])
+            if saved.get("audio_mode") == "flow-voiceover":
+                if saved.get("audio_stream_present") is True:
+                    st.info("An audio track was detected. Listen through and verify that the requested voiceover is present and correct.")
+                elif saved.get("audio_stream_present") is False:
+                    st.warning("No audio track was detected. The video was not automatically regenerated or replaced, avoiding an unexpected second credit-bearing request.")
+                else:
+                    st.caption("Audio-track detection was unavailable; please listen to the clip to verify native audio.")
+            elif saved.get("audio_mode") == "silent" and saved.get("audio_stream_present") is True:
+                st.warning("Flow returned an audio track despite the silence prompt. AutoVideoAI kept the original clip; mute it manually if silence is required.")
+            video_bytes = Path(saved["output_path"]).read_bytes()
+            st.download_button("⬇️ Download mini reel", video_bytes,
+                               file_name=f"{draft['reel_id']}.mp4", mime="video/mp4",
+                               key=f"mini-reel-download-{draft['reel_id']}")
+            if saved.get("flow_project_url"):
+                st.markdown(f"[Open this reel's Flow project]({saved['flow_project_url']})")
+        else:
+            other_pending = [row for row in pending_reels if row.get("reel_id") != draft["reel_id"]]
+            if other_pending:
+                st.warning("A different Flow request is unresolved. Recover that exact clip before submitting another generation to avoid duplicate credit-bearing work.")
+            if st.button("🎬 Generate once in Google Flow/Veo", type="primary",
+                         disabled=(not credit_acknowledged or bool(other_pending)),
+                         key=f"mini-reel-generate-video-{draft['reel_id']}"):
+                try:
+                    with st.spinner("Flow is generating or recovering this one saved request. Keep the browser session open…"):
+                        result = generate_flow_reel(
+                            draft["reel_id"], brief=draft["brief"], flow_prompt=flow_prompt,
+                            model=draft["model"], visual_style=draft["visual_style"],
+                            audio_mode=draft["audio_mode"], language=draft["language"],
+                            flow_project_url=project_for_draft,
+                            flow_approval="once", max_generation_credits=int(max_generation_credits))
+                    st.success("Flow video saved. No separate voiceover/TTS job was run.")
+                    st.video(result["output_path"])
+                    if result.get("audio_mode") == "flow-voiceover":
+                        if result.get("audio_stream_present") is True:
+                            st.info("An audio track was detected. Listen through and verify the requested voiceover.")
+                        elif result.get("audio_stream_present") is False:
+                            st.warning("No audio track was detected. AutoVideoAI did not automatically regenerate or replace this clip.")
+                        else:
+                            st.caption("Audio-track detection was unavailable; please listen to verify native audio.")
+                    elif result.get("audio_mode") == "silent" and result.get("audio_stream_present") is True:
+                        st.warning("Flow returned an audio track despite the silence prompt. AutoVideoAI kept the original clip; mute it manually if silence is required.")
+                    st.download_button("⬇️ Download mini reel", Path(result["output_path"]).read_bytes(),
+                                       file_name=f"{draft['reel_id']}.mp4", mime="video/mp4",
+                                       key=f"mini-reel-download-now-{draft['reel_id']}")
+                    if result.get("flow_project_url"):
+                        st.markdown(f"[Open this reel's Flow project]({result['flow_project_url']})")
+                except Exception as exc:
+                    st.error(f"Flow generation/recovery did not complete: {exc}")
+                    st.caption("A saved Flow request is never blindly resubmitted. If generation may have started, recover the same request below.")
+
+    pending_reels = list_pending_reels()
+    if pending_reels:
+        st.divider()
+        st.subheader("Recover a saved Flow request")
+        st.caption("Recovery opens the saved project and downloads the exact requested asset; it does not send another generation prompt or intentionally spend another video-generation credit.")
+        pending_labels = {
+            row["reel_id"]: f"{row.get('title', row['reel_id'])} · {row['reel_id']} · {row.get('status', 'pending')}"
+            for row in pending_reels
+        }
+        pending_id = st.selectbox("Unfinished reel", list(pending_labels),
+                                  format_func=lambda key: pending_labels[key], key="mini-reel-pending-id")
+        if st.button("♻️ Recover exact saved Flow video", key="mini-reel-recover-saved"):
+            try:
+                with st.spinner("Scanning the saved Flow project and retrying download only…"):
+                    result = recover_flow_reel(pending_id)
+                st.success("Saved Flow video recovered.")
+                st.video(result["output_path"])
+                st.download_button("⬇️ Download recovered mini reel", Path(result["output_path"]).read_bytes(),
+                                   file_name=f"{pending_id}.mp4", mime="video/mp4",
+                                   key=f"mini-reel-recovered-download-{pending_id}")
+            except Exception as exc:
+                st.error(f"Recovery did not complete: {exc}")
 
 # ================= CREATE =================
 elif page == "CREATE":

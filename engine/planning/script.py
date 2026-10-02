@@ -178,7 +178,8 @@ def _short(topic: str) -> str:
 def plan_content(topic: str, content_type: str = "education", duration_sec: int = 45,
                  tone: str = "cinematic", language: str = "en",
                  use_llm: bool = True, script_provider: str = "auto",
-                 script_model: str = "auto", script_quality: str = "high") -> dict:
+                 script_model: str = "auto", script_quality: str = "high",
+                 target_words: int | None = None) -> dict:
     """Return a complete spoken narration plan.
 
     v5 uses a free-first full-script director (Gemini/Groq/Ollama) when available,
@@ -188,12 +189,15 @@ def plan_content(topic: str, content_type: str = "education", duration_sec: int 
     topic = re.sub(r"\s+", " ", topic.strip())
     requested_provider = str(script_provider or "auto").lower()
     quality_mode = str(script_quality or "high").lower()
+    requested_target_words = (
+        max(50, int(target_words)) if target_words is not None else None
+    )
     if use_llm and requested_provider != "planner":
         try:
             from .script_engine import generate_script_plan
             ai = generate_script_plan(topic, content_type, duration_sec, tone, language,
                                       provider=script_provider, model=script_model,
-                                      quality=script_quality)
+                                      quality=script_quality, target_words=requested_target_words)
             if ai:
                 return ai
         except Exception as e:
@@ -206,9 +210,9 @@ def plan_content(topic: str, content_type: str = "education", duration_sec: int 
             print(f"AI script director failed ({str(e)[:140]}) -> deterministic planner")
     if quality_mode == "publish":
         raise RuntimeError("Publish-quality script generation requires a working AI script provider; planner fallback is disabled.")
+    target_words = requested_target_words or max(50, int(duration_sec * WORDS_PER_SEC))
     s, cap = _short(topic).lower(), _short(topic).capitalize()
     dur_label = f"{duration_sec} seconds" if duration_sec < 90 else f"{duration_sec//60} minutes"
-    target_words = max(50, int(duration_sec * WORDS_PER_SEC))
 
     pats = HOOK_PATTERNS.get(content_type, HOOK_PATTERNS["education"])
     hooks = [p.format(short=s, short_cap=cap, dur=dur_label,

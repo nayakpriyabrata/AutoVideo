@@ -437,6 +437,52 @@ def get_word_timestamps(audio_path: str, model_size: str = "small",
     return words
 
 
+def get_word_timestamps_resilient(audio_path: str, model_size: str = "small",
+                                  provider: str = "auto", script_text: str = "",
+                                  language: str = "en", groq_model: str = "whisper-large-v3-turbo",
+                                  align_script: bool = True, force: bool = False,
+                                  audio_duration: float | None = None) -> list | None:
+    """Get caption timings, falling back to deterministic script timing on failure.
+
+    The standalone ``get_word_timestamps`` API remains strict for explicitly
+    selected providers. Production jobs use this wrapper so an ASR/API outage
+    cannot discard an already-good narration: exact script words are estimated
+    across the measured audio duration as a final, visible fallback.
+    """
+    error = None
+    try:
+        words = get_word_timestamps(
+            audio_path, model_size=model_size, provider=provider,
+            script_text=script_text, language=language, groq_model=groq_model,
+            align_script=align_script, force=force,
+        )
+        if words:
+            return words
+        error = CaptionProviderError("caption provider returned no usable word timings")
+    except Exception as exc:
+        error = exc
+
+    duration = _audio_duration(audio_path)
+    if duration <= 0:
+        try:
+            duration = float(audio_duration or 0)
+        except (TypeError, ValueError):
+            duration = 0.0
+    fallback = script_timed_word_timestamps(script_text, duration)
+    if fallback:
+        detail = f"{type(error).__name__}: {str(error)[:160]}" if error else "no usable timings"
+        print("Caption timing provider unavailable (" + detail + "); "
+              "continuing with estimated timings from the exact narration script.")
+        return fallback
+
+    if isinstance(error, CaptionProviderError):
+        raise error
+    raise CaptionProviderError(
+        "No provider timings or script-timed fallback are available; "
+        "check the narration file and script text."
+    ) from error
+
+
 def group_words(words: list, max_words: int = 7, max_gap: float = 0.50,
                 max_duration: float = 2.8) -> list:
     """Phrase-aware caption grouping for mobile/YouTube readability.

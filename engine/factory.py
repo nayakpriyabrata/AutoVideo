@@ -27,6 +27,10 @@ from .reference_manager import ReferenceManager
 from .audio.tts import synthesize_narration, fit_narration_to_target
 from .runtime_log import runtime_print as print
 from .presentation import resolve_presentation, visual_duration, PRESENTATION_KEYS
+from .narration_policy import (
+    buffered_script_target_seconds, narration_duration_matches_target,
+    narration_grace_seconds,
+)
 from .providers.flow_browser import FlowRequestPending
 
 # Profiles that use the Flow browser bridge (scene images + Veo/Omni generation).
@@ -654,6 +658,27 @@ class Factory:
 
         # ---- 1. script ----
         script_path = os.path.join(D["root"], "script.json")
+        # Long-form writers often under-deliver the requested word count. Ask
+        # for a bounded narration buffer (5 min request -> ~6 min script), while
+        # keeping the manifest/render target unchanged. Measured TTS below is the
+        # source of truth and is accepted within a one-minute long-form window.
+        script_target_seconds = buffered_script_target_seconds(
+            m.target_seconds,
+            voiceover_enabled=(presentation.voiceover and
+                               bool(settings.get("auto_retime_script", True))),
+        )
+        script_headroom = script_target_seconds - m.target_seconds
+        script_target_words = None
+        if script_headroom:
+            from .languages import language_pack
+            from .planning.script_engine import NATURAL_WORDS_PER_SEC
+            script_pack = language_pack(m.language)
+            script_words_per_second = (
+                NATURAL_WORDS_PER_SEC if script_pack.code == "en"
+                else script_pack.words_per_second
+            )
+            script_target_words = max(
+                50, int(round(script_target_seconds * script_words_per_second)))
         if m.status in ("created",) or not os.path.exists(script_path):
             prog("✍️ Director: planning content...", 5)
             plan = plan_content(
@@ -661,10 +686,11 @@ class Factory:
                 script_provider=settings.get("script_provider", "auto"),
                 script_model=settings.get("script_model", "auto"),
                 script_quality=settings.get("script_quality", "publish"),
+                target_words=script_target_words,
             )
             from .planning.script_engine import script_quality_report
             editorial_qc = plan.get("editorial_qc") or script_quality_report(
-                plan, m.topic, m.content_type, m.target_seconds)
+                plan, m.topic, m.content_type, m.target_seconds, script_target_words)
             plan["editorial_qc"] = editorial_qc
             _save_json(os.path.join(D["root"], "editorial_qc.json"), editorial_qc)
             if str(settings.get("script_quality", "publish")).lower() == "publish" and not editorial_qc.get("passed"):
@@ -674,7 +700,13 @@ class Factory:
                 )
             _save_json(script_path, plan)
             self._write_script_md(m, plan, os.path.join(D["root"], "script.md"))
-            prog(f"✍️ Script ready: {plan.get('words', 0)} words for {m.target_seconds}s target "
+            target_detail = (
+                f"~{script_target_words} words (~{script_target_seconds}s narration budget)"
+                if script_headroom else f"{m.target_seconds}s requested target"
+            )
+            if script_headroom:
+                target_detail += f" (+{script_headroom}s headroom; requested video {m.target_seconds}s)"
+            prog(f"✍️ Script ready: {plan.get('words', 0)} words for {target_detail} "
                  f"via {plan.get('source', 'planner')}", 7)
             m.angle, m.audience = plan["angle"], plan["audience"]
             m.status = "scripted"
@@ -768,27 +800,34 @@ class Factory:
             # overlong narration is shortened before media generation.
             if not dry and bool(settings.get("auto_retime_script", True)):
                 from .planning.script_engine import retime_script_plan
+                grace_seconds = narration_grace_seconds(m.target_seconds)
+                if grace_seconds:
+                    duration_window = (
+                        f"{m.target_seconds - grace_seconds:.0f}–"
+                        f"{m.target_seconds + grace_seconds:.0f}s"
+                    )
+                else:
+                    duration_window = (
+                        f"{m.target_seconds * 0.92:.0f}–{m.target_seconds * 1.11:.0f}s"
+                    )
                 for _retime_round in range(2):
                     measured = float(tts.get("duration") or 0)
-                    if measured <= 0:
-                        break
-                    ratio_to_target = measured / max(float(m.target_seconds), 0.1)
-                    if 0.92 <= ratio_to_target <= 1.11:
+                    if measured <= 0 or narration_duration_matches_target(measured, m.target_seconds):
                         break
 
                     current_words = int(plan.get("words") or len(plan["narration"].split()))
                     target_words = max(45, int(round(
-                        current_words * (float(m.target_seconds) / measured) * 0.99
+                        current_words * (float(script_target_seconds) / measured) * 0.99
                     )))
                     if measured > m.target_seconds:
                         prog(
                             f"✂️ Narration measured {measured:.1f}s; rewriting script to ~{target_words} words "
-                            "instead of over-speeding it...", 12
+                            f"for the {duration_window} voiceover window...", 12
                         )
                     else:
                         prog(
                             f"➕ Narration measured only {measured:.1f}s; expanding script to ~{target_words} words "
-                            "to reach the requested runtime...", 12
+                            f"(buffered goal {script_target_seconds}s; requested {m.target_seconds}s)...", 12
                         )
 
                     retimed = retime_script_plan(
@@ -836,19 +875,19 @@ class Factory:
             # Use native TTS boundaries when present, otherwise Groq/local Whisper
             # only for timing. In both cases align visible caption wording back to
             # the exact authored script.
-            from .captions import get_word_timestamps, align_words_to_script
+            from .captions import get_word_timestamps_resilient, align_words_to_script
             words = list(tts.get("words") or [])
             if words and bool(settings.get("caption_align_script", True)):
                 words = align_words_to_script(plan["narration"], words, float(tts.get("duration") or 0))
             if not words:
-                words = get_word_timestamps(
+                words = get_word_timestamps_resilient(
                     voice_path,
                     model_size=str(settings.get("caption_local_model", "small") or "small"),
                     provider=str(settings.get("caption_provider", "auto") or "auto"),
                     script_text=plan["narration"], language=m.language,
                     groq_model=str(settings.get("caption_model", "whisper-large-v3-turbo") or "whisper-large-v3-turbo"),
                     align_script=bool(settings.get("caption_align_script", True)),
-                    force=True,
+                    force=True, audio_duration=float(tts.get("duration") or 0),
                 ) or []
 
             if tts.get("engine") != "mock-silent":

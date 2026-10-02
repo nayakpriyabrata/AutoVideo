@@ -111,6 +111,9 @@ def test_clip_studio_stock_suggestions_are_unapproved_and_keep_original(tmp_path
     assert candidate["status"] == "ready"
     assert candidate["approved"] is False
     assert candidate["rights_reviewed"] is False
+    assert candidate["decision"] == "pending"
+    assert "sunlight" in candidate["query"].lower()
+    assert "growth" in candidate["query"].lower()
     assert candidate["clip_output"] == str(original)
     assert candidate["path"] != candidate["clip_output"]
     assert os.path.isfile(candidate["path"])
@@ -214,3 +217,64 @@ def test_clip_studio_cutaway_reencodes_picture_but_keeps_original_audio(tmp_path
                              capture_output=True, text=True, timeout=20)
     assert decoded.returncode == 0, decoded.stderr
     assert "Video:" in decoded.stderr and "Audio:" in decoded.stderr
+
+def test_broll_review_blocks_pending_suggestions_until_explicit_approve_or_skip(tmp_path):
+    from engine.broll import sha256_file, save_review, validate_review_decisions
+
+    media = tmp_path / "candidate.mp4"
+    media.write_bytes(b"candidate bytes for exact identity")
+    report_path = tmp_path / "broll_review.json"
+    report_path.write_text(json.dumps({
+        "schema_version": 1,
+        "workflow": "production",
+        "candidates": [{
+            "candidate_id": "gap_01", "status": "ready", "path": str(media),
+            "sha256": sha256_file(media), "start": 1.0, "duration": 1.0,
+            "approved": False, "rights_reviewed": False, "decision": "pending",
+        }, {
+            "candidate_id": "gap_02", "status": "not_found", "path": "",
+            "search_error": "No matching stock video.", "approved": False,
+            "rights_reviewed": False, "decision": "pending",
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Explicitly approve or skip every suggestion"):
+        validate_review_decisions(str(report_path), workflow="production")
+
+    saved = save_review(str(report_path), {
+        "gap_01": {"decision": "approve", "rights_reviewed": True,
+                   "start": 1.0, "duration": 1.0},
+        "gap_02": {"decision": "skip"},
+    })
+    assert [x["decision"] for x in saved["candidates"]] == ["approved", "skipped"]
+    assert validate_review_decisions(str(report_path), workflow="production")["workflow"] == "production"
+
+
+def test_clip_studio_apply_requires_each_suggestion_decision_to_be_saved(tmp_path):
+    from engine.broll import apply_clip_studio_review
+
+    review_path = tmp_path / "clip_review.json"
+    review_path.write_text(json.dumps({
+        "schema_version": 1, "workflow": "clip_studio",
+        "candidates": [{"candidate_id": "clip_01", "status": "not_found",
+                         "path": "", "decision": "pending", "approved": False,
+                         "rights_reviewed": False}],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="Explicitly approve or skip every suggestion"):
+        apply_clip_studio_review(str(review_path))
+
+
+def test_stock_search_failure_is_recorded_without_exposing_request_details(tmp_path, monkeypatch):
+    import engine.broll as broll
+    from engine.providers.stock_provider import StockProvider
+
+    monkeypatch.setattr(StockProvider, "_pick_local", classmethod(lambda cls, query, excluded=None: None))
+    monkeypatch.setattr("engine.stock_video.get_stock_videos", lambda *a, **k: {
+        "clips": [], "metadata": [],
+        "errors": ["No matching API stock video; check PEXELS_API_KEY/PIXABAY_API_KEY and network access."],
+    })
+    candidates = broll._fetch_candidates(
+        [{"candidate_id": "cut_01", "query": "sunlight plants"}], str(tmp_path), True)
+    assert candidates[0]["status"] == "not_found"
+    assert "PEXELS_API_KEY/PIXABAY_API_KEY" in candidates[0]["search_error"]
+    assert "token=" not in candidates[0]["search_error"]

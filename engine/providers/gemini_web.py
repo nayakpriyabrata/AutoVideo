@@ -25,11 +25,15 @@ from ..runtime_log import runtime_print as print
 
 
 class GeminiWebAuthNeeded(RuntimeError):
-    pass
+    """The visible Gemini session needs a manual sign-in or consent action."""
 
 
 class GeminiWebUIChanged(RuntimeError):
-    pass
+    """A visible Gemini control or response could not be identified safely."""
+
+
+class GeminiWebComposerNotReady(GeminiWebUIChanged):
+    """A fresh Gemini page did not expose an editable composer within the wait."""
 
 
 def default_gemini_profile_dir() -> str:
@@ -85,21 +89,104 @@ class GeminiWebBrowser(FlowBrowser):
             "finish Google sign-in manually, then retry."
         )
 
+    @staticmethod
+    def _has_prompt_label(candidate) -> bool:
+        labels = []
+        for attribute in ("aria-label", "placeholder", "data-placeholder", "title"):
+            try:
+                labels.append(str(candidate.get_attribute(attribute) or ""))
+            except Exception:
+                continue
+        blob = " ".join(labels).lower()
+        return not re.search(r"\bsearch\b", blob) and bool(
+            re.search(r"\b(?:ask|prompt|message|question)\b|\bgemini\b", blob))
+
     def _prompt_box(self, timeout_ms: int = 1200):
-        # Gemini can retain hidden editors before the live composer in DOM order.
-        # The generic resolver checks .first only, so inspect visible matches here.
+        """Find an actually visible, editable Gemini composer, not a stale editor.
+
+        Gemini has used a textarea inside ``rich-textarea``, contenteditable
+        divs, and accessible textbox-role controls.  Do not rely on DOM order or
+        the first configured selector: old/hidden composers can remain mounted
+        during navigation and would make a fresh chat appear ready when it is
+        not.
+        """
+        selectors = (
+            "rich-textarea textarea",
+            "textarea",
+            "[contenteditable='true']",
+            "[contenteditable]:not([contenteditable='false'])",
+            "[role='textbox']",
+        )
+        for selector in selectors:
+            try:
+                matches = self._page.locator(selector)
+                for index in range(min(matches.count(), 30)):
+                    candidate = matches.nth(index)
+                    try:
+                        if (candidate.is_visible(timeout=100)
+                                and candidate.is_editable(timeout=100)
+                                and (selector != "[role='textbox']" or self._has_prompt_label(candidate))):
+                            return candidate
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        # Accessible role lookup also reaches custom controls that do not expose
+        # a conventional textarea in Gemini's light DOM. Keep the same strict
+        # visibility/editability requirement as the CSS path.
         try:
-            matches = self._page.locator("textarea, [contenteditable='true']")
+            matches = self._page.get_by_role(
+                "textbox", name=re.compile(r"(?:ask|prompt|message|question|gemini)", re.I))
             for index in range(min(matches.count(), 30)):
                 candidate = matches.nth(index)
-                if candidate.is_visible(timeout=100) and candidate.is_editable(timeout=100):
-                    return candidate
+                try:
+                    if (candidate.is_visible(timeout=100)
+                            and candidate.is_editable(timeout=100)):
+                        return candidate
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        try:
+            candidate = self._resolve("prompt_box", timeout_ms=timeout_ms)
+            role = str(candidate.get_attribute("role") or "").lower() if candidate is not None else ""
+            if (candidate is not None and candidate.is_visible(timeout=100)
+                    and candidate.is_editable(timeout=100)
+                    and (role != "textbox" or self._has_prompt_label(candidate))):
+                return candidate
+        except Exception:
+            pass
+        return None
+
+    def _click_visible_new_chat(self) -> bool:
+        """Click only an unambiguous visible New chat control; never submit text."""
+        candidates = []
+        try:
+            candidates.append(self._page.get_by_role(
+                "button", name=re.compile(r"^(?:new chat|start new chat|new conversation)$", re.I)))
         except Exception:
             pass
         try:
-            return self._resolve("prompt_box", timeout_ms=timeout_ms)
+            candidates.append(self._page.locator(
+                "button[aria-label*='new chat' i], button[title*='new chat' i]"))
         except Exception:
-            return None
+            pass
+        for matches in candidates:
+            try:
+                count = min(matches.count(), 10)
+                visible = []
+                for index in range(count):
+                    item = matches.nth(index)
+                    if item.is_visible(timeout=100) and item.is_enabled(timeout=100):
+                        visible.append(item)
+                if len(visible) == 1:
+                    visible[0].click(timeout=2500)
+                    return True
+            except Exception:
+                continue
+        return False
 
     @staticmethod
     def _clean_text(text: str) -> str:
@@ -245,19 +332,63 @@ class GeminiWebBrowser(FlowBrowser):
             raise GeminiWebUIChanged(f"Could not submit Gemini prompt: {e}") from e
 
     def start_fresh_chat(self):
-        """Navigate to the Gemini app root so each provider call is independent."""
+        """Open a blank Gemini page and wait a bounded time for its composer.
+
+        This is a pre-submit recovery only: it may navigate to the app root,
+        click one visible New chat control, and retry the root navigation once.
+        It never fills or submits a prompt. ``ask`` still verifies that the
+        resulting URL is not an existing conversation before doing either.
+        """
         target = self.ui.get("gemini_url") or "https://gemini.google.com/app"
+        try:
+            configured_wait = int(os.getenv("GEMINI_WEB_COMPOSER_WAIT_SECONDS", "45"))
+        except (TypeError, ValueError):
+            configured_wait = 45
+        wait_seconds = max(5, min(90, configured_wait))
+        started = time.time()
+        deadline = started + wait_seconds
+        clicked_new_chat = False
+        retried_root = False
         try:
             self._page.goto(target, timeout=90000, wait_until="domcontentloaded")
         except Exception:
-            # If the current page is still usable, let the composer check decide.
+            # A retained visible session can still recover if the root route is
+            # already loaded; the URL/old-chat guard in ask() remains authoritative.
             pass
-        deadline = time.time() + 20
+
         while time.time() < deadline:
-            if self._prompt_box(timeout_ms=500):
+            try:
+                url = str(self._page.url or "").lower()
+            except Exception:
+                url = ""
+            if "accounts.google.com" in url or "/signin" in url:
+                raise GeminiWebAuthNeeded(
+                    "Gemini opened a Google sign-in page. Complete sign-in manually in the visible browser, "
+                    "then retry; AutoVideoAI will not handle credentials or bypass consent/CAPTCHA."
+                )
+            if self._prompt_box(timeout_ms=350):
                 return
-            time.sleep(0.5)
-        raise GeminiWebUIChanged("Gemini composer did not become ready after opening a fresh chat")
+
+            elapsed = time.time() - started
+            if not clicked_new_chat and elapsed >= min(5.0, wait_seconds * 0.25):
+                clicked_new_chat = self._click_visible_new_chat()
+            if not retried_root and elapsed >= wait_seconds * 0.65:
+                retried_root = True
+                # Do not navigate away from a conversation if the first root
+                # navigation failed; ask() must refuse any old chat ID.
+                if not self._chat_id(url):
+                    try:
+                        self._page.goto(target, timeout=30000, wait_until="domcontentloaded")
+                    except Exception:
+                        pass
+            time.sleep(0.4)
+
+        raise GeminiWebComposerNotReady(
+            "Gemini's fresh-chat composer did not expose a visible editable prompt box "
+            f"within {wait_seconds} seconds. Confirm the visible browser is signed in, dismiss any "
+            "consent/dialog overlay, and check whether Gemini's composer UI has changed before retrying. "
+            "No prompt was submitted."
+        )
 
     @staticmethod
     def _chat_id(url: str) -> str:

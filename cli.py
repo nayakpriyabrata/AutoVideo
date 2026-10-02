@@ -325,14 +325,21 @@ def main_v3(argv):
     cl.add_argument("--rights-confirmed", action="store_true",
                     help="legacy compatibility flag; prefer the specific --source-rights declaration")
     cl.add_argument("--background-music", default="",
-                    help="optional local licensed music file mixed softly under the source")
+                    help="optional local music file; omit it to let the selected Internet/local source find a track")
     cl.add_argument("--background-music-enabled", action=argparse.BooleanOptionalAction, default=None,
-                    help="explicit optional music switch; off ignores any saved music path")
+                    help="explicit optional music switch; --background-music-enabled without a path searches Pixabay by default")
+    cl.add_argument("--background-music-source", default="pixabay",
+                    choices=["pixabay", "local", "auto"],
+                    help="music source when enabled without a local path (default: Pixabay Internet search)")
+    cl.add_argument("--music-mood", default="soft ambient instrumental",
+                    help="short search phrase for Internet/local music selection")
+    cl.add_argument("--music-source-url", default="",
+                    help="optional source/attribution page for a user-supplied local music file")
     cl.add_argument("--language", choices=['en','hi','or'],default='en')
     cl.add_argument("--music-license", default="none",
                     choices=["none", "own", "youtube_audio_library",
                              "royalty_free_licensed", "creative_commons"],
-                    help="required declaration when --background-music is used")
+                    help="deprecated legacy provenance field; music selection no longer requires an acknowledgement")
     cl.add_argument("--music-volume", type=float, default=0.08,
                     help="background music gain from 0.0 to 0.35 (default 0.08)")
     clf = sub.add_parser("clip-config", help="Create highlights from a simple YAML input file")
@@ -452,6 +459,7 @@ def main_v3(argv):
             "caption_provider", "ranking_provider", "source_rights",
             "background_music", "music_license", "music_volume", "gemini_model",
             "gemini_chat_cleanup", "framing", "language", "background_music_enabled",
+            "background_music_source", "music_mood", "background_music_source_url",
         }
         unknown = sorted(set(clip_cfg) - allowed)
         if unknown:
@@ -469,6 +477,9 @@ def main_v3(argv):
             source_rights=str(clip_cfg.get("source_rights") or "unknown"),
             background_music=str(clip_cfg.get("background_music") or ""),
             music_license=str(clip_cfg.get("music_license") or "none"),
+            background_music_source=str(clip_cfg.get("background_music_source") or "pixabay"),
+            music_mood=str(clip_cfg.get("music_mood") or "soft ambient instrumental"),
+            background_music_source_url=str(clip_cfg.get("background_music_source_url") or ""),
             music_volume=float(clip_cfg.get("music_volume", 0.08)),
             gemini_model=str(clip_cfg.get("gemini_model") or ""),
             framing=str(clip_cfg.get("framing") or "face-crop"),
@@ -489,6 +500,9 @@ def main_v3(argv):
             background_music_enabled=args.background_music_enabled,
             background_music=args.background_music,
             music_license=args.music_license,
+            background_music_source=args.background_music_source,
+            music_mood=args.music_mood,
+            background_music_source_url=args.music_source_url,
             music_volume=args.music_volume,
             gemini_model=args.gemini_model,
             framing=args.framing,

@@ -142,13 +142,16 @@ def test_gemini_candidates_are_snapped_and_locally_verified():
     assert 0 < verified[0]["score"] <= 100
 
 
-def test_music_file_requires_license_declaration(tmp_path):
-    from engine.clipping import create_highlight_clips
+def test_local_music_needs_no_music_specific_acknowledgement(tmp_path, monkeypatch):
+    import engine.clipping as clipping
 
     source = tmp_path / "mine.mp4"
     music = tmp_path / "music.mp3"
     source.write_bytes(b"video")
     music.write_bytes(b"music")
-    with pytest.raises(RuntimeError, match="music-license"):
-        create_highlight_clips(str(source), str(tmp_path / "out"),
-                               background_music=str(music), music_license="none")
+    monkeypatch.setattr(clipping, "resolve_input",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("source stage reached")))
+    with pytest.raises(RuntimeError, match="source stage reached"):
+        clipping.create_highlight_clips(
+            str(source), str(tmp_path / "out"), background_music=str(music),
+            music_license="none", source_rights="own_content")

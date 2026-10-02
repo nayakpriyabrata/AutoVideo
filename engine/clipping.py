@@ -739,6 +739,14 @@ def framing_filter(mode, face_x=.5):
             "scale=1080:1920:flags=lanczos,setsar=1")
 
 
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def soft_music_filter(duration, volume=.08):
     """Keep source speech at unity gain; stereo, gentle bed and sidechain ducking."""
     if type(volume) not in (int,float) or not math.isfinite(volume) or not 0 <= volume <= .35:
@@ -764,7 +772,9 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
                            gemini_model: str = "",
                            gemini_chat_cleanup: str = "delete-after-read",
                            framing: str = "face-crop", background_music_enabled: bool | None = None,
-                           language: str = "en") -> dict:
+                           language: str = "en", background_music_source: str = "pixabay",
+                           music_mood: str = "soft ambient instrumental",
+                           background_music_source_url: str = "") -> dict:
     from .languages import language_pack
     language = language_pack(language).code
     if language == 'or':
@@ -773,8 +783,9 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         raise ValueError('background_music_enabled must be true or false')
     if background_music_enabled is False:
         background_music = ''
-    elif background_music_enabled is True and not str(background_music).strip():
-        raise ValueError('Choose a licensed local music file or disable background music')
+    music_source = str(background_music_source or "pixabay").strip().lower()
+    if music_source not in {"pixabay", "internet", "browser", "auto", "local"}:
+        raise ValueError("Background music source must be pixabay, local, or auto.")
     if type(music_volume) not in (int,float) or not math.isfinite(music_volume) or not 0 <= music_volume <= .35:
         raise ValueError('Soft background music gain must be finite and between 0 and 0.35')
     framing_filter(framing)  # Validate before downloads or paid providers.
@@ -792,18 +803,59 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
     rights = _rights_policy(source, source_rights, rights_confirmed)
     for warning in rights["warnings"]:
         emit("Rights notice", 1, warning)
-    music_license = str(music_license or "none").strip().lower()
-    if music_license not in MUSIC_LICENSES:
-        raise RuntimeError("Invalid --music-license: " + music_license)
+    # Kept as a backwards-compatible legacy report field only. Music selection
+    # no longer has a separate acknowledgement gate; the independent source
+    # video rights confirmation above is unchanged.
+    legacy_music_declaration = str(music_license or "none").strip().lower()
+    if legacy_music_declaration not in MUSIC_LICENSES:
+        legacy_music_declaration = ""
     background_music = str(background_music or "").strip()
+    background_music_source_url = str(background_music_source_url or "").strip()[:500]
+    music_mood = str(music_mood or "soft ambient instrumental").strip()[:180] or "soft ambient instrumental"
+    music_volume = float(music_volume)
+    music_meta = {"source": "off", "license": "", "page_url": "", "creator": "",
+                  "asset_name": "", "asset_id": "", "sha256": "", "query": "",
+                  "provenance_note": "Background music is off."}
     if background_music:
         if not os.path.isfile(background_music):
             raise FileNotFoundError(background_music)
-        if music_license == "none":
+        music_meta = {
+            "source": "local-file",
+            "license": (legacy_music_declaration if legacy_music_declaration not in {"", "none"}
+                        else "User-supplied file; verify its licence"),
+            "page_url": background_music_source_url,
+            "creator": "",
+            "asset_name": os.path.basename(background_music),
+            "asset_id": "",
+            "sha256": _file_sha256(background_music),
+            "query": music_mood,
+            "provenance_note": "Local file; AutoVideoAI does not verify publication rights or required attribution.",
+        }
+    elif background_music_enabled is True:
+        if music_source in {"pixabay", "internet", "browser"}:
+            lookup_mode = "pixabay"
+        else:
+            lookup_mode = music_source
+        emit("Finding optional soft background music", 3,
+             "Searching Pixabay" if lookup_mode == "pixabay" else "Checking the configured local music library")
+        from .audio.music_provider import ensure_background_music
+        fetched = ensure_background_music(music_mood, work, mode=lookup_mode)
+        fetched_path = str(fetched.get("path") or "")
+        if not fetched_path or not os.path.isfile(fetched_path):
+            reason = str(fetched.get("error") or "no matching track was found")
             raise RuntimeError(
-                "--background-music requires --music-license. Use only music you own "
-                "or have permission/licence to publish.")
-    music_volume = float(music_volume)
+                "Background music was selected but could not be obtained: " + reason +
+                " Use a different search phrase, choose a local file, or turn music off.")
+        background_music = os.path.abspath(fetched_path)
+        music_meta = {key: fetched.get(key, "") for key in (
+            "source", "license", "license_url", "page_url", "creator", "asset_name",
+            "asset_id", "sha256", "query", "provenance_note")}
+        music_meta["source"] = str(music_meta.get("source") or
+                                     ("pixabay-browser" if lookup_mode == "pixabay" else "local-library"))
+        music_meta["provenance_note"] = str(
+            music_meta.get("provenance_note") or
+            "Review the exact item page/current terms; publication rights are not independently verified.")
+        music_meta["sha256"] = str(music_meta.get("sha256") or _file_sha256(background_music))
     emit("Preparing source", 5)
     local = resolve_input(source, work, rights_confirmed=rights_confirmed,
                           source_rights=source_rights)
@@ -889,6 +941,9 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
     outputs = []
     used_names: set[str] = {p.stem for p in Path(output_dir).glob("*.mp4")}
     for i, h in enumerate(highlights, 1):
+        if background_music and music_meta.get("sha256"):
+            if _file_sha256(background_music) != music_meta["sha256"]:
+                raise RuntimeError("Selected background music changed after review; no clip using the altered track was rendered.")
         emit(f"Rendering highlight {i}/{len(highlights)}", 25 + int(70 * (i-1) / len(highlights)))
         clip_words = _clip_word_timings(words, float(h["start"]), float(h["end"]))
         cap = build_captions(clip_words, os.path.join(work, f"clip_{i:02d}"),
@@ -969,9 +1024,23 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
               "ranking_requested": requested_ranking,
               "ranking_fallback_reason": ranking_fallback,
               "method": method,
-              "music": {"path": background_music or None,
-                        "license_declaration": music_license,
-                        "volume": music_volume if background_music else 0},
+              "music": {
+                  "enabled": bool(background_music),
+                  "path": background_music or None,
+                  "source": str(music_meta.get("source") or ("off" if not background_music else "local-file")),
+                  "license": str(music_meta.get("license") or ""),
+                  "license_url": str(music_meta.get("license_url") or ""),
+                  "page_url": str(music_meta.get("page_url") or "")[:500],
+                  "creator": str(music_meta.get("creator") or "")[:160],
+                  "asset_name": str(music_meta.get("asset_name") or "")[:160],
+                  "asset_id": str(music_meta.get("asset_id") or "")[:100],
+                  "sha256": str(music_meta.get("sha256") or ""),
+                  "query": str(music_meta.get("query") or music_mood)[:180] if background_music else "",
+                  "legacy_license_declaration": (legacy_music_declaration
+                                                  if legacy_music_declaration not in {"", "none"} else None),
+                  "provenance_note": str(music_meta.get("provenance_note") or "")[:300],
+                  "volume": music_volume if background_music else 0,
+              },
               "highlights": highlights, "outputs": outputs}
     with open(os.path.join(output_dir, "highlights.json"), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)

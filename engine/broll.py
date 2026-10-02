@@ -67,9 +67,16 @@ def _search_query(text: str) -> str:
         "under", "very", "what", "when", "where", "which", "while",
         "with", "would", "your", "you", "are", "can", "for", "how",
         "its", "not", "our", "the", "and", "but", "was", "were", "will",
-        "from", "has", "had", "his", "her", "she", "him", "his", "who",
+        "has", "had", "his", "her", "she", "him", "who", "need", "needs",
+        "into", "while", "make", "makes", "show", "shows", "using", "used",
+        "background", "cinematic", "macro", "closeup", "close-up", "shot",
+        "camera", "view", "video", "clip", "scene", "demonstrate", "action",
+        "framing", "portrait", "vertical", "quality", "visually", "natural",
+        "reel", "highlight", "footage", "broll", "b-roll", "people",
     }
-    words = re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", str(text or "").lower())
+    # Preserve non-Latin transcript keywords too. Users can add an English hint
+    # in the review UI when a stock provider does not index their language well.
+    words = re.findall(r"[^\W_][\w'-]{2,}", str(text or "").lower(), flags=re.UNICODE)
     picked = []
     for word in words:
         word = word.strip("'-")
@@ -153,6 +160,10 @@ def _fetch_candidates(slots: list[dict], assets_dir: str, vertical: bool) -> lis
                 excluded_assets=excluded)
             clips = result.get("clips") or []
             metadata = result.get("metadata") or []
+            if not clips:
+                errors = [str(x).strip() for x in (result.get("errors") or []) if str(x).strip()]
+                slot["search_error"] = (" ".join(errors[:2])[:360] or
+                                        "No matching downloadable stock video was found. Check the stock source and network settings.")
             if clips:
                 meta = metadata[0] if metadata else {"source": result.get("source", "stock")}
                 source = str(meta.get("source") or result.get("source") or "stock")
@@ -171,7 +182,12 @@ def _fetch_candidates(slots: list[dict], assets_dir: str, vertical: bool) -> lis
                         except OSError:
                             pass
         except Exception as exc:
-            slot["search_error"] = f"{type(exc).__name__}: {str(exc)[:240]}"
+            # Never echo request exception strings: API/media URLs can contain
+            # credentials or signed-download tokens.
+            slot["search_error"] = (
+                f"Stock search failed ({type(exc).__name__}). Check network/source settings and retry; "
+                "no substitute clip was inserted."
+            )
 
     out: list[dict] = []
     for index, slot in enumerate(slots):
@@ -237,12 +253,15 @@ def prepare_review(review_path: str, slots: list[dict], *, workflow: str,
         slot.setdefault("duration", float(default_duration))
         slot.setdefault("approved", False)
         slot.setdefault("rights_reviewed", False)
+        slot.setdefault("decision", "pending")
+    review_id = str(time.time_ns())
     assets_dir = os.path.join(os.path.dirname(review_path), "broll",
-                              f"{Path(review_path).stem}-{time.time_ns()}")
+                              f"{Path(review_path).stem}-{review_id}")
     candidates = _fetch_candidates(selected, assets_dir, bool(vertical))
     report = {
         "schema_version": REVIEW_SCHEMA,
         "workflow": str(workflow),
+        "review_id": review_id,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "review_required": True,
         "audio_policy": "visual_only_preserve_existing_audio_and_duration",
@@ -262,7 +281,7 @@ def load_review(review_path: str) -> dict:
 
 
 def save_review(review_path: str, updates: dict[str, dict]) -> dict:
-    """Persist exact-file approvals plus the user's placement and duration edits."""
+    """Persist an explicit approve/skip decision and exact-file review state."""
     report = load_review(review_path)
     if not isinstance(updates, dict):
         raise ValueError("B-roll review edits must be a mapping.")
@@ -270,9 +289,39 @@ def save_review(review_path: str, updates: dict[str, dict]) -> dict:
         update = updates.get(candidate.get("candidate_id"), {})
         if not update:
             continue
+        requested = str(update.get("decision") or "").strip().lower()
+        if not requested:
+            # Backward-compatible callers can still submit the old approval
+            # fields. An unchecked approval is pending, never an implicit skip.
+            requested = "approve" if bool(update.get("approved")) else "pending"
+        if requested in {"approved", "approve"}:
+            requested = "approve"
+        elif requested in {"skipped", "skip"}:
+            requested = "skip"
+        elif requested in {"pending", ""}:
+            requested = "pending"
+        else:
+            raise ValueError("B-roll decision must be approve, skip, or pending.")
+
+        if requested == "skip":
+            candidate["decision"] = "skipped"
+            candidate["approved"] = False
+            candidate["rights_reviewed"] = False
+            candidate["status"] = "skipped"
+            continue
+        if requested == "pending":
+            candidate["decision"] = "pending"
+            candidate["approved"] = False
+            candidate["rights_reviewed"] = False
+            if candidate.get("status") == "approved":
+                candidate["status"] = "pending_review"
+            continue
+
         path = str(candidate.get("path") or "")
-        same_file = bool(path and os.path.isfile(path) and sha256_file(path) == candidate.get("sha256"))
+        same_file = bool(path and os.path.isfile(path)
+                         and sha256_file(path) == candidate.get("sha256"))
         if not same_file:
+            candidate["decision"] = "pending"
             candidate["approved"] = False
             candidate["rights_reviewed"] = False
             candidate["status"] = "asset_changed"
@@ -289,15 +338,40 @@ def save_review(review_path: str, updates: dict[str, dict]) -> dict:
         candidate["start"] = round(start, 3)
         candidate["duration"] = round(duration, 3)
         candidate["rights_reviewed"] = bool(update.get("rights_reviewed", False))
-        candidate["approved"] = bool(update.get("approved", False)) and candidate["rights_reviewed"]
-        if candidate["approved"]:
-            candidate["status"] = "approved"
-        elif candidate.get("status") == "ready":
-            candidate["status"] = "pending_review"
+        candidate["approved"] = candidate["rights_reviewed"]
+        candidate["decision"] = "approved" if candidate["approved"] else "pending"
+        candidate["status"] = "approved" if candidate["approved"] else "pending_review"
     report.pop("path", None)
     report["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     _write_json(review_path, report)
     return load_review(review_path)
+
+
+def validate_review_decisions(review_path: str, workflow: str | None = None) -> dict:
+    """Require a deliberate approve-or-skip decision for every suggestion."""
+    report = load_review(review_path)
+    if workflow and report.get("workflow") != workflow:
+        raise ValueError(f"This B-roll review does not belong to {workflow}.")
+    pending = []
+    for candidate in report.get("candidates", []):
+        decision = str(candidate.get("decision") or "").lower()
+        if not decision:
+            # Migrate a previously saved approval only when both checks were
+            # already persisted; an unchecked suggestion is never a skip.
+            decision = ("approved" if candidate.get("approved") and candidate.get("rights_reviewed")
+                        else "pending")
+        if decision not in {"approved", "skipped"}:
+            pending.append(str(candidate.get("candidate_id") or "candidate"))
+        elif decision == "approved" and not (candidate.get("approved") and candidate.get("rights_reviewed")):
+            pending.append(str(candidate.get("candidate_id") or "candidate"))
+        elif decision == "skipped" and (candidate.get("approved") or candidate.get("rights_reviewed")):
+            pending.append(str(candidate.get("candidate_id") or "candidate"))
+    if pending:
+        raise ValueError(
+            "B-roll review is incomplete. Explicitly approve or skip every suggestion and save decisions: "
+            + ", ".join(pending[:10])
+        )
+    return report
 
 
 def approved_video_overlays(review_path: str, total_duration: float) -> list[dict]:
@@ -310,6 +384,8 @@ def approved_video_overlays(review_path: str, total_duration: float) -> list[dic
         raise ValueError("Rendered timeline duration is invalid.")
     result = []
     for candidate in report.get("candidates", []):
+        if str(candidate.get("decision") or "").lower() == "skipped":
+            continue
         if not (candidate.get("approved") and candidate.get("rights_reviewed")):
             continue
         path = os.path.abspath(str(candidate.get("path") or ""))
@@ -331,7 +407,8 @@ def approved_video_overlays(review_path: str, total_duration: float) -> list[dic
     return result
 
 
-def _job_slots(factory, job_id: str, max_candidates: int, default_duration: float) -> tuple[list[dict], bool]:
+def _job_slots(factory, job_id: str, max_candidates: int, default_duration: float,
+               query_hint: str = "") -> tuple[list[dict], bool]:
     manifest = factory.pm.load_manifest(job_id)
     shots = list(manifest.shots or [])
     if len(shots) < 2:
@@ -344,7 +421,7 @@ def _job_slots(factory, job_id: str, max_candidates: int, default_duration: floa
     boundaries = []
     for index, (previous, following) in enumerate(zip(shots, shots[1:]), 1):
         context = " ".join(filter(None, [
-            getattr(previous, "stock_query", ""), previous.subject, previous.visual_goal,
+            query_hint, getattr(previous, "stock_query", ""), previous.subject, previous.visual_goal,
             previous.environment, getattr(following, "stock_query", ""), following.subject,
             following.visual_goal, following.environment, following.narration,
         ]))
@@ -375,10 +452,11 @@ def _job_slots(factory, job_id: str, max_candidates: int, default_duration: floa
 
 
 def prepare_job_review(factory, job_id: str, max_candidates: int = 3,
-                       default_duration: float = 2.0, replace: bool = False) -> tuple[str, dict]:
+                       default_duration: float = 2.0, replace: bool = False,
+                       query_hint: str = "") -> tuple[str, dict]:
     if type(max_candidates) is not int or not 1 <= max_candidates <= MAX_CANDIDATES:
         raise ValueError(f"Candidate limit must be 1–{MAX_CANDIDATES}.")
-    slots, vertical = _job_slots(factory, job_id, max_candidates, default_duration)
+    slots, vertical = _job_slots(factory, job_id, max_candidates, default_duration, query_hint=query_hint)
     dirs = factory.pm.dirs(job_id)
     review_path = os.path.join(dirs["render"], "broll_review.json")
     review = prepare_review(review_path, slots, workflow="production", max_candidates=max_candidates,
@@ -409,7 +487,8 @@ def _ensure_clip_caption_path(highlight: dict, output_dir: str) -> str:
 
 def prepare_clip_studio_review(result: dict, max_candidates: int = 3,
                                default_duration: float = 2.0,
-                               replace: bool = False) -> tuple[str, dict]:
+                               replace: bool = False,
+                               query_hint: str = "") -> tuple[str, dict]:
     highlights = list(result.get("highlights") or [])
     if not highlights:
         raise ValueError("No rendered highlights are available for B-roll review.")
@@ -438,7 +517,11 @@ def prepare_clip_studio_review(result: dict, max_candidates: int = 3,
             "candidate_id": f"clip_{index:02d}_{_safe_id(Path(output).stem)}",
             "slot_id": f"clip_{index:02d}",
             "label": f"Cutaway inside {Path(output).name}",
-            "query": str(highlight.get("text") or highlight.get("title") or ""),
+            "query": " ".join(filter(None, [
+                str(query_hint or "").strip(),
+                str(highlight.get("title") or "").strip(),
+                str(highlight.get("text") or "").strip(),
+            ])),
             "start": start,
             "duration": cut_duration,
             "clip_output": output,
@@ -547,9 +630,7 @@ def _render_clip_studio_cutaway(candidate: dict) -> str:
 def apply_clip_studio_review(review_path: str) -> dict:
     """Render approved cutaways as separate files; the original highlights survive."""
     review_path = os.path.abspath(review_path)
-    report = load_review(review_path)
-    if report.get("workflow") != "clip_studio":
-        raise ValueError("This B-roll review does not belong to CLIP STUDIO.")
+    report = validate_review_decisions(review_path, workflow="clip_studio")
     applied, skipped = [], []
     for candidate in report.get("candidates", []):
         if not (candidate.get("approved") and candidate.get("rights_reviewed")):

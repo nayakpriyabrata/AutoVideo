@@ -11,14 +11,14 @@ The Facebook share link could not be fetched from the development environment (H
 1. Finish and accept the production shots as usual.
 2. Open **RENDER → Optional related stock B-roll cutaways**.
 3. Choose a bounded suggestion count/duration and explicitly click **Find related stock cutaways**.
-4. Preview each downloaded candidate, review its source/licence, adjust its position and length, check the rights declaration, and approve only the exact files you want.
-5. Click **Save cutaway approvals**, then render.
+4. Preview each downloaded candidate, review its source/licence, adjust its position and length, then explicitly choose **Approve** (with rights review) or **Skip** for every suggestion. A pending suggestion blocks the production render.
+5. Click **Save cutaway decisions**, then render.
 
 Approved cutaways default to scene boundaries. They replace only the picture for the selected time; existing narration, music, captions, overall timeline length, and the accepted scene media are preserved. The B-roll render is written as a separate `*-final-broll.mp4`; the normal `*-final.mp4` remains untouched. A failed B-roll render does not silently fall back to an edit without the approved cutaways.
 
 ## CLIP STUDIO highlights
 
-Enable **Optional: find related stock B-roll cutaways for these highlights** after creating the source-derived clips. Click **Search related stock**, preview the original highlight beside the exact stock candidate, adjust the cutaway time/length, confirm the asset rights, save approvals, and click **Apply saved cutaways to separate copies**.
+Enable **Optional: find related stock B-roll cutaways for these highlights** after creating the source-derived clips. The suggestion count only limits the search; it does not insert footage. Click **Search related stock**, preview the original highlight beside each exact stock candidate, adjust the cutaway time/length, then explicitly choose **Approve** (with rights review) or **Skip** for every suggestion. Save decisions before clicking **Apply saved cutaways to separate copies**. Pending decisions cannot be applied.
 
 Each approved B-roll edit is a new `*-broll-*.mp4`. Existing highlight files and their original audio remain unchanged. Since CLIP STUDIO currently emits separate highlight files, the cutaway is placed inside each selected highlight; this does not create a single compilation from all highlights.
 

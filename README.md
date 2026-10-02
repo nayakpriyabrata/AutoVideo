@@ -286,7 +286,7 @@ cp clip_config.yaml my_clip.yaml
 python3 cli.py v3 clip-config my_clip.yaml
 ```
 
-The dashboard also has **CLIP STUDIO**, with the same Gemini/local selection, rights, duration and licensed-music controls. v6.0.7 adds an optional, preview-first related stock B-roll cutaway step for production renders and individual Clip Studio highlights; see [the cutaway guide](V6_0_7_REVIEW_FIRST_BROLL.md).
+The dashboard also has **CLIP STUDIO**, with the same Gemini/local selection, source-rights confirmation, duration and optional-music controls. Choosing a B-roll suggestion count only sets a search limit; each exact suggestion must be previewed and explicitly approved or skipped before it can be rendered. v6.0.7 added the preview-first cutaway workflow for production renders and individual Clip Studio highlights; see [the cutaway guide](V6_0_7_REVIEW_FIRST_BROLL.md).
 
 For a public YouTube URL, `--ranking-provider gemini-hybrid` now follows this visible chain:
 
@@ -306,14 +306,23 @@ Temporary browser-analysis chats default to `delete-after-read`. Override with `
 
 Downloads prefer H.264/AVC instead of AV1 for WSL compatibility. Five-minute mono audio chunks reduce Groq upload size. FFmpeg burns active-word captions without an opaque card. Optional `--framing fit` preserves the full source picture inside a 1080×1920 canvas with coloured padding. This prevents another destructive crop but cannot recover a face already cropped in the source file. The restored default `--framing face-crop` uses one median face position per clip; it is not active-speaker tracking and can miss people after camera cuts. Use the original uncropped video as input.
 
-Optional quiet background music requires a specific licence declaration:
+Optional quiet background music has no separate music-acknowledgement gate. Keep it off by default, or explicitly turn it on to search Pixabay for a soft instrumental bed. The exact source page, licence label and file SHA-256 are retained in `highlights.json`; review the item page and current terms rather than treating a provider label as automatic clearance. YouTube Audio Library remains a YouTube Studio/manual-download workflow; some tracks require attribution. Download those tracks yourself and record the source/credit in CLIP STUDIO or with `--music-source-url`.
 
 ```bash
-python3 cli.py v3 clip "my-video.mp4" \
-  --source-rights own_content --output outputs/my-clips \
-  --background-music "assets/music/licensed.mp3" \
-  --music-license youtube_audio_library --music-volume 0.08
+python3 cli.py v3 clip "my-video.mp4" --source-rights own_content \
+  --background-music-enabled --background-music-source pixabay \
+  --music-mood "soft ambient instrumental" --music-volume 0.08
 ```
+
+A local track needs no music-specific declaration:
+
+```bash
+python3 cli.py v3 clip "my-video.mp4" --source-rights own_content \
+  --background-music "assets/music/my-track.mp3" \
+  --music-source-url "https://example.com/track-page" --music-volume 0.08
+```
+
+The source-video rights confirmation remains separate and unchanged.
 
 Accepted source declarations are `own_content`, `written_permission`, `licensed_content`, `creative_commons`, `public_domain`, `commentary_or_review`, and `private_draft_only`. The declaration and warnings are saved in the report. `--rights-confirmed` remains available only for compatibility with older commands.
 

@@ -1,4 +1,4 @@
-"""Isolated browser helper for public royalty-free stock video/music.
+"""Isolated browser helper for searching public stock-video/music candidates.
 
 This module is run as a subprocess. It intentionally does not share Playwright
 objects with Gemini or Flow. API providers remain preferred when keys exist;
@@ -82,6 +82,29 @@ def _download(url: str, out: str, referer: str) -> bool:
         return False
 
 
+def _page_metadata(page) -> dict:
+    """Best-effort visible item/creator metadata; do not retain media URL fields."""
+    result = {}
+    try:
+        heading = page.locator("h1").first
+        if heading.count() and heading.is_visible(timeout=500):
+            result["asset_name"] = (heading.inner_text(timeout=1000) or "").strip()[:160]
+    except Exception:
+        pass
+    try:
+        links = page.locator("a[href*='/users/']")
+        for index in range(min(links.count(), 10)):
+            link = links.nth(index)
+            if link.is_visible(timeout=200):
+                name = (link.inner_text(timeout=500) or "").strip()
+                if name and len(name) <= 160:
+                    result["creator"] = name
+                    break
+    except Exception:
+        pass
+    return result
+
+
 def run(kind: str, query: str, out: str) -> dict:
     from playwright.sync_api import sync_playwright
     profile = os.path.expanduser("~/.local/share/autovideoai/stock-media-profile")
@@ -132,7 +155,8 @@ def run(kind: str, query: str, out: str) -> dict:
                     for media_url in urls[:12]:
                         if _download(media_url, out, page.url):
                             meta = {"path": out, "source": source, "query": query,
-                                    "source_page": page.url, "media_url": media_url,
+                                    "source_page": page.url, "page_url": page.url,
+                                    "media_url": media_url, **_page_metadata(page),
                                     "license": license_name, "downloaded_at": int(time.time())}
                             with open(out + ".source.json", "w", encoding="utf-8") as f:
                                 json.dump(meta, f, indent=2)

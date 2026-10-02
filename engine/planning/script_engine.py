@@ -288,8 +288,17 @@ def _call_provider(provider: str, model: str, system: str, user: str) -> str:
     if p == "gemini":
         return _gemini(system, user, model)
     if p == "gemini-web":
-        from ..providers.gemini_web import gemini_web_generate
-        return gemini_web_generate(system, user, model)
+        from ..providers.gemini_web import (
+            GeminiWebAuthNeeded, GeminiWebComposerNotReady, gemini_web_generate,
+        )
+        try:
+            return gemini_web_generate(system, user, model)
+        except (GeminiWebAuthNeeded, GeminiWebComposerNotReady) as exc:
+            # These failures happen before prompt submission and cannot improve
+            # by creating two more fresh chats. Surface the actionable UI state
+            # instead of spending the quality-mode retry budget on the same
+            # unavailable composer/session.
+            raise ScriptProviderError(f"Gemini Web is not ready: {exc}") from exc
     if p == "groq":
         return _openai_compatible("https://api.groq.com/openai/v1",
                                   os.environ["GROQ_API_KEY"], model, system, user, p)
@@ -895,7 +904,12 @@ def generate_script_plan(topic: str, content_type: str, duration_sec: int,
                 continue
 
             except Exception as e:
-                if isinstance(e, (ScriptProviderError, ScriptQualityError)):
+                if isinstance(e, ScriptQualityError):
+                    raise
+                if isinstance(e, ScriptProviderError):
+                    if requested == "auto":
+                        errors.append(f"{p}:provider_error:{str(e)[:220]}")
+                        break
                     raise
                 if _is_rate_limited(e):
                     errors.append(f"{p}:rate_limited:HTTP429")

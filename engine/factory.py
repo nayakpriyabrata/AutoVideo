@@ -2877,7 +2877,8 @@ class Factory:
         broll_review_path = os.path.join(D["render"], "broll_review.json")
         video_cutaways = []
         if os.path.isfile(broll_review_path):
-            from .broll import approved_video_overlays
+            from .broll import approved_video_overlays, validate_review_decisions
+            validate_review_decisions(broll_review_path, workflow="production")
             video_cutaways = approved_video_overlays(broll_review_path, float(tl.get("total", ndur)))
         words_p = voice_path + ".words.json"
         words = json.load(open(words_p, encoding="utf-8")) if voice and os.path.exists(words_p) else []

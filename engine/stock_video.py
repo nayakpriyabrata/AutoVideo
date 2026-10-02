@@ -39,7 +39,7 @@ def _pexels_clip(query: str, vertical: bool, used_ids: set):
             timeout=25,
         )
         if r.status_code != 200:
-            print(f"Pexels: {r.status_code} {r.text[:120]}")
+            print(f"Pexels stock search returned HTTP {r.status_code}.")
             return None
         for v in r.json().get("videos", []):
             if v.get("id") in used_ids:
@@ -51,7 +51,9 @@ def _pexels_clip(query: str, vertical: bool, used_ids: set):
                         "asset_id": v.get("id"), "page_url": v.get("url", ""),
                         "creator": ((v.get("user") or {}).get("name") or "")}
     except Exception as e:
-        print(f"Pexels failed: {e}")
+        # Exception strings can contain request URLs/headers; keep credentials
+        # out of logs and surface a generic search failure instead.
+        print(f"Pexels stock search failed ({type(e).__name__}).")
     return None
 
 
@@ -77,7 +79,8 @@ def _pixabay_clip(query: str, vertical: bool, page: int, used_ids=None):
                             "asset_id": v.get("id"), "page_url": v.get("pageURL", ""),
                             "creator": v.get("user", "")}
     except Exception as e:
-        print(f"Pixabay failed: {e}")
+        # Requests exceptions may echo Pixabay's API-key query parameter.
+        print(f"Pixabay stock search failed ({type(e).__name__}).")
     return None
 
 
@@ -90,7 +93,8 @@ def _download(url: str, path: str) -> bool:
                 f.write(ch)
         return os.path.getsize(path) > 50000
     except Exception as e:
-        print(f"stock download failed: {e}")
+        # Signed media URLs are not useful diagnostics and can contain tokens.
+        print(f"Stock media download failed ({type(e).__name__}).")
         return False
 
 
@@ -107,9 +111,15 @@ def _browser_clip(query: str, workdir: str, idx: int) -> tuple[str | None, dict]
             except Exception:
                 pass
             return out, meta
-        return None, {"source": "browser-stock", "error": (cp.stderr or cp.stdout or "browser stock lookup failed")[-400:]}
+        detail = (cp.stderr or cp.stdout or "").strip()
+        if "No downloadable stock media found" in detail:
+            reason = "No downloadable matching stock video was found by the browser search."
+        else:
+            reason = "Browser stock search did not complete; check network access and browser dependencies."
+        return None, {"source": "browser-stock", "error": reason}
     except Exception as e:
-        return None, {"source": "browser-stock", "error": str(e)[:400]}
+        return None, {"source": "browser-stock",
+                      "error": f"Browser stock search failed ({type(e).__name__}); check network access and browser dependencies."}
 
 
 def get_stock_videos(scenes: list, topic: str, workdir: str, vertical: bool = True,
@@ -124,13 +134,14 @@ def get_stock_videos(scenes: list, topic: str, workdir: str, vertical: bool = Tr
     mode = str(source_mode or "auto").lower()
     allow_api = mode in ("auto", "api")
     allow_browser = mode in ("auto", "browser")
-    clips, used, src, metadata = [], set(), set(), []
+    clips, used, src, metadata, errors = [], set(), set(), [], []
     used.update((excluded_assets or {}).get("pexels-api", []))
     used_pixabay = set((excluded_assets or {}).get("pixabay-api", []))
     for i, scene in enumerate(scenes):
-        # Stock search is not an image-generation prompt. Style filler made
-        # generic cinematic landscapes outrank the concrete scene subject.
-        q = " ".join(re.findall(r"[A-Za-z0-9]+", str(scene or topic)))[:180]
+        # Stock search is not an image-generation prompt. Preserve Unicode
+        # terms and concrete nouns; style filler made generic landscapes win.
+        q = " ".join(re.findall(r"[^\W_]+", str(scene or topic), flags=re.UNICODE))[:180]
+        q = q.strip() or "nature city technology people"
         out = os.path.join(workdir, f"stock{i:02d}.mp4")
         candidate = None
         if allow_api:
@@ -152,10 +163,23 @@ def get_stock_videos(scenes: list, topic: str, workdir: str, vertical: bool = Tr
             except Exception:
                 pass
             continue
+        if candidate:
+            candidate = None
         if allow_browser:
             bp, meta = _browser_clip(q, workdir, i)
             if bp:
                 clips.append(bp); src.add(str(meta.get("source") or "browser-stock")); metadata.append(meta)
                 continue
-        # No implicit reuse: a missing scene must get an explicit fallback.
-    return {"clips": clips, "source": "+".join(sorted(src)) or "none", "metadata": metadata}
+            errors.append(str(meta.get("error") or "Browser stock search found no usable video."))
+        if not candidate:
+            if mode == "local":
+                errors.append("No matching local stock video; add a keyword-named clip to the stock library or choose an Internet source.")
+            elif mode == "api":
+                errors.append("No matching API stock video; check PEXELS_API_KEY/PIXABAY_API_KEY and network access.")
+            elif not allow_browser:
+                errors.append("No matching stock video was found; check stock source settings and network access.")
+            else:
+                errors.append("No matching downloadable stock video was found; check network access or add a relevant local stock clip.")
+        # No implicit reuse: a missing scene must get an explicit skip/retry.
+    return {"clips": clips, "source": "+".join(sorted(src)) or "none",
+            "metadata": metadata, "errors": errors}

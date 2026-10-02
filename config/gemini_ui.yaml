@@ -10,7 +10,9 @@ actions:
     - {by: css, selector: "textarea[placeholder*='prompt' i]"}
     - {by: css, selector: "textarea[aria-label*='prompt' i]"}
     - {by: css, selector: "[contenteditable='true'][role='textbox']"}
-    - {by: css, selector: "div[contenteditable='true']"}
+    - {by: css, selector: "[contenteditable]:not([contenteditable='false'])"}
+    - {by: css, selector: "[role='textbox']"}
+    - {by: role, role: textbox}
   send_button:
     - {by: role, role: button, name_contains: "Send message"}
     - {by: role, role: button, name_contains: "Send"}

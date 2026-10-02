@@ -25,8 +25,12 @@ def test_explicit_music_off_ignores_saved_path_before_download(tmp_path,monkeypa
         module.create_highlight_clips('owned.mp4',str(tmp_path),background_music='missing.wav',
                                       background_music_enabled=False,source_rights='own_content')
     assert reached
-    with pytest.raises(ValueError,match='Choose'):
-        module.create_highlight_clips('owned.mp4',str(tmp_path),background_music_enabled=True)
+    import engine.audio.music_provider as music_provider
+    monkeypatch.setattr(music_provider, 'ensure_background_music',
+                        lambda *a, **k: {'path': None, 'error': 'test lookup failure'})
+    with pytest.raises(RuntimeError,match='Background music was selected but could not be obtained'):
+        module.create_highlight_clips('owned.mp4',str(tmp_path),background_music_enabled=True,
+                                      source_rights='own_content')
 
 
 def test_soft_music_preserves_speech_level_and_stereo(ffmpeg_binary,ffmpeg_media,tmp_path):

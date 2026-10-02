@@ -33,11 +33,19 @@ source_rights: own_content
 # commentary_or_review
 # private_draft_only
 
-# Optional music. Music/captions/cropping do not make copied footage
-# copyright-safe. Use only music you may publish.
-# background_music: "assets/music/my_licensed_track.mp3"
-# music_license: youtube_audio_library
+# Optional soft music; no music-specific acknowledgement is required.
+# Internet mode searches Pixabay and records the exact page, licence label and
+# file hash. Review the item page/current terms; this is not legal clearance.
+# YouTube Audio Library is a YouTube Studio workflow: download the chosen track
+# yourself, then use background_music with source: local and note attribution.
+# background_music_enabled: true
+# background_music_source: pixabay   # pixabay | local | auto
+# music_mood: "soft ambient instrumental"
 # music_volume: 0.08
+# background_music: "assets/music/my_track.mp3"
+# background_music_source: local
+# background_music_source_url: "https://studio.youtube.com/..."
+# Legacy only; not required: music_license: youtube_audio_library
 
 # language: en                   # en | hi for Whisper source timing
-# background_music_enabled: false # explicit off; true requires licensed track
+# background_music_enabled: false # explicit off; never fetches music

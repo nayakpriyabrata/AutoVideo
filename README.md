@@ -1,8 +1,10 @@
-# AutoVideoAI v6.0.9 — Flow Video Type and Recovery
+# AutoVideoAI v6.0.10 — Mini Reels Article Ideas and Trends RSS Repair
 
-This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. The original release archives are preserved as reference builds, not the updated build.
+This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. Older release archives are preserved as reference builds.
 
-**New in v6.0.9:** [Flow video type and recovery repair](V6_0_9_FLOW_VIDEO_RECOVERY.md). Select the visible Image/Video mode before Agent generation, never accept a fresh still as a completed video, repair wrong-kind pending signatures through unique post-baseline video matching, and recover image downloads when a Flow viewer closes during `save_as`—without blind video resubmission or weakening media validation.
+**New in v6.0.10:** [Mini Reels website ideas and Google Trends RSS repair](V6_0_10_MINI_REEL_ARTICLE_IDEAS.md). Pick a manual idea, current Google Trends topic, or recent article from TechniVella, The Fact Site, Interesting Facts, or ScienceDaily. Article titles/excerpts seed the visible Gemini Web prompt as unverified inspiration; the Flow prompt remains editable and generation still requires explicit approval. Google Trends now uses its current `/trending/rss?geo=…` feed route.
+
+**Previous in v6.0.9:** [Flow video type and recovery repair](V6_0_9_FLOW_VIDEO_RECOVERY.md). Select the visible Image/Video mode before Agent generation, never accept a fresh still as a completed video, repair wrong-kind pending signatures through unique post-baseline video matching, and recover image downloads when a Flow viewer closes during `save_as`—without blind video resubmission or weakening media validation.
 
 **Previous in v6.0.8:** [Clip caption timing repair](V6_0_8_CLIP_CAPTION_TIMING.md). Source-derived clip generation now normalizes occasional out-of-order/invalid ASR word times before caption rendering; the shared caption renderer remains strict for other workflows.
 
@@ -59,7 +61,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.9
+# ZIP download: cd AutoVideoAI-v6.0.10
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

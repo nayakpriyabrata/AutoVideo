@@ -207,8 +207,8 @@ def fetch_trending_topics(count: int = 10) -> list:
     topics = []
     try:
         import feedparser
-        for url in ("https://trends.google.com/trends/trendingsearches/daily/rss?geo=IN",
-                    "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"):
+        for url in ("https://trends.google.com/trending/rss?geo=IN",
+                    "https://trends.google.com/trending/rss?geo=US"):
             d = feedparser.parse(url)
             for e in d.entries[:count]:
                 t = e.get("title", "").strip()

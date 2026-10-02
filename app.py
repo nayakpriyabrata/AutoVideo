@@ -454,45 +454,125 @@ if page == "STUDIO":
 # ================= MINI REELS =================
 elif page == "MINI REELS":
     st.title("📱 Mini Reels · Gemini Web → Google Flow/Veo")
-    st.caption("Trend idea → a reviewable prompt from your visible Gemini Web session → one 8-second, 9:16 Flow/Veo clip in your browser. This is separate from the long-form storyboard, voiceover, and render pipeline.")
-    st.info("Google Trends supplies search-interest ideas, not a promise of social virality. Gemini Web must be signed in through AutoVideoAI's browser session; there is no Gemini API fallback. You review the final prompt before any Flow generation.")
+    st.caption("Trend, article, or manual idea → a reviewable prompt from your visible Gemini Web session → one 8-second, 9:16 Flow/Veo clip in your browser. This is separate from the long-form storyboard, voiceover, and render pipeline.")
+    st.info("Start with a Google Trends topic, a public article RSS idea, or your own text. Trends indicate search interest—not social virality—and article excerpts are inspiration, not verified facts. Gemini Web must be signed in through AutoVideoAI's browser session; there is no Gemini API fallback. You review the final prompt and explicitly approve before Flow generation.")
 
     from engine.mini_reels import (
         AUDIO_LABELS, FLOW_MODEL_LABELS, LANGUAGE_LABELS, TREND_REGIONS,
-        VISUAL_STYLES, compose_flow_prompt, fetch_trend_ideas,
-        generate_flow_reel, generate_prompt_brief, list_pending_reels,
+        VISUAL_STYLES, build_content_idea_input, compose_flow_prompt,
+        fetch_content_ideas, fetch_trend_ideas, generate_flow_reel,
+        generate_prompt_brief, get_content_idea_sources, list_pending_reels,
         new_reel_id, read_reel, recover_flow_reel,
     )
 
-    left, right = st.columns([2, 1])
-    region_name = left.selectbox("Google Trends region", list(TREND_REGIONS), index=0,
-                                 key="mini-reel-region")
-    region_code = TREND_REGIONS[region_name]
-    if right.button("↻ Refresh trend ideas", key="mini-reel-refresh-trends"):
-        try:
-            found = fetch_trend_ideas(region_code, count=10)
-            cache = dict(st.session_state.get("mini_reel_trends", {}))
-            cache[region_code] = found
-            st.session_state["mini_reel_trends"] = cache
-            st.success(f"Loaded {len(found)} current Google Trends search ideas for {region_name}.")
-        except Exception as exc:
-            st.warning(f"Trend feed unavailable: {exc}. You can enter an idea manually.")
+    idea_modes = {
+        "manual": "Manual idea",
+        "trends": "Google Trends",
+        "articles": "Article websites",
+    }
+    idea_source_mode = st.radio(
+        "Choose where to start",
+        list(idea_modes), index=1, horizontal=True,
+        format_func=lambda key: idea_modes[key], key="mini-reel-idea-source")
+    previous_idea_mode = st.session_state.get("_mini_reel_last_idea_mode")
+    source_context = None
 
-    trends_by_region = st.session_state.get("mini_reel_trends", {})
-    trend_rows = trends_by_region.get(region_code, [])
-    trend_titles = [str(row.get("title", "")) for row in trend_rows if row.get("title")]
-    selected_trend = st.selectbox("Recent search trend (optional)", [""] + trend_titles,
-                                  format_func=lambda value: value or "Choose a trend or enter your own idea",
-                                  key="mini-reel-trend-choice")
-    if selected_trend and st.session_state.get("_mini_reel_last_trend") != selected_trend:
-        st.session_state["mini-reel-topic"] = selected_trend
+    if idea_source_mode == "trends":
+        left, right = st.columns([2, 1])
+        region_name = left.selectbox("Google Trends region", list(TREND_REGIONS), index=0,
+                                     key="mini-reel-region")
+        region_code = TREND_REGIONS[region_name]
+        if right.button("↻ Refresh trend ideas", key="mini-reel-refresh-trends"):
+            try:
+                found = fetch_trend_ideas(region_code, count=10)
+                cache = dict(st.session_state.get("mini_reel_trends", {}))
+                cache[region_code] = found
+                st.session_state["mini_reel_trends"] = cache
+                st.success(f"Loaded {len(found)} current Google Trends search ideas for {region_name}.")
+            except Exception as exc:
+                st.warning(f"Trend feed unavailable: {exc}. You can enter an idea manually.")
+
+        trends_by_region = st.session_state.get("mini_reel_trends", {})
+        trend_rows = trends_by_region.get(region_code, [])
+        trend_titles = [str(row.get("title", "")) for row in trend_rows if row.get("title")]
+        selected_trend = st.selectbox(
+            "Recent search trend (optional)", [""] + trend_titles,
+            format_func=lambda value: value or "Choose a trend or enter your own idea",
+            key="mini-reel-trend-choice")
+        if selected_trend and (
+                st.session_state.get("_mini_reel_last_trend") != selected_trend
+                or previous_idea_mode != idea_source_mode):
+            st.session_state["mini-reel-topic"] = selected_trend
         st.session_state["_mini_reel_last_trend"] = selected_trend
-    idea = st.text_input("Trend or starting idea", key="mini-reel-topic",
-                         placeholder="Choose a trend above, or type a fresh idea")
-    if selected_trend:
-        matched = next((row for row in trend_rows if row.get("title") == selected_trend), {})
-        details = " · ".join(x for x in (matched.get("approx_traffic", ""), matched.get("published", "")) if x)
-        st.caption(f"Google Trends daily RSS · {region_name}" + (f" · {details}" if details else ""))
+        if selected_trend:
+            matched = next((row for row in trend_rows if row.get("title") == selected_trend), {})
+            details = " · ".join(x for x in (matched.get("approx_traffic", ""), matched.get("published", "")) if x)
+            st.caption(f"Google Trends Trending Now RSS · {region_name}" + (f" · {details}" if details else ""))
+
+    elif idea_source_mode == "articles":
+        st.subheader("Browse ideas from article websites")
+        st.caption("Refresh a public RSS feed, choose an article, and use its title and excerpt as inspiration for Gemini Web. The article page and media are not downloaded; the final Flow prompt remains editable and reviewable.")
+        st.info("FactZone.com resolved to a parked for-sale page when these feeds were checked, so it is not included as an active idea feed. For fact and curiosity topics, choose The Fact Site or Interesting Facts instead.")
+        source_rows = get_content_idea_sources()
+        source_by_id = {row["id"]: row for row in source_rows}
+        source_col, refresh_col = st.columns([3, 1])
+        content_source_id = source_col.selectbox(
+            "Article website", list(source_by_id),
+            format_func=lambda key: source_by_id[key]["name"],
+            key="mini-reel-content-source")
+        if refresh_col.button("↻ Refresh articles", key="mini-reel-refresh-articles"):
+            try:
+                found = fetch_content_ideas(content_source_id, count=12)
+                cache = dict(st.session_state.get("mini_reel_articles", {}))
+                cache[content_source_id] = found
+                st.session_state["mini_reel_articles"] = cache
+                st.success(f"Loaded {len(found)} recent article ideas from {source_by_id[content_source_id]['name']}.")
+            except Exception as exc:
+                st.warning(f"Article feed unavailable: {exc}. Choose another website or enter an idea manually.")
+        st.caption(source_by_id[content_source_id]["description"])
+
+        articles_by_source = st.session_state.get("mini_reel_articles", {})
+        article_rows = articles_by_source.get(content_source_id, [])
+        article_by_id = {row["id"]: row for row in article_rows if row.get("id")}
+        if article_by_id:
+            selected_article_id = st.selectbox(
+                "Article idea (optional)", [""] + list(article_by_id),
+                format_func=lambda key: (
+                    "Choose an article" if not key else
+                    article_by_id[key]["title"] + (f" · {article_by_id[key]['published'][:16]}" if article_by_id[key].get("published") else "")
+                ), key="mini-reel-article-choice")
+            selected_article = article_by_id.get(selected_article_id)
+            if selected_article:
+                try:
+                    article_input = build_content_idea_input(selected_article)
+                    source_context = article_input["source_context"]
+                    if (st.session_state.get("_mini_reel_last_article") != selected_article_id
+                            or previous_idea_mode != idea_source_mode):
+                        st.session_state["mini-reel-topic"] = article_input["idea"]
+                    st.session_state["_mini_reel_last_article"] = selected_article_id
+                    st.caption(f"Selected from {source_context['source_name']} · {source_context.get('published') or 'date not supplied'}")
+                    if source_context.get("summary"):
+                        with st.expander("Article excerpt used as idea context", expanded=True):
+                            st.write(source_context["summary"])
+                    st.link_button("Open selected article", source_context["url"],
+                                   key=f"mini-reel-article-link-{selected_article_id}")
+                except ValueError as exc:
+                    st.warning(f"This feed item cannot be used safely: {exc}")
+                    source_context = None
+            else:
+                st.session_state["_mini_reel_last_article"] = ""
+        else:
+            st.caption("No articles loaded yet. Use **Refresh articles** to fetch the selected website's feed.")
+            st.session_state["_mini_reel_last_article"] = ""
+
+    st.session_state["_mini_reel_last_idea_mode"] = idea_source_mode
+    placeholders = {
+        "manual": "Type a fresh idea, or edit a selected trend/article title",
+        "trends": "Choose a trend above, or type a fresh idea",
+        "articles": "Choose an article above, or type a fresh idea",
+    }
+    idea = st.text_input("Starting idea", key="mini-reel-topic", max_chars=300,
+                         placeholder=placeholders[idea_source_mode])
 
     c1, c2, c3 = st.columns(3)
     style_keys = list(VISUAL_STYLES)
@@ -532,8 +612,9 @@ elif page == "MINI REELS":
         else:
             try:
                 with st.spinner("Asking the visible Gemini Web session for one original eight-second concept…"):
-                    brief = generate_prompt_brief(idea, visual_style=visual_style,
-                                                  language=language, audio_mode=audio_mode)
+                    brief = generate_prompt_brief(
+                        idea, visual_style=visual_style, language=language,
+                        audio_mode=audio_mode, source_context=source_context)
                     flow_prompt = compose_flow_prompt(
                         brief, visual_style=visual_style, language=language,
                         audio_mode=audio_mode, model=model)
@@ -554,6 +635,11 @@ elif page == "MINI REELS":
         st.subheader(f"Review draft · {draft['brief'].get('title', 'Mini reel')}")
         st.write(draft["brief"].get("angle", ""))
         st.caption(f"Gemini Web · {draft['brief'].get('idea', '')} · 8 seconds · 9:16 · {FLOW_MODEL_LABELS.get(draft.get('model'), draft.get('model'))}")
+        draft_source = draft["brief"].get("source_context")
+        if draft_source:
+            st.caption(f"Idea inspiration: {draft_source.get('source_name', 'article feed')} · verify factual claims before publishing.")
+            st.link_button("Review source article", draft_source["url"],
+                           key=f"mini-reel-draft-source-{draft['reel_id']}")
         if draft["brief"].get("voiceover_line"):
             st.markdown("**Requested voiceover:** " + draft["brief"]["voiceover_line"])
         if draft["brief"].get("caption"):

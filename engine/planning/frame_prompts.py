@@ -41,5 +41,5 @@ def frame_prompt(shot, bible: dict, vertical: bool, phase: str = "open") -> str:
         f"Visual direction: {shot.visual_goal}. Narrative beat: {shot.narration}. Framing: {shot.camera_framing}. "
         f"Lighting: {shot.lighting or bible.get('lighting','cinematic')}. Look: {style}. "
         f"{continuity}Keep composition compatible with the paired frame so a smooth video transition is possible. "
-        "Photorealistic, stable anatomy, no text, no logo, no watermark, no UI."
+        "Style-consistent, stable anatomy, no text, no logo, no watermark, no UI."
     )[:3800]

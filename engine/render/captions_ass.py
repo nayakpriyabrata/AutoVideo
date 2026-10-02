@@ -168,7 +168,9 @@ def build_captions(words: list[dict], out_base: str, template: str = "HORMOZI",
 
     # ASS v4+ requires exactly 23 fields in the Style row. Keep their order
     # aligned with Format; libass can otherwise reject or misinterpret the style.
-    style = (f"Style: Cap,DejaVu Sans,{fontsize},{primary},{secondary},"
+    from ..languages import script_language, language_pack
+    family = language_pack(script_language(' '.join(w['word'] for w in words))).font_family
+    style = (f"Style: Cap,{family},{fontsize},{primary},{secondary},"
              f"&H00000000,{T.get('Back','&H00000000')},{-1 if T.get('Bold') else 0},0,0,0,100,100,"
              f"0,0,1,{outline},{shadow},2,"
              f"{sz['MarginL']},{sz['MarginR']},{sz['MarginV']},1")

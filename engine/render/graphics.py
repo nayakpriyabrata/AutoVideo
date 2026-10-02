@@ -379,7 +379,7 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
             y += row_h
 
     elif event.kind == 'watermark':
-        face = font(max(16, int(26*scale)), bold=True, style=style)
+        face = font(max(16, int(26*scale)), bold=True, style=style, text=event.title)
         value = event.title.strip()
         ink = d.textbbox((0, 0), value, font=face)
         x = W-(ink[2]-ink[0])-int(W*.14 if vertical else 30*scale)

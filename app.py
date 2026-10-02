@@ -63,7 +63,7 @@ st.sidebar.title(f"🎬 AutoVideoAI v{APP_VERSION} Studio")
 mode_badge = {"STORYBOARD_ECONOMY": "🌱", "FLOW_CINEMATIC": "💎", "FLOW_BALANCED": "⚖️", "FLOW_ECONOMY": "💰",
               "LOCAL_FREE": "🖥️", "FREE_HYBRID": "🆓", "MANUAL_DIRECTOR": "🎥"}
 page = st.sidebar.radio("Navigate", ["STUDIO", "CREATE", "STORYBOARD", "DIRECTOR REVIEW", "QUEUE",
-                                     "FLOW SESSION", "CLIP STUDIO", "PRODUCTION QC", "ASSETS", "RENDER", "HISTORY",
+                                     "FLOW SESSION", "CLIP STUDIO", "CONTENT INBOX", "CHARACTER LIBRARY", "AI RECREATE", "PUBLISHING DESK", "PRODUCTION QC", "ASSETS", "RENDER", "HISTORY",
                                      "SETTINGS", "Quick (v2)"])
 st.sidebar.divider()
 jobs = DB.list(30)
@@ -136,7 +136,7 @@ def pause_panel(job_id, reason=""):
                     st.error(f"Recovery did not find a usable new video yet: {e}")
         resume_clicked = c2.button("▶️ Resume saved job", key=f"resume-paused-{job_id}")
     else:
-        st.info("Resume checks the saved request for the exact pending image or video. "
+        st.info("Resume checks the saved request for the exact pending image or video. Image download failures retry automatically; an older missing image may be regenerated once (may use image credits). "
                 "An unresolved request remains paused without generating again. "
                 "See the request's recovery.json diagnostic if the asset cannot be matched.")
         resume_clicked = st.button("▶️ Retry saved request and resume",
@@ -305,6 +305,11 @@ if page == "STUDIO":
     studio_audio_mode = st.radio("Audio mode", ["Voiceover", "Music only", "Silent"], horizontal=True, key="studio-audio-mode")
     studio_voice_on = studio_audio_mode == "Voiceover"
     st.caption("Music only skips voice synthesis and speech captions. Silent also turns music, ambience and SFX off. Text cards can be switched independently.")
+    from engine.languages import LANGUAGES
+    language_code = st.selectbox('Production language', list(LANGUAGES), format_func=lambda code: LANGUAGES[code].label)
+    destination = st.selectbox('Destination recipe', ['automatic','instagram_reel','facebook_reel','youtube_short','youtube_long'])
+    approved_plan_path = st.text_input('Approved script/storyboard JSON (optional)', help='Use CONTENT INBOX or your own writer, review the JSON, then approve it. Imported text is not automatically rewritten.')
+    narration_input_path = st.text_input('Imported native narration file (optional)', help='An audio file you own/are licensed to use; useful for native-language review.')
     with st.form("studio-create"):
         topic = st.text_input("Topic / idea", placeholder="5 habits winners build for a successful life")
         a, b, c, d = st.columns(4)
@@ -358,6 +363,8 @@ if page == "STUDIO":
                         "video_type": "shorts" if production_mode == "reels_pro" else "faceless_youtube",
                         "aspect": "9:16" if production_mode == "reels_pro" else "16:9",
                         "theme": theme, "duration": int(duration), "profile": profile,
+                        "language":language_code, "destination":None if destination=='automatic' else destination,
+                        "approved_plan_path":approved_plan_path.strip(), "narration_input_path":narration_input_path.strip(),
                         "script_provider": script_provider, "tts_provider": tts_provider,
                         "render_quality": render_quality, "flow_image_workers": flow_workers,
                         "frame_source": frame_source, "flow_approval": flow_approval,
@@ -373,6 +380,8 @@ if page == "STUDIO":
                         "channel_name": channel_name, "channel_logo": channel_logo,
                         "max_credits": int(max_credits), "flow_scenes": int(flow_scenes) or None,
                         "images_per_shot": int(images_per_shot), "graphics_overlays": production_mode != "legacy"})
+            from engine.languages import default_voice
+            cfg['voice'] = default_voice(language_code)
             for key, value in THEMES[theme].items():
                 cfg[key] = value
             kwargs = config_to_factory_kwargs(cfg)
@@ -436,7 +445,7 @@ elif page == "CREATE":
         with st.expander("Advanced"):
             a1, a2, a3 = st.columns(3)
             tone = a1.selectbox("Tone", ["cinematic", "exciting", "calm", "funny", "documentary"])
-            language = a2.selectbox("Language", ["en", "hi"])
+            language = a2.selectbox("Language", ["en", "hi", "or"])
             tts_provider = a3.selectbox("TTS", ["edge", "gtts", "kokoro", "chatterbox"], disabled=not create_voice_on)
             b1, b2 = st.columns(2)
             max_credits = b1.number_input("MAX CREDITS PER VIDEO", 0, 2000, 50,
@@ -677,13 +686,16 @@ elif page == "CLIP STUDIO":
                                                "gemini-web-hybrid", "groq", "local"],
                            help="Gemini hybrid tries API, then the visible signed-in browser, then Groq/local.")
     captions = r2.selectbox("Speech timing", ["auto", "groq", "local"])
+    clip_language = st.selectbox('Clip transcript language',['en','hi'],help='Odia source ASR is not certified; use a reviewed transcript in AI RECREATE.')
     rights = r3.selectbox("Source rights", [
         "own_content", "written_permission", "licensed_content", "creative_commons",
         "public_domain", "commentary_or_review", "private_draft_only",
     ])
     st.warning("Captions, music, cropping, zoom or motion alone do not make somebody else's video copyright-safe. AutoVideoAI records your declaration but cannot grant legal rights.")
     output_dir = st.text_input("Output folder", value="outputs/my-clips")
-    with st.expander("Optional licensed background music"):
+    with st.expander("Optional licensed background music", expanded=True):
+        clip_music_on = st.checkbox('Add soft background music', value=False,
+                                    help='Off preserves the current source-only audio. On adds a low, ducked music bed without reducing source speech gain.')
         background_music = st.text_input("Local music file", value="")
         m1, m2 = st.columns(2)
         music_license = m1.selectbox("Music licence", [
@@ -712,11 +724,13 @@ elif page == "CLIP STUDIO":
                     count=int(count), min_seconds=float(min_seconds),
                     max_seconds=float(max_seconds), caption_provider=captions,
                     ranking_provider=ranking, source_rights=rights,
+                    language=clip_language, background_music_enabled=clip_music_on,
                     background_music=background_music.strip(),
                     music_license=music_license, music_volume=float(music_volume),
                     gemini_chat_cleanup=gemini_cleanup,
                     framing=framing,
                     progress_cb=clip_progress)
+                st.session_state['last_clip_result'] = result
                 st.success(f"Created {len(result['outputs'])} clips using {result['method']}.")
                 if result.get("partial_result"):
                     st.warning(result["shortfall_reason"])
@@ -737,6 +751,145 @@ elif page == "CLIP STUDIO":
                     st.video(item["output"])
             except Exception as exc:
                 st.error(str(exc))
+
+# ================= CONTENT INBOX =================
+elif page == 'CONTENT INBOX':
+    st.title('Source ideas & approved scripts')
+    st.caption('Import an idea, not a licence or an instruction. Public source text is untrusted; no generation is submitted here.')
+    from engine.source_inbox import SourceInbox
+    from engine.content_plan import longform_template
+    title = st.text_input('Source title')
+    source_text = st.text_area('Paste permitted post/article text', height=180)
+    source_url = st.text_input('Public allowlisted HTTPS article URL (optional)')
+    feed_url = st.selectbox('Optional source feed',['https://technivella.com/feed/','https://factozone.com/feed/'])
+    if st.button('Import up to 5 feed ideas — no generation'):
+        try:
+            st.json(SourceInbox().feed(feed_url,count=5))
+        except Exception as error:
+            st.error(str(error))
+    if st.button('Save source idea — no generation'):
+        try:
+            inbox = SourceInbox()
+            item = inbox.paste(source_text,title=title,source_url=source_url) if source_text.strip() else inbox.fetch(source_url)
+            st.session_state['source_inbox_item'] = item
+        except Exception as error:
+            st.error(str(error))
+    item = st.session_state.get('source_inbox_item')
+    if item:
+        st.json({key:value for key,value in item.items() if key != 'text'})
+        brief = SourceInbox().brief_prompt(item)
+        st.download_button('Download external-writer brief',brief,file_name='original-content-brief.txt')
+        st.code(brief)
+    st.subheader('Chapter-based long-form template')
+    topic = st.text_input('Long-form topic')
+    locale = st.selectbox('Template language',['en','hi','or'])
+    if topic:
+        st.download_button('Download chapter/evidence template',json.dumps(longform_template(topic,locale),indent=2,ensure_ascii=False),
+                           file_name='approved-content-plan.json',mime='application/json')
+    st.info('Fill narration, chapters/scenes and rights; review facts and set approved=true. Import that JSON from STUDIO. Arena browser automation and automatic commercial-output rights are not provided.')
+
+# ================= CHARACTER LIBRARY =================
+elif page == 'CHARACTER LIBRARY':
+    st.title('Original fictional character library')
+    from engine.content_library import CharacterLibrary
+    library = CharacterLibrary()
+    name = st.text_input('Character name')
+    description = st.text_area('Physical identity, clothes, palette, personality and visual style')
+    references = st.text_area('Authorized reference image paths, one per line (optional)')
+    original = st.checkbox('This is my original or authorized fictional character; not an impersonation')
+    if st.button('Save character identity'):
+        try:
+            st.json(library.create(name,description,reference_files=references.splitlines(),original_confirmed=original))
+        except Exception as error:
+            st.error(str(error))
+    for character in library.list():
+        with st.expander(character['name']+' · '+character['id']):
+            st.write(character['description'])
+            for reference in character['references']:
+                st.image(reference['path'],width=240)
+    st.caption('Without a supplied reference, the recreation workflow asks Flow to generate a character master before scene images. Identity still needs visual review.')
+
+# ================= AI RECREATE =================
+elif page == 'AI RECREATE':
+    st.title('Recreate an authorized clip with an original AI character')
+    st.warning('This creates new scenes and narration, not a face swap or automatic copyright clearance. No original person is uploaded as a character reference. New TTS/Flow generation can cost credits after approval.')
+    from engine.content_library import CharacterLibrary
+    from engine.clip_recreation import create_recreation_job, approve_recreation
+    characters = CharacterLibrary().list()
+    recent = st.session_state.get('last_clip_result',{}).get('outputs',[])
+    if recent:
+        st.selectbox('Recently generated clips',recent,key='recreate-recent')
+    clip = st.text_input('Generated/local clip path',value=st.session_state.get('recreate-recent',''))
+    transcript = st.text_area('Reviewed transcript (optional when matching transcript sidecar exists)')
+    locale = st.selectbox('Recreation language',['en','hi','or'])
+    rights = st.selectbox('Transcript AND footage adaptation rights',['own_content','written_permission','licensed_content','creative_commons','public_domain'])
+    confirmed = st.checkbox('I have reviewed the transcript and have rights to adapt it and the source video')
+    budget = st.number_input('Maximum Flow credits for this new recreation',0,5000,50)
+    music = st.text_input('Optional licensed soft music file')
+    if characters:
+        character_id = st.selectbox('Original character',[c['id'] for c in characters],format_func=lambda identifier:next(c['name'] for c in characters if c['id']==identifier))
+        if st.button('Create recreation storyboard — no generation',type='primary'):
+            try:
+                result = create_recreation_job(F,clip,character_id,transcript_text=transcript,language=locale,
+                                              source_rights=rights,adaptation_confirmed=confirmed,max_credits=int(budget),background_music=music)
+                st.session_state['recreation_job'] = result['job_id'];st.json(result)
+            except Exception as error:
+                st.error(str(error))
+    else:
+        st.info('Create an original character in CHARACTER LIBRARY first.')
+    recreation = st.session_state.get('recreation_job')
+    if recreation:
+        root = Path(F.pm.job_dir(recreation))
+        st.code(str(root/'approved_content_plan.json'))
+        st.json(json.loads((root/'approved_content_plan.json').read_text(encoding='utf-8')))
+        approve = st.checkbox('I approve this exact storyboard, character and credit ceiling')
+        if st.button('Approve recreation (does NOT start generation)',disabled=not approve):
+            try:
+                st.json(approve_recreation(F,recreation))
+                st.session_state.job_id = recreation
+                st.info('Use QUEUE → Resume explicitly to create the narration and new Flow scenes. Existing source clip remains unchanged.')
+            except Exception as error:
+                st.error(str(error))
+
+# ================= PUBLISHING DESK =================
+elif page == 'PUBLISHING DESK':
+    st.title('Destination exports & release review')
+    st.caption('First-stage local delivery desk. Approval/scheduling below are manual-upload records, not a connected social-account API.')
+    from engine.publishing import PROFILES, export_delivery, approve_release, schedule_release
+    source = st.text_input('Rendered video path')
+    folder = st.text_input('Separate delivery folder',value='outputs/deliveries')
+    destination = st.selectbox('Destination',list(PROFILES))
+    locale = st.selectbox('Delivery language',['en','hi','or'])
+    title = st.text_input('Localized title')
+    framing = st.selectbox('Export framing',['fit','crop'])
+    if st.button('Encode destination delivery (local only)'):
+        try:
+            with st.spinner('Encoding a separate destination copy; source is preserved'):
+                record = export_delivery(source,folder,destination,language=locale,title=title,framing=framing)
+            st.session_state['release_record_path'] = str(Path(folder)/(record['id']+'.release.json'))
+            st.video(record['video']);st.json(record)
+        except Exception as error:
+            st.error(str(error))
+    release_path = st.text_input('Delivery review JSON',value=st.session_state.get('release_record_path',''))
+    account = st.text_input('Exact destination account/channel identifier')
+    rights = st.checkbox('Visual/audio/transcript rights reviewed')
+    facts = st.checkbox('Facts, story and intended audience reviewed')
+    language_ok = st.checkbox('Native-language narration and text reviewed')
+    kids = st.selectbox('Intended for children?',['Choose','Yes','No'])
+    ai = st.selectbox('AI disclosure required for this delivery?',['Choose','Yes','No'])
+    if st.button('Approve exact file for manual upload'):
+        try:
+            st.json(approve_release(release_path,account_id=account,rights_confirmed=rights,facts_reviewed=facts,
+                                    language_reviewed=language_ok,made_for_kids=None if kids=='Choose' else kids=='Yes',
+                                    ai_disclosure_required=None if ai=='Choose' else ai=='Yes'))
+        except Exception as error:
+            st.error(str(error))
+    when = st.text_input('Optional local reminder: future ISO time with timezone',placeholder='2026-10-05T18:00:00+05:30')
+    if st.button('Add local manual-upload reminder'):
+        try:
+            st.json(schedule_release(release_path,when))
+        except Exception as error:
+            st.error(str(error))
 
 # ================= PRODUCTION QC =================
 elif page == "PRODUCTION QC":

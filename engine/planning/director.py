@@ -305,6 +305,10 @@ def create_production_plan(manifest: ProductionManifest, narration: str, words: 
             visual_intent, " ".join(x["text"] for x in group), loc, coverage)
         if bible.get("characters"):
             scene_subject = f"CHARACTER_01 ({ch})"
+        if beat.get('image_prompt') or beat.get('motion_prompt'):
+            # Authored imported scene intent wins over the generic keyword-based
+            # B-roll mapper, which could otherwise replace the reviewed action.
+            scene_action = visual_intent
         shot = Shot(
             shot_id=f"shot_{i+1:03d}",
             voice_start=round(start, 2), voice_end=round(end, 2),

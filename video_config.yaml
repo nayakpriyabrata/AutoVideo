@@ -1,4 +1,4 @@
-# AutoVideoAI v5.8.6 configuration. Keep topic; uncomment only overrides.
+# AutoVideoAI v6.0.0 configuration. Keep topic; uncomment only overrides.
 topic: "5 habits winners build for a successful life"
 
 # production_mode: youtube_pro   # youtube_pro | reels_pro | legacy
@@ -57,3 +57,9 @@ gemini_chat_cleanup: delete-after-read  # keep | delete-after-read
 # max_retries: 2
 # dry_run: false
 # plan_only: false
+
+# language: or                   # en | hi | or; native quality needs review
+# destination: youtube_long      # instagram_reel | facebook_reel | youtube_short | youtube_long
+# approved_plan_path: my-reviewed-plan.json
+# narration_input_path: my-native-recording.wav
+# character_id: my-original-character-id

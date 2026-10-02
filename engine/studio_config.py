@@ -22,6 +22,10 @@ DEFAULTS = {
     "content_type": "education",
     "tone": "cinematic",
     "language": "en",
+    "destination": None,
+    "approved_plan_path": "",
+    "narration_input_path": "",
+    "character_id": "",
     "voice": "en-IN-PrabhatNeural",
     "script_provider": "auto",
     "script_model": "auto",
@@ -85,6 +89,10 @@ THEMES = {
     "health": {"content_type": "education", "tone": "documentary", "preset": "cinematic_realism", "music_mood": "clean calm wellness instrumental"},
     "personal_finance": {"content_type": "finance", "tone": "documentary", "preset": "cinematic_realism", "music_mood": "modern confident business instrumental"},
     "personality_development": {"content_type": "motivation", "tone": "cinematic", "preset": "cinematic_realism", "music_mood": "uplifting personal growth instrumental"},
+    "ai_learning": {"content_type":"technology","tone":"documentary","preset":"tech_future","music_mood":"light modern instrumental"},
+    "self_care": {"content_type":"education","tone":"calm","preset":"cinematic_realism","music_mood":"calm instrumental"},
+    "business_ideas": {"content_type":"education","tone":"documentary","preset":"cinematic_realism","music_mood":"light business instrumental"},
+    "farming_gardening": {"content_type":"education","tone":"calm","preset":"documentary","music_mood":"gentle nature instrumental"},
     "cartoon_story": {"content_type": "cinematic_story", "tone": "funny", "preset": "cartoon_3d", "music_mood": "whimsical story instrumental"},
 }
 
@@ -140,6 +148,16 @@ def load_video_config(path: str) -> dict:
     for key, values in CHOICES.items():
         if cfg.get(key) not in values:
             raise ValueError(f"Invalid {key}: {cfg.get(key)!r}; choose from {sorted(values)}")
+    from .languages import language_pack, default_voice
+    cfg['language'] = language_pack(cfg['language']).code
+    if 'voice' not in raw:
+        cfg['voice'] = default_voice(cfg['language'])
+    if cfg['destination']:
+        from .publishing import destination_profile
+        destination_profile(cfg['destination'])
+    for path_key in ('approved_plan_path','narration_input_path'):
+        if cfg[path_key]:
+            cfg[path_key] = os.fspath((p.parent / Path(cfg[path_key]).expanduser()).resolve())
     cfg["duration"] = int(cfg["duration"])
     if not 10 <= cfg["duration"] <= 7200:
         raise ValueError("duration must be between 10 and 7200 seconds")

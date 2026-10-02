@@ -12,7 +12,8 @@ def clean_text(text):
 
 
 def usable_headline(text):
-    words = re.findall(r"[\w']+", clean_text(text).lower())
+    from .languages import text_tokens
+    words = text_tokens(clean_text(text).lower())
     return (3 <= len(words) <= 16 and " ".join(words) not in FILLER
             and words[-1] not in TRAILING)
 
@@ -35,6 +36,11 @@ def callout(text, max_words=12):
 
 
 def headline(text):
+    from .languages import script_language, text_tokens
+    if script_language(text) != 'en':
+        clauses = [c.strip() for c in re.split(r'[.!?।॥\n]+', clean_text(text)) if c.strip()]
+        candidate = next((c for c in clauses if 3 <= len(text_tokens(c)) <= 16), '')
+        return candidate or ' '.join(text_tokens(text)[:8])
     title = callout(text)
     if title:
         return title

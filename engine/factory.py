@@ -106,7 +106,30 @@ class Factory:
                    voiceover_enabled: bool | None = None, text_cards_enabled: bool | None = None,
                    text_card_style: str = "auto", background_music_path: str = "",
                    music_volume: float | None = None, sound_effects_enabled: bool | None = None,
-                   ambience_enabled: bool | None = None) -> str:
+                   ambience_enabled: bool | None = None, destination: str | None = None,
+                   approved_plan_path: str = "", narration_input_path: str = "",
+                   character_id: str = "") -> str:
+        from .languages import language_pack, default_voice
+        language = language_pack(language).code
+        if voice == 'en-IN-PrabhatNeural' and language != 'en':
+            voice = default_voice(language)
+        if language == 'or' and caption_provider in ('auto','groq','local'):
+            caption_provider = 'script-timed'  # Explicit estimated timings; never pretend Whisper supports or.
+        delivery = None
+        if destination:
+            from .publishing import destination_profile
+            delivery = destination_profile(destination)
+            aspect = '16:9' if destination == 'youtube_long' else '9:16'
+            if target_seconds > delivery['max_seconds']:
+                raise ValueError('Duration exceeds the chosen conservative delivery recipe')
+        if character_id:
+            from .content_library import CharacterLibrary
+            CharacterLibrary().get(character_id)
+        if approved_plan_path:
+            from .content_plan import load_plan
+            approved = load_plan(approved_plan_path)
+            if approved['language'] != language:
+                raise ValueError('Imported plan language must match the job language')
         resolve_presentation({"voiceover_enabled": voiceover_enabled, "text_cards_enabled": text_cards_enabled,
                               "text_card_style": text_card_style, "background_music": background_music,
                               "music_volume": music_volume, "sound_effects_enabled": sound_effects_enabled,
@@ -169,7 +192,9 @@ class Factory:
                     "voiceover_enabled": voiceover_enabled, "text_cards_enabled": text_cards_enabled,
                     "text_card_style": text_card_style, "background_music_path": background_music_path,
                     "music_volume": music_volume, "sound_effects_enabled": sound_effects_enabled,
-                    "ambience_enabled": ambience_enabled})
+                    "ambience_enabled": ambience_enabled, "destination": destination,
+                    "approved_plan_path": approved_plan_path, "narration_input_path": narration_input_path,
+                    "character_id": character_id})
         # Freeze these two choices for new jobs; later global defaults must not
         # unexpectedly switch a saved storyboard to a different recipe.
         job_settings_path = os.path.join(self.pm.job_dir(m.job_id), "settings.json")
@@ -185,6 +210,12 @@ class Factory:
                        preset=preset, dry_run=1 if dry_run else 0,
                        flow_project=str(flow_project_url or "").strip())
         self.pm.log(m.job_id, "job_created", {"profile": profile, "preset": preset, "dry_run": dry_run})
+        if approved_plan_path:
+            self.import_content_plan(m.job_id, approved)
+        if character_id:
+            from .content_library import CharacterLibrary, character_snapshot
+            _save_json(os.path.join(self.pm.job_dir(m.job_id), 'character_snapshot.json'),
+                       character_snapshot(CharacterLibrary().get(character_id)))
         return m.job_id
 
     def _settings(self, job_id: str) -> dict:
@@ -213,7 +244,8 @@ class Factory:
                     "channel_name": "", "channel_logo": "", "graphics_overlays": False, "watermark": False,
                     "voiceover_enabled": True, "text_cards_enabled": None, "text_card_style": "auto",
                     "background_music_path": "", "music_volume": None,
-                    "sound_effects_enabled": None, "ambience_enabled": None}
+                    "sound_effects_enabled": None, "ambience_enabled": None, "destination": None, "approved_plan_path": "",
+                    "narration_input_path": "", "character_id": ""}
         try:  # global user defaults
             import yaml as _yaml
             if os.path.exists("config/user_settings.yaml"):
@@ -237,7 +269,8 @@ class Factory:
                             "production_mode", "dynamic_video_scenes", "stock_scenes", "stock_source",
                             "caption_display", "background_music", "music_mood", "channel_name", "channel_logo",
                             "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled", "text_card_style",
-                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled"):
+                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled", "destination",
+                            "approved_plan_path", "narration_input_path", "character_id"):
                     if key in g:
                         merged[key] = g[key]
         except Exception:
@@ -263,7 +296,8 @@ class Factory:
                         "production_mode", "dynamic_video_scenes", "stock_scenes", "stock_source",
                         "caption_display", "background_music", "music_mood", "channel_name", "channel_logo",
                         "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled", "text_card_style",
-                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled"):
+                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled", "destination",
+                            "approved_plan_path", "narration_input_path", "character_id"):
                 if key in j and not (key in PRESENTATION_KEYS and j[key] is None):
                     merged[key] = j[key]
         except Exception:
@@ -418,6 +452,25 @@ class Factory:
               f"Export diagnostics offline: python3 cli.py v3 support-report {job_id}")
         return state
 
+    def import_content_plan(self, job_id, plan):
+        from .content_plan import validate_plan, script_from_plan, plan_fingerprint
+        from .production import save
+        plan = validate_plan(plan)
+        m = self.pm.load_manifest(job_id)
+        if m.shots:
+            raise ValueError('Do not replace an approved script after scene planning/generation; create a separate job')
+        if plan['language'] != m.language:
+            raise ValueError('Approved plan language does not match the job')
+        root = self.pm.job_dir(job_id)
+        save(os.path.join(root,'approved_content_plan.json'), plan)
+        save(os.path.join(root,'script.json'), script_from_plan(plan))
+        settings = json.load(open(os.path.join(root,'settings.json'),encoding='utf-8'))
+        settings.update(auto_retime_script=False, imported_plan_sha256=plan_fingerprint(plan))
+        save(os.path.join(root,'settings.json'), settings)
+        m.status = 'scripted';self.pm.save_manifest(m)
+        self.db.upsert(job_id,status='scripted',script_status='imported')
+        return {'job_id':job_id,'script_source':'approved-import','new_generations':0}
+
     def set_presentation_options(self, job_id: str, **updates) -> dict:
         """Local editing only: keep takes, scene timings, project bindings and journals."""
         unknown = set(updates) - PRESENTATION_KEYS
@@ -462,6 +515,8 @@ class Factory:
         m = self.pm.load_manifest(job_id)
         D = self.pm.dirs(job_id)
         settings = self._settings(job_id)
+        from .clip_recreation import require_recreation_approval
+        require_recreation_approval(D['root'])
         presentation = resolve_presentation(settings)
         m.voiceover_enabled = presentation.voiceover
         os.environ["AUTOVIDEO_GEMINI_CHAT_CLEANUP"] = str(
@@ -546,6 +601,13 @@ class Factory:
             prog("🎙️ Narrating...", 12)
 
             def _synth(current_plan):
+                if settings.get('narration_input_path'):
+                    from .audio.tts import _audio_to_mp3, _mp3_len
+                    local_audio = os.path.abspath(os.path.expanduser(settings['narration_input_path']))
+                    if not os.path.isfile(local_audio):
+                        raise ValueError('Imported narration file not found')
+                    _audio_to_mp3(local_audio, voice_path)
+                    return {'audio':voice_path,'words':[],'duration':_mp3_len(voice_path),'engine':'imported-native-narration'}
                 return synthesize_narration(
                     current_plan["narration"], m.voice, voice_path,
                     provider=settings.get("tts_provider", "auto"),
@@ -714,6 +776,18 @@ class Factory:
         if m.status in ("created", "scripted", "narrated") or not m.shots:
             prog("📖 Building story bible + shot plan...", 18)
             bible = build_bible(m.topic, m.content_type, preset, m.audience, m.tone)
+            character_file = os.path.join(D['root'], 'character_snapshot.json')
+            if os.path.isfile(character_file):
+                character = json.load(open(character_file,encoding='utf-8'))
+                bible['characters'] = [{'id':'CHARACTER_01','canonical':character['canonical'],'name':character['name']}]
+                from .planning.story_bible import _identity_block
+                bible['identity_block'] = _identity_block(bible['characters'], bible.get('locations',[]), bible.get('objects',[]))
+                for i, reference in enumerate(character.get('references', [])):
+                    if self._file_sha256(reference['path']) != reference['sha256']:
+                        raise ValueError('Character reference changed; no new generation submitted')
+                    copied = os.path.join(D['references'], f'character-approved-{i}.png')
+                    if not os.path.isfile(copied):
+                        refs.add('character', reference['path'], f'character-approved-{i}.png')
             _save_json(os.path.join(D["root"], "story_bible.json"), bible)
             m = create_production_plan(m, plan["narration"], words, plan["beats"],
                                        bible, preset, router, narration_dur,
@@ -860,6 +934,11 @@ class Factory:
             if not s.compiled_prompt:
                 c = compile_shot(s, bible, preset, vertical)
                 s.compiled_prompt = c["prompt"]
+                approved_scenes = plan.get('beats', [])
+                if plan.get('source') == 'approved-import' and approved_scenes:
+                    scene = approved_scenes[min(len(approved_scenes)-1,int(m.shots.index(s)*len(approved_scenes)/len(m.shots)))]
+                    if scene.get('motion_prompt'):
+                        s.compiled_prompt += ' Authored motion direction: ' + str(scene['motion_prompt'])
         self.pm.save_manifest(m)
 
         # ---- 5. budget gate (Flow profiles) ----
@@ -2625,8 +2704,11 @@ class Factory:
                     "audio_mode": "voiceover" if voice else ("instrumental" if audio_expected else "silent")})
         prog("🎬 Rendering 1080p YouTube master..." if pro_mode else "🎬 Rendering 1080p...", 92)
         out = os.path.join(D["render"], f"{job_id}-final.mp4")
+        from .publishing import destination_profile
+        delivery = destination_profile(settings['destination']) if settings.get('destination') else {}
         try:
             r = render_ffmpeg(tl["segments"], voice, out, W=m.width, H=m.height,
+                              fps=delivery.get('fps',24), audio_bitrate=delivery.get('audio_kbps',192),
                               ass_path=burn_ass, music=music, ambience=amb,
                               sfx=sfx, overlays=overlays, music_volume=presentation.music_volume,
                               stereo_master=True, quality=quality,

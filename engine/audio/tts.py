@@ -465,6 +465,13 @@ def synthesize_narration(text: str, voice: str, out: str, provider: str = "auto"
     which retains a final gTTS compatibility fallback.
     """
     p = str(provider or "auto").lower()
+    from ..languages import language_pack, check_tts_language
+    language = language_pack(language).code
+    check_tts_language(p, language, voice)
+    if language == 'or' and p == 'auto':
+        if not os.getenv('GEMINI_API_KEY'):
+            raise RuntimeError('Odia auto TTS needs a configured Gemini key/model or imported native narration; no English fallback will be used')
+        p = 'gemini'
     kwargs = {"language": language, "style": style, "model": model or None,
               "provider_voice": provider_voice or None}
     providers = {

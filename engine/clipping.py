@@ -627,7 +627,7 @@ def _face_crop_x(path: str, start: float, duration: float) -> float:
 
 
 def _transcribe_in_chunks(local: str, work: str, total: float,
-                          provider: str, emit) -> list[dict]:
+                          provider: str, emit, language: str = 'en') -> list[dict]:
     """Transcribe compact audio chunks and restore source-relative timestamps.
 
     Sending a long MP4 directly can exceed Groq's multipart request limit even
@@ -654,7 +654,7 @@ def _transcribe_in_chunks(local: str, work: str, total: float,
         emit(f"Transcribing speech chunk {i+1}/{count}", 18 + int(6 * i / count))
         try:
             words = get_word_timestamps(
-                audio, provider=provider, align_script=False, force=True) or []
+                audio, provider=provider, align_script=False, force=True, language=language) or []
         except Exception as exc:
             msg = str(exc)
             if "tokenizers" in msg and "Tokenizer" in msg:
@@ -686,6 +686,20 @@ def framing_filter(mode, face_x=.5):
             "scale=1080:1920:flags=lanczos,setsar=1")
 
 
+def soft_music_filter(duration, volume=.08):
+    """Keep source speech at unity gain; stereo, gentle bed and sidechain ducking."""
+    if type(volume) not in (int,float) or not math.isfinite(volume) or not 0 <= volume <= .35:
+        raise ValueError('Soft music gain must be finite 0..0.35')
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError('Invalid clip audio duration')
+    end=duration+1
+    normal='aresample=48000,asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo'
+    return (f"[0:a]{normal},atrim=0:{duration:.3f},apad,atrim=0:{end:.3f},asplit=2[speech][detector];"
+            f"[1:a]{normal},volume={volume:.4f},atrim=0:{duration:.3f},apad,atrim=0:{end:.3f}[bed];"
+            "[bed][detector]sidechaincompress=threshold=.03:ratio=8:attack=200:release=600[duck];"
+            f"[speech][duck]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,atrim=0:{duration:.3f}[aout]")
+
+
 def create_highlight_clips(source: str, output_dir: str, count: int = 3,
                            min_seconds: float = 25, max_seconds: float = 55,
                            caption_provider: str = "auto", rights_confirmed: bool = False,
@@ -696,7 +710,20 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
                            music_volume: float = 0.08,
                            gemini_model: str = "",
                            gemini_chat_cleanup: str = "delete-after-read",
-                           framing: str = "face-crop") -> dict:
+                           framing: str = "face-crop", background_music_enabled: bool | None = None,
+                           language: str = "en") -> dict:
+    from .languages import language_pack
+    language = language_pack(language).code
+    if language == 'or':
+        raise ValueError('Odia source transcription is not verified by this Whisper clip route. Use a reviewed Odia transcript in AI RECREATE instead.')
+    if background_music_enabled is not None and type(background_music_enabled) is not bool:
+        raise ValueError('background_music_enabled must be true or false')
+    if background_music_enabled is False:
+        background_music = ''
+    elif background_music_enabled is True and not str(background_music).strip():
+        raise ValueError('Choose a licensed local music file or disable background music')
+    if type(music_volume) not in (int,float) or not math.isfinite(music_volume) or not 0 <= music_volume <= .35:
+        raise ValueError('Soft background music gain must be finite and between 0 and 0.35')
     framing_filter(framing)  # Validate before downloads or paid providers.
     if count < 1 or count > 100 or not (0 < min_seconds <= max_seconds):
         raise ValueError("Require count 1–100 and 0 < min_seconds <= max_seconds")
@@ -723,13 +750,14 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
             raise RuntimeError(
                 "--background-music requires --music-license. Use only music you own "
                 "or have permission/licence to publish.")
-    music_volume = max(0.0, min(0.35, float(music_volume)))
+    music_volume = float(music_volume)
     emit("Preparing source", 5)
     local = resolve_input(source, work, rights_confirmed=rights_confirmed,
                           source_rights=source_rights)
     total = _duration(local)
     emit("Transcribing and timing speech", 18)
-    words = _transcribe_in_chunks(local, work, total, caption_provider, emit)
+    words = (_transcribe_in_chunks(local, work, total, caption_provider, emit) if language == 'en'
+             else _transcribe_in_chunks(local, work, total, caption_provider, emit, language=language))
     if not words:
         raise RuntimeError("No speech timings were produced; install faster-whisper or configure GROQ_API_KEY")
     emit("Ranking standalone moments", 24)
@@ -824,7 +852,9 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         # FFmpeg never requests pixels outside the source frame.
         vf = framing_filter(framing, face_x)
         ass = os.path.abspath(cap["ass"]).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        vf += f",subtitles='{ass}'"
+        from .render.ffmpeg_renderer import _fontsdir, _esc_filter_path
+        font_dir = _fontsdir()
+        vf += f",subtitles='{ass}'" + (f":fontsdir='{_esc_filter_path(font_dir)}'" if font_dir else '')
         title = str(h.get("title") or _short_title(h.get("text", ""))).strip()
         from .editorial_text import usable_headline
         if not usable_headline(title):
@@ -836,13 +866,11 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         if background_music:
             cmd += ["-stream_loop", "-1", "-i", os.path.abspath(background_music),
                     "-filter_complex",
-                    (f"[1:a]volume={music_volume:.4f},atrim=0:{h['duration']:.3f},"
-                     "asetpts=N/SR/TB[music];[0:a][music]"
-                     "amix=inputs=2:duration=first:dropout_transition=2[aout]")]
+                    soft_music_filter(float(h['duration']), music_volume)]
         cmd += ["-vf", vf, "-map", "0:v:0"]
         cmd += ["-map", "[aout]"] if background_music else ["-map", "0:a?"]
         cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]
+                "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-r", "30", "-movflags", "+faststart", out]
         from .render.ffmpeg_renderer import _run_ffmpeg_progress
         base_percent = 25 + 70 * (i-1) / len(highlights)
         p = _run_ffmpeg_progress(cmd, h["duration"],
@@ -858,6 +886,14 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         qc_path = os.path.splitext(out)[0] + ".qc.json"
         with open(qc_path, "w", encoding="utf-8") as qf:
             json.dump(qc, qf, indent=2, ensure_ascii=False)
+        from .production import save, digest
+        sidecar = Path(out).with_suffix('.transcript.json')
+        save(sidecar, {'schema_version':1,'clip_sha256':digest(out),'language':language,
+                       'text':' '.join(w['word'] for w in clip_words),'words':clip_words,
+                       'source_start':h['start'],'source_end':h['end'],
+                       'rights':rights,'adaptation_confirmed':False,
+                       'notice':'Review transcription and adaptation rights before AI recreation'})
+        h['transcript_sidecar'] = str(sidecar)
         h["output"] = out
         h["output_filename"] = os.path.basename(out)
         h["face_center_x"] = round(face_x, 3)

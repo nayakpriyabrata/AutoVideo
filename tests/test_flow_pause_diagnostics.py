@@ -13,7 +13,7 @@ SIGNATURE = "IMG|https://media.example/asset-123.jpg|Frame|image|640|360"
 def pending_failure(tmp_path, monkeypatch, with_bridge=True):
     provider = object.__new__(FlowBrowserProvider)
     output = str(tmp_path / "shot_002_open.jpg")
-    compiled = {"prompt": "Useful scene", "project": "saved-project", "project_url": URL}
+    compiled = {"flow_image_auto_recover": False, "prompt": "Useful scene", "project": "saved-project", "project_url": URL}
     shot = NS(shot_id="shot_002", model="image")
     calls = []
     if with_bridge:

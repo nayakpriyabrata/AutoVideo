@@ -1950,6 +1950,20 @@ class FlowBrowser:
             pass
         return False
 
+    @staticmethod
+    def _click_download_control(control, timeout=3000):
+        """Only for already-resolved download controls, never generation buttons."""
+        try:
+            control.click(timeout=timeout)
+        except Exception as exc:
+            # Angular menu animations can prevent Playwright's stability check.
+            # Do not bypass visibility/disabled checks or retry a detached page.
+            if "not stable" not in str(exc).lower():
+                raise
+            if not control.is_visible() or not control.is_enabled():
+                raise
+            control.click(timeout=timeout, force=True)
+
     def _download_from_tile_button(self, button, out_path: str) -> str:
         """Listen BEFORE the first click: image menus can download immediately."""
         downloads = []
@@ -1963,18 +1977,18 @@ class FlowBrowser:
         label = "/".join(os.path.abspath(out_path).replace("\\", "/").split("/")[-3:])
         try:
             print(f"[Flow] Waiting for a download event: {label}")
-            button.click(timeout=3000)
+            self._click_download_control(button)
             page.wait_for_timeout(500)
             if not downloads:
                 option = self._try_resolve("download_original_option", timeout_ms=2000)
                 if not downloads and option is not None:
-                    option.click(timeout=3000)
+                    self._click_download_control(option)
                 elif not downloads:
                     # Scoped visible resolution items only, never another tile.
                     for label in ("1080p", "720p", "360p", "Original", "MP4", "1K", "Original size"):
                         options = page.get_by_text(label, exact=True)
                         if options.count() == 1 and options.first.is_visible(timeout=100):
-                            options.first.click(timeout=2000)
+                            self._click_download_control(options.first, timeout=2000)
                             break
             deadline = time.monotonic() + 30
             while not downloads and time.monotonic() < deadline:
@@ -3262,6 +3276,91 @@ class FlowBrowserProvider(VideoProvider):
             return False
 
     def _guarded_generation(self, shot, compiled, refs, out_path, vertical, dry_run, kind):
+        if kind != "image" or dry_run:
+            return self._guarded_generation_once(shot, compiled, refs, out_path, vertical, dry_run, kind)
+        # Retry the durable journal, not submission. Existing jobs inherit this
+        # recovery policy. One missing-image replacement maximum across resumes.
+        archive = out_path + ".flow-request.before-regeneration.json"
+        if os.path.exists(archive) and not os.path.exists(out_path + ".flow-request.json"):
+            raise FlowRequestPending("Image replacement was reserved but submission is uncertain; automatic regeneration blocked. Inspect the saved replacement record.")
+        attempts = 3 if compiled.get("flow_image_auto_recover", True) else 0
+        last = None
+        for attempt in range(attempts + 1):
+            try:
+                return self._guarded_generation_once(shot, compiled, refs, out_path, vertical, False, kind)
+            except FlowRequestPending as exc:
+                last = exc
+                if attempt == attempts:
+                    break
+                print(f"[Flow] Automatic image download recovery {attempt + 1}/{attempts}; no new generation.")
+                try:
+                    with open(out_path + ".flow-request.json", encoding="utf-8") as f:
+                        request = json.load(f)
+                    if not request.get("project_url"):
+                        break
+                    self.recover_browser(compiled.get("project") or "AutoVideoAI",
+                                         project_url=request["project_url"])
+                except Exception:
+                    pass
+        # A failed download of a visible asset is NOT permission to regenerate.
+        # Only replace an identified image absent on two successful project scans.
+        archive = out_path + ".flow-request.before-regeneration.json"
+        if attempts and compiled.get("flow_image_auto_regenerate", True) and not os.path.exists(archive):
+            try:
+                with open(out_path + ".flow-request.json", encoding="utf-8") as f:
+                    request = json.load(f)
+                key = hashlib.sha256(json.dumps([kind, str(getattr(shot, "shot_id", "")),
+                    compiled.get("prompt", ""), vertical], sort_keys=True).encode()).hexdigest()
+                bound = FlowBrowser.normalize_project_url(compiled.get("project_url"))
+                eligible = (request.get("request_hash") == key and request.get("kind") == "image"
+                            and request.get("signature") and request.get("project_url")
+                            and time.time() - float(request.get("submitted_at", time.time())) >= 360
+                            and (not bound or bound == request["project_url"]))
+                if eligible:
+                    b = self._ensure()
+                    absent = True
+                    for scan in range(2):
+                        b.ensure_project(compiled.get("project") or "AutoVideoAI",
+                                         project_url=request["project_url"])
+                        assets = b.media_assets()
+                        body = b._page.locator("body").inner_text(timeout=3000).lower()
+                        if any(word in body for word in ("generating", "creating image", "in progress", "queued")):
+                            absent = False
+                            break
+                        # Empty/loading grids cannot establish absence.
+                        baseline = request.get("baseline") or []
+                        # Require the entire saved pre-submission baseline to be
+                        # visible, not merely an arbitrary nonempty gallery slice.
+                        if (not assets or not baseline
+                                or b.current_project_url() != request["project_url"]
+                                or not all(any(media_signature_matches(a.get("sig"), old)
+                                               for a in assets) for old in baseline)
+                                or any(media_signature_matches(a.get("sig"), request["signature"])
+                                       for a in assets)):
+                            absent = False
+                            break
+                        if scan == 0:
+                            b._page.wait_for_timeout(30000)
+                    if absent:
+                        # Persist cap BEFORE submission; never overwrite audit history.
+                        with open(archive, "x", encoding="utf-8") as reservation:
+                            json.dump(request, reservation, indent=2)
+                            reservation.flush()
+                            os.fsync(reservation.fileno())
+                        os.remove(out_path + ".flow-request.json")
+                        print("[Flow] Recorded image absent after recovery scans; regenerating once (may use image credits), then retrying download.")
+                        replacement = dict(compiled, project_url=request["project_url"])
+                        try:
+                            return self._guarded_generation_once(shot, replacement, refs, out_path, vertical, False, kind)
+                        except FlowRequestPending:
+                            return self._guarded_generation(shot, replacement, refs, out_path, vertical, False, kind)
+            except (FlowAuthNeeded, FlowQuotaExceeded):
+                raise
+            except Exception as exc:
+                print(f"[Flow] Missing-image replacement could not complete: {type(exc).__name__}")
+        raise last
+
+    def _guarded_generation_once(self, shot, compiled, refs, out_path, vertical, dry_run, kind):
         generate_once = self._generate_video_once if kind == "video" else self._generate_image_once
         args = (shot, compiled, refs, out_path, vertical) if kind == "video" else (shot, compiled, out_path, vertical)
         if dry_run:

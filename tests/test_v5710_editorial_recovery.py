@@ -23,7 +23,11 @@ def test_partial_gemini_results_are_preserved(monkeypatch, tmp_path, provider):
     monkeypatch.setattr(c, "rank_highlights", lambda *a, **k: pytest.fail("discarded valid Gemini candidates"))
     monkeypatch.setattr(captions_ass, "build_captions", lambda *a, **k: {"ass": str(tmp_path / "captions.ass")})
     monkeypatch.setattr(c, "_face_crop_x", lambda *a: .5)
-    monkeypatch.setattr(ffmpeg_renderer, "_run_ffmpeg_progress", lambda *a, **k: NS(returncode=0))
+    def rendered(cmd,*args,**kwargs):
+        from pathlib import Path
+        Path(cmd[-1]).write_bytes(b'encoded test clip')
+        return NS(returncode=0)
+    monkeypatch.setattr(ffmpeg_renderer, "_run_ffmpeg_progress", rendered)
     monkeypatch.setattr(c, "_clip_qc_report", lambda *a: {"decision": "PASS", "quality_score": 90})
     (tmp_path / "useful-lesson-number-0.mp4").write_bytes(b"existing video")
     result = c.create_highlight_clips(source, str(tmp_path), count=10,

@@ -1,4 +1,4 @@
-# AutoVideoAI v5.8.1 clip configuration
+# AutoVideoAI v6.0.0 clip configuration
 # Copy this file, change source, and uncomment only the options you need.
 
 source: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
@@ -38,3 +38,6 @@ source_rights: own_content
 # background_music: "assets/music/my_licensed_track.mp3"
 # music_license: youtube_audio_library
 # music_volume: 0.08
+
+# language: en                   # en | hi for Whisper source timing
+# background_music_enabled: false # explicit off; true requires licensed track

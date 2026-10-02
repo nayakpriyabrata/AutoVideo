@@ -28,9 +28,20 @@ def resolve_style(style="auto", manifest=None):
     return style
 
 
-def font(size, bold=False, style="clean", headline=False):
+def font(size, bold=False, style="clean", headline=False, text=""):
     size = max(8, int(round(size)))
     style = resolve_style(style)
+    from ..languages import script_language, language_pack
+    script = script_language(text)
+    if script != 'en':
+        path = FONT_ROOT / language_pack(script).font_file
+        if not path.is_file():
+            raise RuntimeError('Missing bundled Indic font: ' + path.name)
+        from PIL import features
+        if features.check_feature('raqm'):
+            return ImageFont.truetype(str(path),size=size,layout_engine=ImageFont.Layout.RAQM)
+        from .indic_font import IndicFont
+        return IndicFont(path,size,bold=bold or headline)
     candidates = []
     if style == "playful":
         candidates.append(FONT_ROOT / "Fredoka-Variable.ttf")
@@ -92,7 +103,7 @@ def fit(draw, text, width, height, *, size, minimum, style="clean", bold=False,
     if not str(text).strip():
         return None
     for px in range(int(round(size)), int(round(minimum)) - 1, -1):
-        face = font(px, bold, style, headline)
+        face = font(px, bold, style, headline, text=text)
         content = measured_wrap(draw, text, face, width, stroke)
         if not content or len(content.splitlines()) > max_lines:
             continue

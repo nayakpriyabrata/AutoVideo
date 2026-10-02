@@ -62,6 +62,7 @@ _ENV_REPORT = load_environment(Path(__file__).resolve().parent)
 
 
 def main_v3(argv):
+    from pathlib import Path
     """Factory CLI: python cli.py v3 <create|resume|status|render|queue|support-report>."""
     from engine.factory import Factory
     ap = argparse.ArgumentParser(prog="cli.py v3", description="AutoVideoAI v3 factory")
@@ -72,6 +73,11 @@ def main_v3(argv):
     c.add_argument("--type", dest="video_type", default="shorts",
                    choices=["shorts", "faceless_youtube", "explainer", "marketing"])
     c.add_argument("--duration", type=int, default=45)
+    c.add_argument("--language", default="en", choices=["en","hi","or"])
+    c.add_argument("--destination", default=None, choices=["instagram_reel","facebook_reel","youtube_short","youtube_long"])
+    c.add_argument("--approved-plan-path", default="", help="reviewed external JSON script/storyboard")
+    c.add_argument("--narration-input-path", default="", help="native narration file you own/are licensed to use")
+    c.add_argument("--character-id", default="", help="original character from the local library")
     c.add_argument("--profile", default="FLOW_BALANCED",
                    choices=["FLOW_CINEMATIC", "FLOW_BALANCED", "FLOW_ECONOMY", "STORYBOARD_ECONOMY", "LOCAL_FREE", "FREE_HYBRID", "MANUAL_DIRECTOR"])
     c.add_argument("--preset", default="cinematic_realism")
@@ -314,6 +320,9 @@ def main_v3(argv):
                     help="legacy compatibility flag; prefer the specific --source-rights declaration")
     cl.add_argument("--background-music", default="",
                     help="optional local licensed music file mixed softly under the source")
+    cl.add_argument("--background-music-enabled", action=argparse.BooleanOptionalAction, default=None,
+                    help="explicit optional music switch; off ignores any saved music path")
+    cl.add_argument("--language", choices=['en','hi','or'],default='en')
     cl.add_argument("--music-license", default="none",
                     choices=["none", "own", "youtube_audio_library",
                              "royalty_free_licensed", "creative_commons"],
@@ -333,6 +342,34 @@ def main_v3(argv):
                                 help="Explicit API call budget; default zero")
         if command == "production-repair":
             review.add_argument("--plan", required=True)
+    source_in = sub.add_parser('source-import', help='Import untrusted pasted text/public allowlisted article without generation')
+    source_in.add_argument('--url', default='')
+    source_in.add_argument('--feed', action='store_true', help='Import up to 10 items from the chosen public RSS URL')
+    source_in.add_argument('--text-file', default='')
+    source_in.add_argument('--title', default='')
+    source_in.add_argument('--output-root', default='data/content/inbox')
+    source_in.add_argument('--brief-output', default='', help='new text file for an external writer')
+    chars = sub.add_parser('character-create', help='Create an original fictional character identity contract')
+    chars.add_argument('--name', required=True); chars.add_argument('--description', required=True)
+    chars.add_argument('--reference', action='append', default=[]); chars.add_argument('--original-confirmed', action='store_true')
+    chars.add_argument('--library-root', default='data/content/characters')
+    rec = sub.add_parser('recreate-clip', help='Create a review-gated AI character recreation plan; submits no generation')
+    rec.add_argument('clip'); rec.add_argument('--character-id', required=True)
+    rec.add_argument('--library-root', default='data/content/characters'); rec.add_argument('--transcript-file', default='')
+    rec.add_argument('--language', choices=['en','hi','or'], default='en')
+    rec.add_argument('--source-rights', default='unknown');rec.add_argument('--adaptation-confirmed', action='store_true')
+    rec.add_argument('--max-credits', type=int, default=50);rec.add_argument('--background-music', default='')
+    approve = sub.add_parser('approve-recreation', help='Approve the exact storyboard/identity/budget; no generation')
+    approve.add_argument('job_id')
+    tpl = sub.add_parser('longform-template', help='Create a local chapter/evidence template')
+    tpl.add_argument('--topic', required=True);tpl.add_argument('--language', default='en');tpl.add_argument('--output',required=True)
+    exp = sub.add_parser('export-delivery', help='Encode a local destination export; no publishing')
+    exp.add_argument('video');exp.add_argument('--folder',required=True)
+    exp.add_argument('--destination', required=True, choices=['instagram_reel','facebook_reel','youtube_short','youtube_long'])
+    exp.add_argument('--language', choices=['en','hi','or'], default='en');exp.add_argument('--title',default='')
+    exp.add_argument('--framing',choices=['fit','crop'],default='fit')
+    metrics=sub.add_parser('metrics-import',help='Import owned-account analytics JSON; does not scrape social sites')
+    metrics.add_argument('input');metrics.add_argument('--output',required=True)
     args = ap.parse_args(argv)
 
     if args.cmd == "support-report":
@@ -349,6 +386,46 @@ def main_v3(argv):
     f = Factory()
     from engine.runtime_log import timestamp_prefix
     cb = lambda s, p, i="": print(f"{timestamp_prefix()} [{int(p):3d}%] {s} {i}".rstrip())
+    if args.cmd == 'source-import':
+        from engine.source_inbox import SourceInbox
+        inbox = SourceInbox(args.output_root)
+        if bool(args.url) == bool(args.text_file):
+            ap.error('Choose exactly one --url or --text-file')
+        if args.feed:
+            if not args.url or args.text_file:
+                ap.error('--feed requires --url and no --text-file')
+            print(json.dumps(inbox.feed(args.url),indent=2,ensure_ascii=False));return
+        item = inbox.fetch(args.url) if args.url else inbox.paste(Path(args.text_file).read_text(encoding='utf-8'),title=args.title)
+        if args.brief_output:
+            with open(args.brief_output,'x',encoding='utf-8') as output:
+                output.write(inbox.brief_prompt(item))
+        print(json.dumps(item,indent=2,ensure_ascii=False));return
+    elif args.cmd == 'character-create':
+        from engine.content_library import CharacterLibrary
+        print(json.dumps(CharacterLibrary(args.library_root).create(args.name,args.description,reference_files=args.reference,
+                         original_confirmed=args.original_confirmed),indent=2,ensure_ascii=False));return
+    elif args.cmd == 'recreate-clip':
+        from engine.clip_recreation import create_recreation_job
+        text = Path(args.transcript_file).read_text(encoding='utf-8') if args.transcript_file else ''
+        print(json.dumps(create_recreation_job(f,args.clip,args.character_id,library_root=args.library_root,
+                         transcript_text=text,language=args.language,source_rights=args.source_rights,
+                         adaptation_confirmed=args.adaptation_confirmed,max_credits=args.max_credits,
+                         background_music=args.background_music),indent=2));return
+    elif args.cmd == 'approve-recreation':
+        from engine.clip_recreation import approve_recreation
+        print(json.dumps(approve_recreation(f,args.job_id),indent=2));return
+    elif args.cmd == 'longform-template':
+        from engine.content_plan import longform_template
+        with open(args.output,'x',encoding='utf-8') as output:
+            json.dump(longform_template(args.topic,args.language),output,indent=2,ensure_ascii=False)
+        print('Template written; fill and approve it before importing.');return
+    elif args.cmd == 'export-delivery':
+        from engine.publishing import export_delivery
+        print(json.dumps(export_delivery(args.video,args.folder,args.destination,language=args.language,
+                         title=args.title,framing=args.framing),indent=2));return
+    elif args.cmd == 'metrics-import':
+        from engine.publishing import import_metrics
+        print(json.dumps(import_metrics(args.output,json.loads(Path(args.input).read_text(encoding='utf-8'))),indent=2));return
     if args.cmd.startswith("production-"):
         from engine.production import init_review, check_job, stage_repairs
         root = f.pm.job_dir(args.job_id)
@@ -368,7 +445,7 @@ def main_v3(argv):
             "source", "output", "count", "min_seconds", "max_seconds",
             "caption_provider", "ranking_provider", "source_rights",
             "background_music", "music_license", "music_volume", "gemini_model",
-            "gemini_chat_cleanup", "framing",
+            "gemini_chat_cleanup", "framing", "language", "background_music_enabled",
         }
         unknown = sorted(set(clip_cfg) - allowed)
         if unknown:
@@ -377,6 +454,7 @@ def main_v3(argv):
             ap.error("clip config requires a non-empty source")
         result = create_highlight_clips(
             str(clip_cfg["source"]), str(clip_cfg.get("output") or "outputs/my-clips"),
+            language=clip_cfg.get('language','en'), background_music_enabled=clip_cfg.get('background_music_enabled'),
             count=int(clip_cfg.get("count", 3)),
             min_seconds=float(clip_cfg.get("min_seconds", 25)),
             max_seconds=float(clip_cfg.get("max_seconds", 55)),
@@ -401,7 +479,8 @@ def main_v3(argv):
             min_seconds=args.min_seconds, max_seconds=args.max_seconds,
             caption_provider=args.caption_provider, rights_confirmed=args.rights_confirmed,
             ranking_provider=args.ranking_provider,
-            source_rights=args.source_rights,
+            source_rights=args.source_rights, language=args.language,
+            background_music_enabled=args.background_music_enabled,
             background_music=args.background_music,
             music_license=args.music_license,
             music_volume=args.music_volume,
@@ -415,7 +494,9 @@ def main_v3(argv):
     elif args.cmd == "create":
         aspect = "9:16" if args.video_type == "shorts" else "16:9"
         job = f.create_job(args.topic, args.video_type, args.duration, aspect,
-                            voice=args.voice, content_type=args.content_type, tone=args.tone,
+                            voice=args.voice, language=args.language, destination=args.destination,
+                            approved_plan_path=args.approved_plan_path, narration_input_path=args.narration_input_path,
+                            character_id=args.character_id, content_type=args.content_type, tone=args.tone,
                             preset=args.preset, profile=args.profile,
                             cartoon_provider=args.cartoon_provider,
                             movieflow_mode=args.movieflow_mode,

@@ -1,5 +1,8 @@
 
-# Start here — AutoVideoAI v5.8.6
+# Start here — AutoVideoAI v6.0.0
+
+Start with [the v6.0.0 Content Studio guide](V6_0_0_CONTENT_STUDIO.md) for source imports,
+languages, original-character recreation and manual delivery review.
 
 For music-only reels and readable card controls, start with
 [V5_8_6_MUSIC_ONLY_TEXT_CARDS.md](V5_8_6_MUSIC_ONLY_TEXT_CARDS.md).

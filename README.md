@@ -1,9 +1,16 @@
-# AutoVideoAI v5.8.6 Studio — video generation and production review
+# AutoVideoAI v6.0.0 Content Studio — video generation and production review
 
 This repository includes **editable application source**, based on the uploaded
 v5.8.4 Settings Hotfix release. Run commands from the folder containing `cli.py`
 and `app.py`. The original v5.8.4 ZIP is preserved as a reference archive, not the
 updated build.
+
+**New in v6.0.0:** [Content Studio testing guide](V6_0_0_CONTENT_STUDIO.md).
+English/Hindi/Odia configuration and shaped text, source/approved-script imports,
+original characters, review-gated AI clip recreation, optional speech-preserving
+clip music, and destination exports/manual release review. This is the first
+implementation stage; social OAuth publishing and automatic research/localization
+remain planned, not silently enabled.
 
 **New in v5.8.6:** [music-only reels and readable text cards](V5_8_6_MUSIC_ONLY_TEXT_CARDS.md).
 Independent voiceover/text-card switches, actual no-TTS music-only and silent
@@ -43,7 +50,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v5.8.6
+# ZIP download: cd AutoVideoAI-v6.0.0
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

@@ -721,7 +721,10 @@ def generate_script_plan(topic: str, content_type: str, duration_sec: int,
                          tone: str, language: str, provider: str = "auto",
                          model: str = "auto", quality: str = "high",
                          target_words: int | None = None) -> dict | None:
-    target_words = target_words or max(50, int(round(duration_sec * NATURAL_WORDS_PER_SEC)))
+    from ..languages import language_pack
+    pack = language_pack(language)
+    rate = NATURAL_WORDS_PER_SEC if pack.code == 'en' else pack.words_per_second
+    target_words = target_words or max(50, int(round(duration_sec * rate)))
     requested = (provider or "auto").lower()
     qmode = str(quality or "high").lower()
     publish = qmode == "publish"

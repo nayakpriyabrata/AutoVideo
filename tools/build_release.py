@@ -56,7 +56,9 @@ def release_files(root: Path) -> list[Path]:
                     # These folders are user-supplied footage/music libraries,
                     # not redistributable build artifacts.
                     bundled_fonts = {"assets/fonts/Bungee-Regular.ttf", "assets/fonts/Fredoka-Variable.ttf",
-                                     "assets/fonts/OFL-Bungee.txt", "assets/fonts/OFL-Fredoka.txt"}
+                                     "assets/fonts/OFL-Bungee.txt", "assets/fonts/OFL-Fredoka.txt",
+                                     "assets/fonts/NotoSansOriya-Variable.ttf", "assets/fonts/NotoSansDevanagari-Variable.ttf",
+                                     "assets/fonts/OFL-NotoSansOriya.txt", "assets/fonts/OFL-NotoSansDevanagari.txt"}
                     if rel not in bundled_fonts and name.lower() not in ("readme.md", "readme.txt"):
                         continue
                 elif path.suffix.lower() not in SOURCE_SUFFIXES:

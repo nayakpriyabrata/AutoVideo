@@ -69,6 +69,7 @@ def _esc_filter_path(p: str) -> str:
 
 
 FONTS_DIR_CANDIDATES = (
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "fonts"),
     "/usr/share/fonts",
     "/usr/local/share/fonts",
     os.path.expanduser("~/.fonts"),
@@ -123,7 +124,7 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
                      ass_path: str | None = None, music: str | None = None,
                      ambience: str | None = None, sfx: list[dict] | None = None,
                      overlays: list[dict] | None = None, music_volume: float = 0.10,
-                     stereo_master: bool = True,
+                     stereo_master: bool = True, audio_bitrate: int = 192,
                      quality: str = "standard",
                      encoder: str | None = None,
                      use_fontsdir: bool = True,
@@ -330,7 +331,7 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
             "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
             ]
     if has_audio:
-        cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+        cmd += ["-c:a", "aac", "-b:a", f"{int(audio_bitrate)}k", "-ar", "48000"]
     cmd += ["-movflags", "+faststart", "-t", str(total), out_path]
     meta = {"encoder": enc, "quality": quality, "total": total,
             "voiceover_enabled": a_voice is not None, "audio_present": has_audio,

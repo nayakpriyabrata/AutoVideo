@@ -31,3 +31,6 @@ yt-dlp>=2025.1.0
 # ---------- v5 optional local high-quality TTS ----------
 # pip install "kokoro>=0.9.4" soundfile   # also install espeak-ng on Linux/WSL
 # Groq/Gemini/ElevenLabs/OpenAI/xAI integrations use requests; no vendor SDK is required.
+
+uharfbuzz>=0.40
+freetype-py>=2.4

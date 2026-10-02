@@ -1,8 +1,10 @@
-# AutoVideoAI v6.0.6 — Flow Resume Safety
+# AutoVideoAI v6.0.7 — Review-first Stock B-roll Cutaways
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. The original release archives are preserved as reference builds, not the updated build.
 
-**New in v6.0.6:** [Flow resume safety](V6_0_6_FLOW_RESUME_SAFETY.md). Reuse existing Flow tabs in CDP sessions, preserve the saved project route, avoid opening duplicate tabs while a project is still loading, and show video-vs-image-specific recovery guidance with the provider's failure reason. Coverage-QC failures now show read-only shot statuses in the dashboard.
+**New in v6.0.7:** [Review-first stock B-roll cutaways](V6_0_7_REVIEW_FIRST_BROLL.md). Find related stock footage at production scene boundaries or within CLIP STUDIO highlights, preview each exact file, adjust placement/length, and approve its rights before rendering. Cutaways replace picture only: existing audio and duration remain unchanged, originals are preserved, and no Flow/Veo generation is submitted.
+
+**Previous in v6.0.6:** [Flow resume safety](V6_0_6_FLOW_RESUME_SAFETY.md). Reuse existing Flow tabs in CDP sessions, preserve the saved project route, avoid opening duplicate tabs while a project is still loading, and show video-vs-image-specific recovery guidance with the provider's failure reason. Coverage-QC failures now show read-only shot statuses in the dashboard.
 
 **New in v6.0.5:** [Mini Reels workflow](V6_0_5_MINI_REELS.md). Discover current Google Trends search ideas, ask the visible Gemini Web session for an original short-form prompt, then review and generate one vertical Flow/Veo clip in-browser. Native Flow voiceover/ambience is optional and best-effort; no separate TTS is run, and uncertain video requests are recovered without blind re-submission.
 
@@ -53,7 +55,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.6
+# ZIP download: cd AutoVideoAI-v6.0.7
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -278,7 +280,7 @@ cp clip_config.yaml my_clip.yaml
 python3 cli.py v3 clip-config my_clip.yaml
 ```
 
-The dashboard also has **CLIP STUDIO**, with the same Gemini/local selection, rights, duration and licensed-music controls.
+The dashboard also has **CLIP STUDIO**, with the same Gemini/local selection, rights, duration and licensed-music controls. v6.0.7 adds an optional, preview-first related stock B-roll cutaway step for production renders and individual Clip Studio highlights; see [the cutaway guide](V6_0_7_REVIEW_FIRST_BROLL.md).
 
 For a public YouTube URL, `--ranking-provider gemini-hybrid` now follows this visible chain:
 

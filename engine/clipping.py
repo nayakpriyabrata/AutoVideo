@@ -896,6 +896,7 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         h['transcript_sidecar'] = str(sidecar)
         h["output"] = out
         h["output_filename"] = os.path.basename(out)
+        h["caption_ass_path"] = os.path.abspath(cap["ass"]) if cap.get("ass") else ""
         h["face_center_x"] = round(face_x, 3)
         h["framing"] = framing
         h["quality_score"] = qc["quality_score"]

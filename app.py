@@ -971,6 +971,19 @@ elif page == "CLIP STUDIO":
     gemini_cleanup = st.selectbox("Temporary Gemini browser chat", ["delete-after-read", "keep"])
     framing = st.selectbox("Framing", ["face-crop", "fit"],
                            help="Fit keeps the complete picture. Face crop uses a static estimate and may miss speaker changes.")
+    clip_broll_enabled = st.checkbox(
+        "Optional: find related stock B-roll cutaways for these highlights",
+        value=False,
+        help="Search is a separate, explicit step after the clips exist. Each exact stock file must be previewed, rights-reviewed and approved before a separate B-roll copy is rendered; original highlights are preserved.")
+    cb1, cb2, cb3 = st.columns(3)
+    clip_broll_count = cb1.number_input("Maximum B-roll suggestions", 1, 5, 3, 1,
+                                        disabled=not clip_broll_enabled, key="clip-studio-broll-count")
+    clip_broll_duration = cb2.slider("Cutaway duration (seconds)", 0.5, 6.0, 2.0, 0.5,
+                                      disabled=not clip_broll_enabled, key="clip-studio-broll-duration")
+    clip_broll_replace = cb3.checkbox(
+        "Replace previous suggestions", value=False,
+        disabled=(not clip_broll_enabled or not st.session_state.get('clip_broll_review_path')),
+        key="clip-studio-broll-replace")
     confirmed = st.checkbox("I confirm the selected rights/licence declaration is accurate")
     if st.button("✂️ Analyse and create clips", type="primary"):
         if not source.strip():
@@ -997,6 +1010,7 @@ elif page == "CLIP STUDIO":
                     framing=framing,
                     progress_cb=clip_progress)
                 st.session_state['last_clip_result'] = result
+                st.session_state.pop('clip_broll_review_path', None)
                 st.success(f"Created {len(result['outputs'])} clips using {result['method']}.")
                 if result.get("partial_result"):
                     st.warning(result["shortfall_reason"])
@@ -1017,6 +1031,86 @@ elif page == "CLIP STUDIO":
                     st.video(item["output"])
             except Exception as exc:
                 st.error(str(exc))
+    if clip_broll_enabled and st.session_state.get('last_clip_result'):
+        from engine.broll import (apply_clip_studio_review, load_review as load_clip_broll_review,
+                                  prepare_clip_studio_review, save_review as save_clip_broll_review)
+        clip_result = st.session_state['last_clip_result']
+        st.divider()
+        st.subheader("🌿 Preview and approve B-roll cutaways")
+        st.caption("Suggestions are full-screen visual cutaways inside the selected highlights. Existing clip audio and duration stay unchanged. The original highlights are never overwritten.")
+        if st.button("🔎 Search related stock for these highlights", key="clip-broll-search"):
+            try:
+                with st.spinner("Searching configured stock sources; no Flow/Veo generation is submitted…"):
+                    review_path, review = prepare_clip_studio_review(
+                        clip_result, max_candidates=int(clip_broll_count),
+                        default_duration=float(clip_broll_duration), replace=clip_broll_replace)
+                st.session_state['clip_broll_review_path'] = review_path
+                st.success(f"Found {sum(1 for x in review.get('candidates', []) if x.get('status') == 'ready')} preview candidate(s). Nothing is applied until approved.")
+            except Exception as exc:
+                st.error(str(exc))
+        clip_review_path = st.session_state.get('clip_broll_review_path')
+        if clip_review_path and os.path.isfile(clip_review_path):
+            try:
+                review = load_clip_broll_review(clip_review_path)
+                updates = {}
+                for candidate in review.get('candidates', []):
+                    cid = str(candidate.get('candidate_id', 'cutaway'))
+                    st.markdown(f"**{candidate.get('label', cid)}**")
+                    if candidate.get('path') and os.path.isfile(candidate['path']):
+                        cprev, cstock = st.columns(2)
+                        if candidate.get('clip_output') and os.path.isfile(candidate['clip_output']):
+                            cprev.video(candidate['clip_output'])
+                            cprev.caption("Original highlight (unchanged)")
+                        cstock.video(candidate['path'])
+                        cstock.caption("Exact related stock candidate")
+                        st.caption("Query: " + str(candidate.get('query', '')) +
+                                   " · Source: " + str(candidate.get('source', 'stock')) +
+                                   " · Licence: " + str(candidate.get('license', 'review required')) +
+                                   (" · Creator: " + str(candidate.get('creator')) if candidate.get('creator') else ""))
+                        if candidate.get('page_url'):
+                            st.markdown(f"[Open stock source page]({candidate['page_url']})")
+                        clip_duration = float(candidate.get('clip_duration') or 0)
+                        max_start = max(0.0, clip_duration - 0.5)
+                        cut_start = st.number_input("Cutaway start within this highlight (seconds)", 0.0, max_start,
+                                                    min(max_start, max(0.0, float(candidate.get('start', 0) or 0))), 0.25,
+                                                    key=f"clip-broll-start-{cid}")
+                        max_cut = max(0.5, min(6.0, clip_duration - float(cut_start)))
+                        cut_default = min(max_cut, max(0.5, float(candidate.get('duration', clip_broll_duration) or clip_broll_duration)))
+                        cut_length = st.slider("Cutaway length (seconds)", 0.5, max_cut, cut_default, 0.5,
+                                               key=f"clip-broll-length-{cid}")
+                        reviewed = st.checkbox("I reviewed this exact stock clip and its licence/rights",
+                                               value=bool(candidate.get('rights_reviewed')),
+                                               key=f"clip-broll-rights-{cid}")
+                        approved = st.checkbox("Approve this cutaway for this highlight",
+                                               value=bool(candidate.get('approved')),
+                                               key=f"clip-broll-approve-{cid}")
+                        updates[cid] = {"start": float(cut_start), "duration": float(cut_length),
+                                        "rights_reviewed": reviewed, "approved": approved}
+                    else:
+                        st.warning(candidate.get('search_error', 'No valid stock clip was found for this highlight.'))
+                if st.button("💾 Save B-roll approvals", key="clip-broll-save"):
+                    review = save_clip_broll_review(clip_review_path, updates)
+                    n_approved = sum(1 for x in review.get('candidates', [])
+                                     if x.get('approved') and x.get('rights_reviewed'))
+                    st.success(f"Saved {n_approved} approved insert(s). Apply will create new files and keep originals.")
+                n_approved_saved = sum(1 for x in review.get('candidates', [])
+                                       if x.get('approved') and x.get('rights_reviewed'))
+                if st.button("🎬 Apply saved cutaways to separate copies", disabled=(n_approved_saved == 0),
+                             key="clip-broll-apply"):
+                    with st.spinner("Compositing approved visuals while preserving each highlight's original audio…"):
+                        applied = apply_clip_studio_review(clip_review_path)
+                    if applied['outputs']:
+                        st.success(f"Created {len(applied['outputs'])} separate B-roll edit(s). The original highlight files are unchanged.")
+                        for output_path in applied['outputs']:
+                            st.video(output_path)
+                            with open(output_path, 'rb') as handle:
+                                st.download_button("⬇️ Download B-roll edit", handle,
+                                                   file_name=os.path.basename(output_path),
+                                                   key=f"clip-broll-download-{os.path.basename(output_path)}")
+                    else:
+                        st.info("No approved insert was applied.")
+            except Exception as exc:
+                st.error("B-roll review failed: " + str(exc))
 
 # ================= CONTENT INBOX =================
 elif page == 'CONTENT INBOX':
@@ -1220,7 +1314,75 @@ elif page == "RENDER":
         st.info("Select a job in the sidebar.")
     else:
         from engine.render.ffmpeg_renderer import detect_encoder
+        from engine.broll import load_review as load_broll_review, prepare_job_review, save_review as save_broll_review
         st.caption(f"Encoder: `{detect_encoder()}` · Target: 1080p + burned captions + ducked music + loudness.")
+        D = F.pm.dirs(st.session_state.job_id)
+        broll_review_path = os.path.join(D["render"], "broll_review.json")
+        shots_for_broll = F.pm.load_manifest(st.session_state.job_id).shots
+        estimated_timeline = sum(max(0.1, float(x.voice_end) - float(x.voice_start)) for x in shots_for_broll)
+        with st.expander("🌿 Optional related stock B-roll cutaways", expanded=False):
+            st.caption("Search at selected scene boundaries, preview the exact downloaded stock clip, adjust its position, then approve it. Approved cutaways replace only the picture for a few seconds; existing narration/music and final duration remain unchanged. Search uses the configured local stock library or stock provider. It never submits Flow/Veo generations. Review the asset licence before approval.")
+            existing_broll = os.path.isfile(broll_review_path)
+            b1, b2, b3 = st.columns(3)
+            broll_count = b1.number_input("Maximum suggestions", min_value=1, max_value=10, value=3, step=1,
+                                         key=f"broll-count-{st.session_state.job_id}")
+            broll_duration = b2.slider("Cutaway duration (seconds)", 0.5, 6.0, 2.0, 0.5,
+                                        key=f"broll-duration-{st.session_state.job_id}")
+            replace_broll = b3.checkbox("Replace existing suggestion list", value=False,
+                                        disabled=not existing_broll,
+                                        key=f"broll-replace-{st.session_state.job_id}")
+            if st.button("🔎 Find related stock cutaways", key=f"broll-search-{st.session_state.job_id}"):
+                try:
+                    with st.spinner("Searching configured stock sources; no Flow/Veo generation is submitted…"):
+                        _path, review = prepare_job_review(
+                            F, st.session_state.job_id, max_candidates=int(broll_count),
+                            default_duration=float(broll_duration), replace=replace_broll)
+                    st.success(f"Prepared {len(review.get('candidates', []))} candidate(s). Nothing is applied until you approve it.")
+                except Exception as exc:
+                    st.error(str(exc))
+            if os.path.isfile(broll_review_path):
+                try:
+                    review = load_broll_review(broll_review_path)
+                    approvals = {}
+                    for candidate in review.get("candidates", []):
+                        cid = str(candidate.get("candidate_id", "cutaway"))
+                        st.markdown(f"**{candidate.get('label', cid)}**")
+                        if candidate.get("path") and os.path.isfile(candidate["path"]):
+                            st.video(candidate["path"])
+                            st.caption("Query: " + str(candidate.get("query", "")) +
+                                       " · Source: " + str(candidate.get("source", "stock")) +
+                                       " · Licence: " + str(candidate.get("license", "review required")) +
+                                       (" · Creator: " + str(candidate.get("creator")) if candidate.get("creator") else ""))
+                            if candidate.get("page_url"):
+                                st.markdown(f"[Open stock source page]({candidate['page_url']})")
+                            max_start = max(0.0, estimated_timeline - 0.5)
+                            start_default = min(max_start, max(0.0, float(candidate.get("start", 0) or 0)))
+                            cut_start = st.number_input("Start time in final video (seconds)", 0.0, max_start,
+                                                        start_default, 0.25, key=f"broll-start-{st.session_state.job_id}-{cid}")
+                            max_cut_duration = max(0.5, min(6.0, estimated_timeline - float(cut_start)))
+                            duration_default = min(max_cut_duration, max(0.5, float(candidate.get("duration", broll_duration) or broll_duration)))
+                            cut_duration = st.slider("Use this many seconds", 0.5, max_cut_duration, duration_default, 0.5,
+                                                      key=f"broll-length-{st.session_state.job_id}-{cid}")
+                            reviewed = st.checkbox("I reviewed this exact clip and its licence/rights",
+                                                   value=bool(candidate.get("rights_reviewed")),
+                                                   key=f"broll-rights-{st.session_state.job_id}-{cid}")
+                            approved = st.checkbox("Approve this cutaway for the final video",
+                                                   value=bool(candidate.get("approved")),
+                                                   key=f"broll-approve-{st.session_state.job_id}-{cid}")
+                            approvals[cid] = {"start": float(cut_start), "duration": float(cut_duration),
+                                              "rights_reviewed": reviewed, "approved": approved}
+                        else:
+                            st.warning(candidate.get("search_error", "No valid stock video was found for this gap."))
+                    if st.button("💾 Save cutaway approvals", key=f"broll-save-{st.session_state.job_id}"):
+                        try:
+                            review = save_broll_review(broll_review_path, approvals)
+                            count_approved = sum(1 for x in review.get("candidates", [])
+                                                 if x.get("approved") and x.get("rights_reviewed"))
+                            st.success(f"Saved {count_approved} approved cutaway(s). The render will use only these exact reviewed files.")
+                        except Exception as exc:
+                            st.error(str(exc))
+                except Exception as exc:
+                    st.error("Could not load B-roll review: " + str(exc))
         quality = st.radio("Quality", ["preview", "standard", "high"], horizontal=True)
         if st.button("🎬 Render final", type="primary"):
             render_bar = st.progress(0)
@@ -1231,7 +1393,7 @@ elif page == "RENDER":
             with st.spinner("Rendering..."):
                 try:
                     r = F.render_job(st.session_state.job_id, quality=quality, progress_cb=render_cb)
-                    st.success(f"Done via {r['renderer']}")
+                    st.success(f"Done via {r['renderer']} · {r.get('broll_cutaways', 0)} approved stock cutaway(s)")
                     st.video(r["video"])
                     with open(r["video"], "rb") as f:
                         st.download_button("⬇️ Download MP4", f, file_name=os.path.basename(r["video"]))

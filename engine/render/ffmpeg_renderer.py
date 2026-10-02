@@ -130,7 +130,8 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
                      use_fontsdir: bool = True,
                      use_loudnorm: bool = True,
                      safe_concat: bool = False,
-                     loop_short_segments: bool = False) -> tuple[list, dict]:
+                     loop_short_segments: bool = False,
+                     video_overlays: list[dict] | None = None) -> tuple[list, dict]:
     """Build (cmd, meta). Pure function of inputs -> fully unit-testable."""
     ff = ffmpeg_exe()
     enc = encoder or detect_encoder()
@@ -182,6 +183,22 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
             cmd += ["-loop", "1", "-i", e["path"]]
             overlay_idx.append((next_idx, e))
             next_idx += 1
+    video_overlay_idx = []
+    for j, e in enumerate(video_overlays or []):
+        path = str(e.get("path") or "")
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError("Approved video cutaway is missing: " + (os.path.basename(path) or "(no path)"))
+        start = _checked_seconds(e.get("start", 0), f"video_overlay[{j}].start")
+        end = _checked_seconds(e.get("end"), f"video_overlay[{j}].end", minimum=0.0)
+        if end <= start:
+            raise ValueError(f"Invalid video cutaway range: {start}–{end} seconds")
+        seek = _checked_seconds(e.get("in", 0), f"video_overlay[{j}].in")
+        # A looping, bounded input guarantees moving stock rather than a held
+        # last frame. Its audio is intentionally unmapped; the production mix
+        # remains the only audio timeline.
+        cmd += ["-stream_loop", "-1", "-ss", str(seek), "-t", str(end - start), "-i", path]
+        video_overlay_idx.append((next_idx, e))
+        next_idx += 1
 
     # ---- video graph ----
     F = []
@@ -234,6 +251,22 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
     # global gentle fade in/out
     F.append(f"{last}fade=t=in:st=0:d=0.4,fade=t=out:st={max(0.5, round(total-0.5,3))}:d=0.5[vf]")
     vcur = "[vf]"
+    for j, (idx, e) in enumerate(video_overlay_idx):
+        st = _checked_seconds(e.get("start", 0), f"video_overlay[{j}].start")
+        en = _checked_seconds(e.get("end"), f"video_overlay[{j}].end", minimum=0.0)
+        if en > total + 0.01:
+            raise ValueError(f"Video cutaway ends after the rendered timeline: {en:.3f}s > {total:.3f}s")
+        cut_dur = en - st
+        if cut_dur <= 0:
+            raise ValueError(f"Invalid video cutaway duration: {cut_dur!r}")
+        F.append(
+            f"[{idx}:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+            f"crop={W}:{H},setsar=1,fps={fps},format=yuv420p,"
+            f"trim=duration={cut_dur:.3f},setpts=PTS-STARTPTS+{st:.3f}/TB[broll{j}]")
+        F.append(
+            f"{vcur}[broll{j}]overlay=0:0:eof_action=pass:shortest=0:repeatlast=0:"
+            f"enable='between(t,{st:.3f},{en:.3f})'[vcut{j}]")
+        vcur = f"[vcut{j}]"
     for j, (idx, e) in enumerate(overlay_idx):
         st = _checked_seconds(e.get("start", 0), f"overlay[{j}].start", minimum=0.0)
         en = _checked_seconds(e.get("end", total), f"overlay[{j}].end", minimum=0.0)
@@ -339,6 +372,7 @@ def build_ffmpeg_cmd(segments: list[dict], narration: str | None, out_path: str,
             "captions_requested": bool(ass_path), "burn_captions": burn,
             "segments": len(segments), "use_loudnorm": use_loudnorm,
             "safe_concat": bool(safe_concat), "overlays": len(overlay_idx),
+            "video_overlays": len(video_overlay_idx),
             "loop_short_segments": bool(loop_short_segments),
             "music_volume": float(music_volume), "stereo_master": bool(stereo_master),
             "filter_complex": ";".join(F)}

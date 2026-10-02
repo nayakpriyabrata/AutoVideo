@@ -2874,6 +2874,11 @@ class Factory:
                  "See render/coverage_qc.json; replace the listed media or create a corrected plan. Existing job and Flow project are preserved.")
             raise RuntimeError("Coverage QC: " + "; ".join(coverage["issues"]) +
                                ". No new generation submitted. See render/coverage_qc.json.")
+        broll_review_path = os.path.join(D["render"], "broll_review.json")
+        video_cutaways = []
+        if os.path.isfile(broll_review_path):
+            from .broll import approved_video_overlays
+            video_cutaways = approved_video_overlays(broll_review_path, float(tl.get("total", ndur)))
         words_p = voice_path + ".words.json"
         words = json.load(open(words_p, encoding="utf-8")) if voice and os.path.exists(words_p) else []
         script_text = ""
@@ -2975,7 +2980,8 @@ class Factory:
                     "audio_expected": audio_expected, "music_volume": presentation.music_volume,
                     "audio_mode": "voiceover" if voice else ("instrumental" if audio_expected else "silent")})
         prog("🎬 Rendering 1080p YouTube master..." if pro_mode else "🎬 Rendering 1080p...", 92)
-        out = os.path.join(D["render"], f"{job_id}-final.mp4")
+        out_name = f"{job_id}-final-broll.mp4" if video_cutaways else f"{job_id}-final.mp4"
+        out = os.path.join(D["render"], out_name)
         from .publishing import destination_profile
         delivery = destination_profile(settings['destination']) if settings.get('destination') else {}
         try:
@@ -2985,6 +2991,7 @@ class Factory:
                               sfx=sfx, overlays=overlays, music_volume=presentation.music_volume,
                               stereo_master=True, quality=quality,
                               safe_concat=True, loop_short_segments=True,
+                              video_overlays=video_cutaways,
                               progress_cb=lambda p, detail="": prog("🎬 Rendering", 92 + (float(p) * 0.06), detail))
             renderer = "ffmpeg"
             # Some WSL/libass builds advertise the subtitles filter but fail at
@@ -3033,6 +3040,11 @@ class Factory:
                     "the bounded safe recovery pass. AutoVideoAI did not publish it and did not start "
                     "the slow MoviePy fallback. Replace/recover the affected source clip(s), then "
                     f"resume the same job. Technical detail: {render_error}") from e
+            if video_cutaways:
+                raise RuntimeError(
+                    "FFmpeg could not apply the approved stock cutaways. Source clips and approved "
+                    "stock assets were preserved; no silent fallback without the inserts was used. "
+                    f"Technical detail: {render_error}") from e
             prog(f"FFmpeg pipeline failed ({str(e)[:80]}), trying full MoviePy fallback...", 93)
             r = self._render_moviepy_fallback(m, D, tl, voice, out,
                                               music=music, ambience=amb, sfx=sfx, overlays=overlays,
@@ -3085,7 +3097,23 @@ class Factory:
         if "music_meta" in locals() and isinstance(music_meta, dict) and music_meta.get("path"):
             if not any(x.get("path") == music_meta.get("path") for x in asset_sources if isinstance(x, dict)):
                 asset_sources.append(music_meta)
+        for cutaway in video_cutaways:
+            asset_sources.append({
+                "path": cutaway["path"], "source": cutaway.get("source", "stock"),
+                "license": cutaway.get("license", ""), "page_url": cutaway.get("page_url", ""),
+                "creator": cutaway.get("creator", ""), "query": cutaway.get("query", ""),
+                "candidate_id": cutaway.get("candidate_id", ""),
+                "timeline_start": cutaway.get("start"), "timeline_end": cutaway.get("end"),
+                "rights_reviewed": True,
+            })
         _save_json(os.path.join(D["root"], "asset_sources.json"), asset_sources)
+        if video_cutaways:
+            _save_json(os.path.join(D["render"], "broll_applied.json"), {
+                "video": out, "audio_policy": "preserved-existing-audio-and-duration",
+                "cutaways": [{k: v for k, v in item.items() if k != "path"}
+                             | {"asset_name": os.path.basename(item["path"])}
+                             for item in video_cutaways],
+            })
         try:
             lines = ["# Media credits / provenance", ""]
             for a in asset_sources:
@@ -3209,6 +3237,7 @@ class Factory:
                 "visual_diversity": diversity, "publish_readiness": publish_readiness,
                 "graphics": overlays if "overlays" in locals() else [],
                 "background_music": music_meta if "music_meta" in locals() else {},
+                "broll_cutaways": len(video_cutaways),
                 "warnings": final_warnings + publish_warnings}
 
     def _render_moviepy_fallback(self, m, D, tl, voice, out, **presentation) -> dict:

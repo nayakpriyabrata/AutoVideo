@@ -37,7 +37,7 @@ flow_frame_retries: 3
 network_wait_seconds: 300
 flow_project_url: ""
 flow_video_retries: 1
-flow_video_ready_grace_seconds: 20
+flow_video_ready_grace_seconds: 20  # Diagnostic threshold; never treats a still as a video.
 flow_video_recovery_wait_seconds: 180
 flow_reuse_project_media: true
 flow_reuse_mode: topic       # exact|topic|project

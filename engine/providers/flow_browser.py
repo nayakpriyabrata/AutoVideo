@@ -54,6 +54,20 @@ def media_signature_matches(left, right):
     return a is not None and a == b
 
 
+def media_signature_kind(signature):
+    """Return the typed media kind encoded in a Flow tile signature, if known."""
+    try:
+        tag, src, tail = str(signature).split('|', 2)
+        _, kind, width, height = tail.rsplit('|', 3)
+        if tag.upper() not in ('IMG', 'VIDEO') or kind.lower() not in ('image', 'video') or not src:
+            return None
+        float(width)
+        float(height)
+        return kind.lower()
+    except (ValueError, TypeError):
+        return None
+
+
 def find_system_chrome() -> str | None:
     """Locate an installed Chrome/Chromium (incl. Windows Chrome visible from WSL)."""
     cands = []
@@ -1706,18 +1720,33 @@ class FlowBrowser:
                   f"continuing with available references.")
         return attached
 
+    @staticmethod
+    def _classify_media_kind(tag, src="", alt="", hints="", has_play=False,
+                            has_resolution=False, has_video_node=False) -> str:
+        """Classify a Flow tile from its own video controls/labels, not DOM order."""
+        text = " ".join(str(value or "") for value in (src, alt, hints)).lower()
+        video_url = bool(re.search(r"\.(?:mp4|webm|mov|m4v)(?:$|[?#])", str(src or ""), re.I))
+        video_hint = bool(re.search(
+            r"\bvideo\b|video preview|generated video|smart[_\s-]?display|"
+            r"play(?:[_\s-]?(?:arrow|circle|circle_filled))?|(?:^|\W)movie(?:\W|$)",
+            text, re.I))
+        if (str(tag or "").lower() == "video" or has_video_node or has_play
+                or has_resolution or video_url or video_hint):
+            return "video"
+        return "image"
+
     def media_assets(self) -> list[dict]:
         """Return fingerprints for large visible image/video assets in DOM order.
 
         Flow often exposes a generated video as an ``img`` poster card rather
-        than a literal ``<video>`` element.  v5.2 classifies the *card*, not just
-        the poster image: play controls, resolution badges (360p/720p/1080p),
-        video aria labels and descendant ``video`` elements all count as video
-        evidence.  This prevents an intermediate still/poster from being treated
-        as the completed movie.
+        than a literal ``<video>`` element.  Classify from evidence associated
+        with that tile, including Material icon names such as ``play_arrow``;
+        those icon tokens are not accessible as the word "play" and were a
+        common way a real video tile could be missed.  A plain fresh image never
+        counts as a completed video.
         """
         try:
-            return self._page.evaluate(r"""() => Array.from(document.querySelectorAll('img,video')).map((el, i) => {
+            raw_assets = self._page.evaluate(r"""() => Array.from(document.querySelectorAll('img,video')).map((el, i) => {
                 const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
                 if (r.width < 140 || r.height < 90 || s.visibility === 'hidden' || s.display === 'none') return null;
                 const src = el.currentSrc || el.src || el.poster || '';
@@ -1725,7 +1754,7 @@ class FlowBrowser:
 
                 // Walk a few ancestors because Flow places the play icon and
                 // resolution badge next to the poster image rather than inside it.
-                let node = el, tile = el.parentElement, hints = '', depth = 0;
+                let node = el, hints = '', depth = 0;
                 let hasPlay = false, hasVideoNode = el.tagName.toLowerCase() === 'video';
                 let hasResolution = false;
                 while (node && depth < 6) {
@@ -1735,31 +1764,41 @@ class FlowBrowser:
                         const txt = (node.innerText || '').trim();
                         const local = (aria + ' ' + title + ' ' + (txt.length < 900 ? txt : '')).trim();
                         hints += ' ' + local;
-                        if (/\bplay\b|play video|video preview/i.test(local)) hasPlay = true;
+                        if (/(?:^|[^a-z0-9])(?:play(?:[_\s-]?(?:arrow|circle|circle_filled))?|smart[_\s-]?display)(?:$|[^a-z0-9])|play video|video preview/i.test(local)) hasPlay = true;
                         if (/\b(?:360|480|720|1080|1440|2160)p\b/i.test(local)) hasResolution = true;
                         if (node.querySelector) {
                             if (node.querySelector('video')) hasVideoNode = true;
-                            const labelled = Array.from(node.querySelectorAll('[aria-label],[title]')).slice(0, 18);
+                            const labelled = Array.from(node.querySelectorAll('[aria-label],[title],[data-testid],[data-tooltip],[data-icon],mat-icon'))
+                                .slice(0, 24);
                             for (const n of labelled) {
-                                const h = (n.getAttribute('aria-label') || '') + ' ' + (n.getAttribute('title') || '');
+                                const h = [n.getAttribute('aria-label') || '', n.getAttribute('title') || '',
+                                           n.getAttribute('data-testid') || '', n.getAttribute('data-tooltip') || '',
+                                           n.getAttribute('data-icon') || '', n.innerText || ''].join(' ');
                                 hints += ' ' + h;
-                                if (/\bplay\b|play video|video preview/i.test(h)) hasPlay = true;
+                                if (/(?:^|[^a-z0-9])(?:play(?:[_\s-]?(?:arrow|circle|circle_filled))?|smart[_\s-]?display)(?:$|[^a-z0-9])|play video|video preview/i.test(h)) hasPlay = true;
+                                if (/\b(?:360|480|720|1080|1440|2160)p\b/i.test(h)) hasResolution = true;
                             }
                         }
                     } catch (_) {}
-                    if (node.matches && node.matches('[role="button"],[role="listitem"],button,[data-testid]')) tile = node;
                     node = node.parentElement; depth++;
                 }
-                const hint = (alt + ' ' + hints + ' ' + src).toLowerCase();
-                let kind = 'image';
-                if (hasVideoNode || hasPlay || hasResolution ||
-                    /\bvideo\b|video preview|generated video|\.mp4(?:$|[?#])|\.webm(?:$|[?#])/.test(hint)) {
-                    kind = 'video';
-                }
-                const sig = [el.tagName, src, alt, kind, Math.round(r.width), Math.round(r.height)].join('|');
-                return {sig, src, alt, kind, tag: el.tagName.toLowerCase(), dom_index: i,
-                        x: r.x, y: r.y, hint: hints.slice(0,600), hasPlay, hasResolution};
+                return {src, alt, tag: el.tagName, dom_index: i, width: Math.round(r.width),
+                        height: Math.round(r.height), x: r.x, y: r.y, hint: hints.slice(0,600),
+                        hasPlay, hasResolution, hasVideoNode};
             }).filter(Boolean)""") or []
+            assets = []
+            for asset in raw_assets:
+                if not isinstance(asset, dict):
+                    continue
+                kind = self._classify_media_kind(
+                    asset.get("tag"), asset.get("src"), asset.get("alt"), asset.get("hint"),
+                    asset.get("hasPlay"), asset.get("hasResolution"), asset.get("hasVideoNode"))
+                asset["kind"] = kind
+                asset["sig"] = "|".join(str(value or "") for value in (
+                    str(asset.get("tag") or "IMG").upper(), asset.get("src"), asset.get("alt"), kind,
+                    asset.get("width"), asset.get("height")))
+                assets.append(asset)
+            return assets
         except Exception as e:
             if self._looks_like_browser_closed_error(e):
                 raise FlowBrowserClosedError(str(e))
@@ -1877,12 +1916,12 @@ class FlowBrowser:
                                   max_generation_credits: int | None = None) -> bool:
         """Wait for the current Agent request to produce a genuinely new asset.
 
-        v5.2 is deliberately conservative for video requests. Flow can show an
-        intermediate poster/still several seconds before the playable/downloadable
-        video is ready. We therefore keep polling for an explicit video card and
-        require it to remain stable briefly. Only after a configurable grace period
-        do we probe a still-untyped fresh card, and the provider then performs strict
-        container/duration validation before accepting it.
+        Video requests require explicit video evidence. Flow can show an
+        intermediate image/poster before the playable/downloadable video is ready;
+        an untyped image is never promoted to a completed video after a timer. We
+        keep polling within the normal generation timeout until an explicit video
+        card remains stable briefly, then the provider validates the downloaded
+        container and duration.
         """
         timeout_s = timeout_s or self.ui["timeouts"]["generation"]
         deadline = time.time() + timeout_s
@@ -1903,6 +1942,7 @@ class FlowBrowser:
         video_candidate_since = None
         announced_wait = False
         grace = max(5, int(video_ready_grace_s if video_ready_grace_s is not None else 20))
+        untyped_warning_logged = False
         last_approval_probe = 0.0
         approval_resolved = bool((getattr(self, "last_agent_confirmation", {}) or {}).get("clicked"))
 
@@ -1961,6 +2001,9 @@ class FlowBrowser:
                     if wanted:
                         matching = [a for a in new_assets if str(a.get("kind", "")).lower() == wanted]
                     if matching:
+                        if wanted == "video":
+                            untyped_ready_at = None
+                            untyped_warning_logged = False
                         sig = str(matching[-1].get("sig"))
                         if wanted == "video":
                             # A real video card should stop changing before we click
@@ -1981,23 +2024,24 @@ class FlowBrowser:
                             self._set(FlowState.GENERATION_COMPLETE)
                             return True
 
-                    # A poster can appear before Flow exposes the video card. Keep
-                    # waiting instead of immediately downloading it as .mp4.
+                    # Flow may add a still/poster before it exposes the video card.
+                    # Keep polling, but never turn that image into the identity of
+                    # the pending video request, even after the grace period.
                     if wanted == "video" and not busy and not matching:
                         if untyped_ready_at is None:
                             untyped_ready_at = time.time()
                             if not announced_wait:
-                                print(f"[Flow] Fresh media appeared; waiting up to {grace}s for the actual video tile/download to become ready...")
+                                print(f"[Flow] Fresh media appeared; waiting up to {grace}s for an explicit video tile...")
                                 announced_wait = True
-                        elif time.time() - untyped_ready_at >= grace:
-                            self.last_generated_asset_signature = str(new_assets[-1].get("sig"))
-                            print("[Flow] Video tile still untyped after readiness grace; probing the freshest asset with strict video validation.")
-                            self._set(FlowState.GENERATION_COMPLETE)
-                            return True
+                        elif (time.time() - untyped_ready_at >= grace
+                              and not untyped_warning_logged):
+                            print("[Flow] Fresh media is still image-only/untyped; it is not eligible as a video. Continuing to wait for explicit video evidence.")
+                            untyped_warning_logged = True
                     elif wanted != "video":
                         untyped_ready_at = None
                 else:
                     untyped_ready_at = None
+                    untyped_warning_logged = False
                     video_candidate_sig = None
                     video_candidate_since = None
             else:
@@ -2145,6 +2189,17 @@ class FlowBrowser:
             if os.path.isfile(temporary):
                 os.remove(temporary)
 
+    def _recover_download_save(self, download, out_path: str) -> str | None:
+        """Recover the exact UI-triggered download through temp-file or image URL."""
+        salvaged = self._salvage_playwright_download(download, out_path)
+        if salvaged:
+            return salvaged
+        # When Flow closes its detail target during save_as, the Download event's
+        # signed URL is the same asset selected from the visible tile. This
+        # fallback is deliberately image-only; video downloads still require the
+        # normal browser download and strict container validation.
+        return self._save_image_download_url(download, out_path)
+
     def _download_from_tile_button(self, button, out_path: str) -> str:
         """Listen BEFORE the first click: image menus can download immediately."""
         downloads = []
@@ -2180,8 +2235,7 @@ class FlowBrowser:
             try:
                 downloads[0].save_as(out_path)
             except Exception:
-                if not (self._salvage_playwright_download(downloads[0], out_path)
-                        or self._save_image_download_url(downloads[0], out_path)):
+                if not self._recover_download_save(downloads[0], out_path):
                     raise
             if not os.path.isfile(out_path):
                 raise FlowUIChanged("Download event completed without a local file")
@@ -2332,9 +2386,9 @@ class FlowBrowser:
                         saved = out_path
                     except Exception as e:
                         last_err = e
-                        salvaged = self._salvage_playwright_download(d, out_path)
+                        salvaged = self._recover_download_save(d, out_path)
                         if salvaged:
-                            print('[Flow] Salvaged completed browser download after page closure.')
+                            print('[Flow] Recovered the exact asset after the browser target closed during download.')
                             saved = salvaged
                         elif self._looks_like_browser_closed_error(e):
                             raise FlowBrowserClosedError(
@@ -2376,9 +2430,9 @@ class FlowBrowser:
                     saved = out_path
                 except Exception as e:
                     last_err = e
-                    salvaged = self._salvage_playwright_download(d, out_path)
+                    salvaged = self._recover_download_save(d, out_path)
                     if salvaged:
-                        print('[Flow] Salvaged completed browser download after page closure.')
+                        print('[Flow] Recovered the exact asset after the browser target closed during download.')
                         saved = salvaged
                     elif self._looks_like_browser_closed_error(e):
                         raise FlowBrowserClosedError(
@@ -2540,6 +2594,11 @@ class FlowBrowser:
             self.configure_migrated_text_video(aspect, model_label, duration, count)
             return mode
         if mode == "agent":
+            # The Agent composer can retain the preceding image mode (especially
+            # after storyboard stills). Prefer an explicit UI mode switch whenever
+            # Flow exposes its current-generation picker; the prompt instruction is
+            # only a fallback for cohorts without that control.
+            self.select_agent_generation_type("video")
             return mode
 
         # Older cohorts may still expose the pre-migration controls.
@@ -2789,19 +2848,56 @@ class FlowBrowser:
             self.last_agent_confirmation["reason"] =                 "no clickable credit approval is present; continue waiting for generation"
         return False
 
+    def select_agent_generation_type(self, media_kind: str, timeout_ms: int = 1200) -> bool:
+        """Select Image/Video in the visible Flow type picker before an Agent send.
+
+        The picker is absent in some conversational-only Flow cohorts; those still
+        receive a type-specific instruction. If a picker is present but its option
+        cannot be selected, fail before submitting a credit-bearing prompt instead
+        of silently generating in the previously selected mode.
+        """
+        kind = str(media_kind or "").strip().lower()
+        if kind not in ("image", "video"):
+            raise ValueError(f"Unsupported Flow Agent generation type: {media_kind}")
+        picker = self._try_resolve("generation_type_picker", timeout_ms=timeout_ms)
+        if picker is None:
+            print(f"[Flow] No explicit generation-type picker is visible; using a {kind}-only Flow Agent instruction.")
+            return False
+        try:
+            picker.click()
+        except Exception as exc:
+            if self._looks_like_browser_closed_error(exc):
+                raise FlowBrowserClosedError(str(exc))
+            raise FlowUIChanged(f"Could not open Flow's generation-type picker: {exc}") from exc
+        action = "video_option" if kind == "video" else "image_option"
+        try:
+            option = self._resolve(action, timeout_ms=5000)
+            option.click()
+        except Exception as exc:
+            try:
+                self._page.keyboard.press("Escape")
+            except Exception:
+                pass
+            if self._looks_like_browser_closed_error(exc):
+                raise FlowBrowserClosedError(str(exc))
+            raise FlowUIChanged(
+                f"Flow's generation-type picker opened but its {kind} option could not be selected; "
+                "the prompt was not submitted") from exc
+        try:
+            self._page.wait_for_timeout(250)
+        except Exception as exc:
+            if self._looks_like_browser_closed_error(exc):
+                raise FlowBrowserClosedError(str(exc))
+        print(f"[Flow] Selected {kind.title()} mode in Flow's generation-type picker.")
+        return True
+
     def select_video_mode(self, mode: str = "text"):
         # Rebuilt Flow no longer exposes Text-to-Video as a fixed top-level tab.
         # Official UI: click the current model name (Nano Banana by default),
         # choose Video, then configure model/aspect/duration.
         if mode == "text":
-            picker = self._try_resolve("generation_type_picker", timeout_ms=3500)
-            if picker:
-                try:
-                    picker.click()
-                    self._resolve("video_option", timeout_ms=5000).click()
-                    return
-                except FlowUIChanged:
-                    pass
+            if self.select_agent_generation_type("video", timeout_ms=3500):
+                return
             # Legacy fallback. We do NOT silently continue merely because a prompt
             # box exists: the new default is Image and that could spend credits on
             # the wrong media type.
@@ -3010,7 +3106,16 @@ class FlowBrowser:
             self._resolve("download_button").click()
         d = dl.value
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-        d.save_as(out_path)
+        try:
+            d.save_as(out_path)
+        except Exception as exc:
+            recovered = self._recover_download_save(d, out_path)
+            if recovered:
+                print("[Flow] Recovered the exact generated asset after browser download failure.")
+                return recovered
+            if self._looks_like_browser_closed_error(exc):
+                raise FlowBrowserClosedError(str(exc))
+            raise
         return out_path
 
     def request_upscale(self):
@@ -3501,6 +3606,24 @@ class FlowBrowserProvider(VideoProvider):
                 candidates.append(asset)
         return candidates
 
+    @staticmethod
+    def _discard_wrong_kind_signature(request, requested_kind):
+        """Retain but disqualify a journal signature whose typed kind cannot match the request."""
+        signature = str(request.get("signature") or "")
+        recorded_kind = media_signature_kind(signature)
+        requested_kind = str(requested_kind or "").strip().lower()
+        if not signature or not recorded_kind or recorded_kind == requested_kind:
+            return None
+        rejected = list(request.get("rejected_signatures") or [])
+        if signature not in rejected:
+            rejected.append(signature)
+        request["rejected_signatures"] = rejected[-8:]
+        request["signature"] = ""
+        request["signature_kind_rejected"] = recorded_kind
+        request["signature_rejection_reason"] = (
+            f"saved {recorded_kind} signature cannot satisfy requested {requested_kind}")
+        return recorded_kind
+
     def _identify_single_fresh_asset(self, bridge, request, kind, timeout_ms=15000):
         """Poll briefly for exactly one new, typed asset; never guess among tiles."""
         baseline = request.get("baseline") or []
@@ -3642,6 +3765,10 @@ class FlowBrowserProvider(VideoProvider):
                         raise FlowRequestPending("Request has no saved project URL; use assisted recovery, not regeneration")
                     print(f"[Flow] Download-only recovery of pending {kind}; no new prompt will be submitted: {url}")
                     b.ensure_project(compiled.get("project") or "AutoVideoAI", project_url=url)
+                    rejected_kind = self._discard_wrong_kind_signature(request, kind)
+                    if rejected_kind:
+                        self._save_request(out_path, request)
+                        print(f"[Flow] Rejected the saved {rejected_kind} signature for this {kind} request; scanning only for one unique fresh {kind} asset. No generation will be submitted.")
                     if not request.get("signature"):
                         request["signature"] = self._identify_single_fresh_asset(
                             b, request, kind, timeout_ms=int(compiled.get("flow_image_signature_wait_ms", 15000)))
@@ -3976,6 +4103,7 @@ class FlowBrowserProvider(VideoProvider):
                      " Ultra detailed still frame, sharp focus, professional photography.")
             mode = b.detect_editor_mode()
             if mode == "agent":
+                b.select_agent_generation_type("image")
                 reference_paths = compiled.get("reference_paths") or []
                 if reference_paths and b.attach_agent_media(reference_paths, reuse_existing=True) != len(reference_paths):
                     raise FlowUIChanged("Image worker could not attach all master references; generation not submitted")

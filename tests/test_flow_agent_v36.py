@@ -43,12 +43,15 @@ def test_detect_editor_mode_prefers_standard_over_agent():
     assert b.detect_editor_mode() == "standard"
 
 
-def test_prepare_agent_does_not_touch_legacy_controls():
+def test_prepare_agent_selects_video_type_without_touching_legacy_controls():
     b = FlowBrowser.__new__(FlowBrowser)
     b.detect_editor_mode = lambda: "agent"
     b.configure_migrated_text_video = lambda *a, **k: (_ for _ in ()).throw(AssertionError("standard should not run"))
     b.select_video_mode = lambda *a, **k: (_ for _ in ()).throw(AssertionError("legacy should not run"))
+    selected = []
+    b.select_agent_generation_type = lambda kind: selected.append(kind)
     assert b.prepare_text_video("9:16", "Veo 3.1 - Fast", 8, 1) == "agent"
+    assert selected == ["video"]
 
 
 def test_prepare_standard_uses_migrated_configurator():

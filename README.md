@@ -1,8 +1,10 @@
-# AutoVideoAI v6.0.8 — Clip Caption Timing Repair
+# AutoVideoAI v6.0.9 — Flow Video Type and Recovery
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. The original release archives are preserved as reference builds, not the updated build.
 
-**New in v6.0.8:** Source-derived clip generation now normalizes occasional out-of-order/invalid ASR word times before caption rendering; the shared caption renderer remains strict for other workflows. This prevents a single malformed provider timestamp from aborting clip generation.
+**New in v6.0.9:** [Flow video type and recovery repair](V6_0_9_FLOW_VIDEO_RECOVERY.md). Select the visible Image/Video mode before Agent generation, never accept a fresh still as a completed video, repair wrong-kind pending signatures through unique post-baseline video matching, and recover image downloads when a Flow viewer closes during `save_as`—without blind video resubmission or weakening media validation.
+
+**Previous in v6.0.8:** [Clip caption timing repair](V6_0_8_CLIP_CAPTION_TIMING.md). Source-derived clip generation now normalizes occasional out-of-order/invalid ASR word times before caption rendering; the shared caption renderer remains strict for other workflows.
 
 **Previous in v6.0.7:** [Review-first stock B-roll cutaways](V6_0_7_REVIEW_FIRST_BROLL.md). Find related stock footage at production scene boundaries or within CLIP STUDIO highlights, preview each exact file, adjust placement/length, and approve its rights before rendering. Cutaways replace picture only: existing audio and duration remain unchanged, originals are preserved, and no Flow/Veo generation is submitted.
 
@@ -57,7 +59,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.8
+# ZIP download: cd AutoVideoAI-v6.0.9
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

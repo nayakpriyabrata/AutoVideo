@@ -1906,7 +1906,8 @@ class Factory:
                     except Exception as e2:
                         self.pm.log(m.job_id, "scene_image_failed",
                                     {"shot": s.shot_id, "error": str(e2)[:150]})
-            scored = [(score_image(p)["overall"], p) for p in got if os.path.exists(p)]
+            scored = [(score_image(p)["overall"], p) for p in got
+                      if self._is_valid_image_file(p)]
             scored.sort(reverse=True)
             if scored and scored[0][0] > 0:
                 best = scored[0][1]
@@ -1938,16 +1939,29 @@ class Factory:
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from .providers.flow_browser import (FlowBrowserProvider, PROFILE_DIR,
-                                             FlowAuthNeeded, FlowQuotaExceeded)
+                                             FlowAuthNeeded, FlowQuotaExceeded,
+                                             resolve_browser_cfg)
         from .providers.image_provider import ImageProvider
         from .qc.video_qc import score_image
 
         worker_root = os.path.join(D["root"], ".flow-workers")
         os.makedirs(worker_root, exist_ok=True)
+        try:
+            with open("config/flow_ui.yaml", encoding="utf-8") as handle:
+                browser_cfg = resolve_browser_cfg(yaml.safe_load(handle) or {})
+            worker_uses_cdp = (str(browser_cfg.get("mode", "auto")).lower() in ("auto", "cdp")
+                               and bool(browser_cfg.get("cdp_url")))
+        except Exception:
+            worker_uses_cdp = False
         # Bootstrap a worker's persistent profile once. Lock/socket files must
         # never be copied from an active Chromium profile.
         def profile_for(index):
             dst = os.path.join(worker_root, f"worker-{index + 1}")
+            if worker_uses_cdp:
+                # These profiles are not used by CDP-attached workers. Avoid
+                # copying a potentially live Chrome profile just to attach tabs.
+                os.makedirs(dst, exist_ok=True)
+                return dst
             if not os.path.isdir(dst) and os.path.isdir(PROFILE_DIR):
                 try:
                     shutil.copytree(PROFILE_DIR, dst, ignore=shutil.ignore_patterns(
@@ -1966,94 +1980,141 @@ class Factory:
             os.makedirs(imgdir, exist_ok=True)
             for k in range(K):
                 out = os.path.join(imgdir, f"img_{k+1:02d}.jpg")
-                if os.path.exists(out) and os.path.getsize(out) > 5000:
-                    continue
+                if os.path.exists(out):
+                    if os.path.getsize(out) > 5000 and self._is_valid_image_file(out):
+                        continue
+                    self._remove_invalid_image(out)
                 tasks.append((s, k, out))
 
-        project_url = self._flow_project_url(m.job_id, settings)
-        # All isolated workers must target one canonical project. If no binding
-        # exists yet, create/open it once before any worker is submitted. This
-        # prevents three parallel workers from each creating a different project.
-        if tasks and not project_url:
-            bootstrap = FlowBrowserProvider()
+        # A baseline diff cannot attribute concurrent generations in one project.
+        # Each worker therefore owns a dedicated project AND browser/profile/tab.
+        prog(f"🖼️ Parallel Flow queue: {len(tasks)} image(s), {workers} isolated worker project(s). Master references are created serially first.", 25)
+
+        def run_batch(wi, batch):
+            provider = None
+            free_provider = ImageProvider()
+            results = []
+            project = f"AutoVideo-{m.job_id}-images-worker-{wi + 1}"
+            binding_path = os.path.join(worker_root, f"worker-{wi + 1}-project.json")
+
+            def fallback(shot, out, project_url, flow_error):
+                journal = out + ".flow-request.json"
+                if os.path.isfile(journal):
+                    # Never route a submitted/pending Flow request to another
+                    # provider; keep its project binding available to Resume.
+                    try:
+                        with open(journal, encoding="utf-8") as handle:
+                            pending_url = json.load(handle).get("project_url", "")
+                    except Exception:
+                        pending_url = project_url
+                    pending = FlowRequestPending(
+                        "A saved Flow image request is still pending; worker recovery failed, "
+                        "so no replacement provider or prompt was submitted.")
+                    return (shot, "", pending_url, "failed", str(pending), pending)
+                try:
+                    result = free_provider.generate_image(shot, {
+                        "prompt": shot.compiled_prompt, "negative": shot.negative,
+                        "project": project, "project_url": project_url,
+                    }, out, vertical, dry_run=False)
+                    fallback_path = result.get("path")
+                    if fallback_path and self._is_valid_image_file(fallback_path):
+                        return (shot, fallback_path, project_url, "free",
+                                f"Flow failed: {str(flow_error)[:180]}", None)
+                    fallback_error = result.get("error", "free provider returned no valid image")
+                except Exception as fallback_exc:
+                    fallback_error = str(fallback_exc)
+                detail = f"Flow failed: {flow_error}; free fallback failed: {fallback_error}"[:300]
+                # Match the prior feature's behavior: report this candidate as
+                # failed and continue other images instead of pausing the job.
+                return (shot, "", project_url, "failed", detail, None)
+
             try:
-                browser = bootstrap._ensure()
-                browser.ensure_project(f"AutoVideo-{m.job_id}")
-                project_url = self._remember_flow_project_url(
-                    m.job_id, browser.current_project_url())
+                # Playwright is created, used and closed on this same thread.
+                provider = FlowBrowserProvider(profile_dir=profile_for(wi))
+                project_url = ""
+                if os.path.isfile(binding_path):
+                    try:
+                        with open(binding_path, encoding="utf-8") as handle:
+                            project_url = json.load(handle).get("project_url", "")
+                    except (OSError, ValueError, TypeError):
+                        project_url = ""
+                browser = provider._ensure()
+                browser.ensure_project(project, project_url=project_url or None)
+                project_url = browser.current_project_url()
                 if not project_url:
-                    raise RuntimeError("Flow opened a project but did not expose its canonical URL")
-                settings["flow_project_url"] = project_url
-            except (FlowAuthNeeded, FlowQuotaExceeded) as e:
-                shot = tasks[0][0]
-                self._write_pause_state(m.job_id, shot.shot_id,
-                                        f"{type(e).__name__}: {e}",
-                                        kind="flow_login_or_limit")
-                raise AssistedNeeded(m.job_id, shot.shot_id, shot.compiled_prompt,
-                                     D["downloads"], f"{type(e).__name__}: {e}")
+                    raise RuntimeError("Parallel worker did not expose a project URL")
+                with open(binding_path + ".tmp", "w", encoding="utf-8") as handle:
+                    json.dump({"project_url": project_url}, handle)
+                os.replace(binding_path + ".tmp", binding_path)
+                for shot, k, out in batch:
+                    comp = {"prompt": shot.compiled_prompt, "negative": shot.negative,
+                            "project": project, "project_url": project_url,
+                            "approval": "once", "max_generation_credits": 0,
+                            "reference_paths": [path for path in (
+                                os.path.join(D["storyboard"], "character_master.jpg"),
+                                os.path.join(D["storyboard"], "location_master.jpg")) if os.path.isfile(path)]}
+                    try:
+                        result = provider.generate_image(shot, comp, out, vertical, dry_run=False)
+                        if not result.get("path") or not os.path.isfile(result["path"]):
+                            raise RuntimeError(result.get("error", "no image returned"))
+                        results.append((shot, out, project_url, "flow", "", None))
+                    except (FlowAuthNeeded, FlowQuotaExceeded, FlowRequestPending) as error:
+                        # A pending exact Flow request must never be replaced by
+                        # a different provider or another generation attempt.
+                        results.append((shot, "", project_url, "failed", str(error)[:300], error))
+                        break
+                    except Exception as error:
+                        results.append(fallback(shot, out, project_url, error))
+                        if results[-1][5] is not None:
+                            break
+            except (FlowAuthNeeded, FlowQuotaExceeded) as error:
+                results.append((batch[0][0], "", "", "failed", str(error)[:300], error))
+            except Exception as error:
+                # If project/browser bootstrap failed, preserve pending journals;
+                # otherwise retain the legacy free-provider fallback for each task.
+                for shot, _k, out in batch:
+                    result = fallback(shot, out, "", error)
+                    results.append(result)
+                    if result[5] is not None:
+                        break
             finally:
-                try:
-                    bootstrap.close()
-                except Exception:
-                    pass
-
-        providers = [FlowBrowserProvider(profile_dir=profile_for(i)) for i in range(workers)]
-        free = [ImageProvider() for _ in range(workers)]
-        prog(f"🖼️ Parallel Flow queue: {len(tasks)} image(s), {workers} isolated worker(s)", 25)
-
-        def generate(item_index, item):
-            shot, k, out = item
-            wi = item_index % workers
-            comp = {"prompt": shot.compiled_prompt, "negative": shot.negative,
-                    "project": f"AutoVideo-{m.job_id}", "project_url": project_url,
-                    "approval": "once", "max_generation_credits": 0}
-            try:
-                result = providers[wi].generate_image(shot, comp, out, vertical, dry_run=False)
-                if result.get("path") and os.path.exists(result["path"]):
-                    return shot.shot_id, out, result.get("project_url", ""), "flow", ""
-                raise RuntimeError(result.get("error", "no image returned"))
-            except (FlowAuthNeeded, FlowQuotaExceeded, FlowRequestPending):
-                raise
-            except Exception as e:
-                try:
-                    result = free[wi].generate_image(shot, comp, out, vertical, dry_run=False)
-                    if result.get("path") and os.path.exists(result["path"]):
-                        return shot.shot_id, out, "", "free", str(e)[:180]
-                except Exception as e2:
-                    return shot.shot_id, "", "", "failed", f"{e}; {e2}"[:300]
-                return shot.shot_id, "", "", "failed", str(e)[:300]
+                if provider is not None:
+                    try:
+                        provider.close()
+                    except Exception:
+                        pass
+            return results
 
         by_shot = {s.shot_id: [] for s in m.shots}
         auth_error = None
-        try:
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="flow-image") as pool:
-                futures = {pool.submit(generate, i, item): item for i, item in enumerate(tasks)}
-                total = max(1, len(futures))
-                for done, future in enumerate(as_completed(futures), 1):
-                    shot = futures[future][0]
-                    try:
-                        sid, path, url, source, error = future.result()
-                        if path:
-                            by_shot.setdefault(sid, []).append(path)
-                        if url:
-                            bound = self._remember_flow_project_url(m.job_id, url)
-                            if bound and not project_url:
-                                project_url = bound
-                        self.pm.log(m.job_id, "parallel_scene_image", {
-                            "shot": sid, "source": source, "path": path, "error": error})
-                    except (FlowAuthNeeded, FlowQuotaExceeded, FlowRequestPending) as e:
-                        auth_error = (shot, e)
-                    prog(f"🖼️ Parallel images {done}/{total}", 25 + 4 * done / total)
-        finally:
-            for provider in providers:
-                try:
-                    provider.close()
-                except Exception:
-                    pass
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="flow-image") as pool:
+            batches = [[] for _ in range(workers)]
+            for item in tasks:
+                shot, candidate_index, _out = item
+                base = int(hashlib.sha256(str(shot.shot_id).encode()).hexdigest()[:8], 16)
+                batches[(base + int(candidate_index)) % workers].append(item)
+            futures = [pool.submit(run_batch, i, batch) for i, batch in enumerate(batches) if batch]
+            done = 0
+            for future in as_completed(futures):
+                for shot, path, url, source, error, exception in future.result():
+                    done += 1
+                    if path:
+                        by_shot.setdefault(shot.shot_id, []).append(path)
+                    self.pm.log(m.job_id, "parallel_scene_image", {
+                        "shot": shot.shot_id, "source": source, "path": path,
+                        "worker_project_url": url, "error": error})
+                    if exception is not None:
+                        try:
+                            setattr(exception, "project_url", url)
+                        except Exception:
+                            pass
+                        auth_error = (shot, exception)
+                    prog(f"🖼️ Parallel images completed {done}/{len(tasks)}", 25 + 4 * done / max(1, len(tasks)))
         if auth_error:
             shot, error = auth_error
             if isinstance(error, FlowRequestPending):
-                self._pause_pending_flow(m, shot.shot_id, error, project_url)
+                self._pause_pending_flow(m, shot.shot_id, error,
+                                         project_url=getattr(error, "project_url", ""))
             raise AssistedNeeded(m.job_id, shot.shot_id, shot.compiled_prompt,
                                  D["downloads"], f"{type(error).__name__}: {error}")
 
@@ -2061,7 +2122,8 @@ class Factory:
         for s in m.shots:
             imgdir = os.path.join(D["flow"], "shots", s.shot_id, "images")
             got = sorted(set(by_shot.get(s.shot_id, []) + glob.glob(os.path.join(imgdir, "img_*.jpg")))) if os.path.isdir(imgdir) else []
-            scored = [(score_image(p)["overall"], p) for p in got if os.path.exists(p)]
+            scored = [(score_image(p)["overall"], p) for p in got
+                      if self._is_valid_image_file(p)]
             scored.sort(reverse=True)
             if scored and scored[0][0] > 0:
                 frame = os.path.join(D["storyboard"], f"{s.shot_id}.jpg")

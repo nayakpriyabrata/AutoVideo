@@ -324,7 +324,10 @@ if page == "STUDIO":
         with st.expander("Flow, visuals, audio and branding", expanded=True):
             h, i, j = st.columns(3)
             flow_workers = h.selectbox("Parallel Flow image workers", [1, 2, 3], index=0,
-                                       help="Each worker uses an isolated browser profile. Start with 1; Google may throttle 2–3.")
+                                       disabled=profile == "STORYBOARD_ECONOMY",
+                                       help="Used by per-shot candidate image generation in Flow profiles. Storyboard Economy's master/continuity-frame pipeline is sequential and does not use this setting. Each worker uses a separate Flow project and browser tab/profile to keep asset matching safe. Start with 1; Google may throttle 2–3.")
+            if profile == "STORYBOARD_ECONOMY":
+                st.caption("Parallel workers are not used by Storyboard Economy's continuity-first frame pipeline.")
             frame_source = i.selectbox("Frame source", ["auto", "flow", "free"])
             flow_approval = j.selectbox("Flow credit approval", ["once", "manual", "always"])
             flow_project_url = st.text_input("Existing Google Flow project URL (optional)",

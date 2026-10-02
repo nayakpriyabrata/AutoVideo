@@ -445,6 +445,11 @@ class FlowBrowser:
         self._pw = self._ctx = self._page = self._cdp = None
         self._own_context = False
         self._guard_page = None  # stable project tab kept alive during fragile media-editor/download operations
+        self._owns_page = False
+        self._owns_guard_page = False
+        self._isolated_worker = (
+            os.path.basename(os.path.dirname(os.path.abspath(profile_dir or ""))) == ".flow-workers"
+        )
         self.bcfg = resolve_browser_cfg(self.ui)
         self.active_browser = "?"
         self.log_dir = "logs/flow"
@@ -580,14 +585,27 @@ class FlowBrowser:
         else:
             self._ctx = self._cdp.new_context(accept_downloads=True)
             self._own_context = True
-        self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+        if getattr(self, "_isolated_worker", False):
+            # CDP workers share Google's logged-in browser context but get their
+            # own tab; never navigate the user's tab or another worker's tab.
+            self._page = self._ctx.new_page()
+            self._owns_page = True
+            print("[Flow] Parallel image worker attached to CDP in a dedicated tab.")
+        else:
+            self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+            self._owns_page = not bool(ctxs and self._ctx.pages)
         self.active_browser = f"attached browser ({url})"
 
     def ensure_session(self, visible_login_seconds: int = 240):
         """Attach/launch a browser; user logs in manually on first run."""
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
+        # Workers isolate their Flow tabs/projects. In configured CDP mode keep
+        # the already-authenticated Windows/WSL Chrome session; otherwise launch
+        # a persistent worker profile as usual.
         mode = (self.bcfg.get("mode") or "auto").lower()
+        if self._isolated_worker:
+            print("[Flow] Isolated image worker: using a dedicated project and browser tab/profile.")
         errors: list[str] = []
         cdp_configured = (self.bcfg.get("cdp_url") or "").strip()
         if mode in ("auto", "cdp") and cdp_configured:
@@ -652,6 +670,16 @@ class FlowBrowser:
         v4.9 closes only contexts launched/owned by AutoVideoAI; CDP-attached browser
         contexts are left alive and Playwright simply disconnects.
         """
+        # Parallel workers may attach to a shared CDP context. Close only the
+        # tabs they created, not the user's context or pre-existing browser tabs.
+        for page, owned in ((getattr(self, "_page", None), getattr(self, "_owns_page", False)),
+                            (getattr(self, "_guard_page", None), getattr(self, "_owns_guard_page", False))):
+            if owned and page is not None:
+                try:
+                    if not page.is_closed():
+                        page.close()
+                except Exception:
+                    pass
         try:
             if self._ctx and self._own_context:
                 self._ctx.close()
@@ -664,6 +692,7 @@ class FlowBrowser:
             pass
         self._pw = self._ctx = self._page = self._cdp = None
         self._guard_page = None
+        self._owns_page = self._owns_guard_page = False
         self._set(FlowState.IDLE)
 
     # ---------- locator helpers (config-driven) ----------
@@ -912,15 +941,31 @@ class FlowBrowser:
                 url = str(pg.url or "")
                 norm = self.normalize_project_url(url)
                 if wanted and norm == wanted:
+                    was_owned = ((pg is getattr(self, "_page", None) and getattr(self, "_owns_page", False))
+                                 or (pg is getattr(self, "_guard_page", None)
+                                     and getattr(self, "_owns_guard_page", False)))
                     self._page = pg
+                    self._owns_page = was_owned
                     self._project_url = wanted
                     return True
                 if "flow.google.com" in url and fallback is None:
                     fallback = pg
             except Exception:
                 continue
+        if getattr(self, "_isolated_worker", False) and self._ctx is not None and wanted:
+            try:
+                pg = self._ctx.new_page()
+                self._page = pg
+                self._owns_page = True
+                pg.goto(wanted, wait_until="domcontentloaded", timeout=18000)
+                pg.wait_for_timeout(500)
+                self._project_url = wanted
+                return True
+            except Exception:
+                return False
         if fallback is not None:
             self._page = fallback
+            self._owns_page = False
             cur = self.normalize_project_url(getattr(fallback, "url", ""))
             if cur:
                 self._project_url = cur
@@ -949,6 +994,7 @@ class FlowBrowser:
             gp.goto(wanted, wait_until='domcontentloaded', timeout=18000)
             gp.wait_for_timeout(500)
             self._guard_page = gp
+            self._owns_guard_page = True
             return True
         except Exception:
             self._guard_page = None
@@ -977,7 +1023,9 @@ class FlowBrowser:
             pg.goto(wanted, wait_until='domcontentloaded', timeout=max(7000, timeout_ms))
             pg.wait_for_timeout(600)
             old = self._page
+            old_owned = getattr(self, "_owns_page", False)
             self._page = pg
+            self._owns_page = True
             self.dismiss_onboarding(rounds=1)
             if self._composer_visible(min(7000, timeout_ms)):
                 self._project_url = wanted
@@ -987,6 +1035,7 @@ class FlowBrowser:
                 self._ensure_project_guard_page(wanted)
                 return True
             self._page = old
+            self._owns_page = old_owned
             try:
                 pg.close()
             except Exception:
@@ -1817,7 +1866,8 @@ class FlowBrowser:
 
             if baseline is not None:
                 assets = self.media_assets()
-                new_assets = [a for a in assets if str(a.get("sig", "")) and str(a.get("sig")) not in baseline]
+                new_assets = [a for a in assets if a.get("sig") and not any(
+                    media_signature_matches(a["sig"], old) for old in baseline)]
                 if new_assets:
                     matching = new_assets
                     if wanted:
@@ -1964,6 +2014,49 @@ class FlowBrowser:
                 raise
             control.click(timeout=timeout, force=True)
 
+    def _save_image_download_url(self, download, out_path):
+        """Fetch the URL exposed by the browser's Download event, not a private API.
+
+        Remote Windows CDP downloads may finish in Windows while save_as loses
+        the target. A signed download URL needs no copied credentials/cookies.
+        Never log that URL. Validate bytes before replacing the destination.
+        """
+        if not str(out_path).lower().endswith((".jpg", ".jpeg", ".png")):
+            return None
+        import io
+        from urllib.parse import urlsplit
+        import requests
+        from PIL import Image
+        temporary = out_path + ".download.tmp"
+        try:
+            url = download.url
+            if urlsplit(url).scheme != "https":
+                return None
+            with requests.Session() as session:
+                session.trust_env = False
+                with session.get(url, stream=True, timeout=(10, 45)) as response:
+                    response.raise_for_status()
+                    data = bytearray()
+                    for chunk in response.iter_content(65536):
+                        data.extend(chunk)
+                        if len(data) > 32 * 1024 * 1024:
+                            raise ValueError("Image download exceeds 32 MB")
+            with Image.open(io.BytesIO(data)) as image:
+                if image.width < 140 or image.height < 90:
+                    raise ValueError("Downloaded image is too small")
+                image.verify()
+            os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+            with open(temporary, "wb") as handle:
+                handle.write(data)
+            os.replace(temporary, out_path)
+            print("[Flow] Recovered image from the browser download URL after save_as failed.")
+            return out_path
+        except Exception:
+            return None
+        finally:
+            if os.path.isfile(temporary):
+                os.remove(temporary)
+
     def _download_from_tile_button(self, button, out_path: str) -> str:
         """Listen BEFORE the first click: image menus can download immediately."""
         downloads = []
@@ -1999,7 +2092,8 @@ class FlowBrowser:
             try:
                 downloads[0].save_as(out_path)
             except Exception:
-                if not self._salvage_playwright_download(downloads[0], out_path):
+                if not (self._salvage_playwright_download(downloads[0], out_path)
+                        or self._save_image_download_url(downloads[0], out_path)):
                     raise
             if not os.path.isfile(out_path):
                 raise FlowUIChanged("Download event completed without a local file")
@@ -2014,6 +2108,28 @@ class FlowBrowser:
                 page.remove_listener("download", on_download)
             except Exception:
                 pass
+
+    def _wait_for_media_signature(self, signature: str, timeout_ms: int = 15000):
+        """Poll a loaded project gallery for one exact asset identity."""
+        deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+        announced = False
+        while True:
+            for asset in self.media_assets():
+                candidate = str(asset.get("sig", "") or "")
+                if candidate and media_signature_matches(candidate, signature):
+                    return asset
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            if not announced:
+                print("[Flow] Waiting for the recorded image to appear in the recovered project gallery.")
+                announced = True
+            try:
+                self._page.wait_for_timeout(min(500, max(50, int(remaining * 1000))))
+            except Exception as exc:
+                if self._looks_like_browser_closed_error(exc):
+                    raise FlowBrowserClosedError(str(exc))
+                raise
 
     def download_latest_asset(self, out_path: str, preferred_signature: str | None = None,
                               before_signatures: set[str] | None = None) -> str:
@@ -2031,7 +2147,11 @@ class FlowBrowser:
             # code rebuilt a shorter signature here (omitting `kind`), so a video
             # could be detected successfully and then become impossible to match
             # one line later during download.
-            assets = self.media_assets()
+            if preferred_signature:
+                exact_asset = self._wait_for_media_signature(preferred_signature, timeout_ms=15000)
+                assets = [exact_asset] if exact_asset else []
+            else:
+                assets = self.media_assets()
             els = self._page.locator("video, img")
             for asset in assets:
                 i = int(asset.get("dom_index", -1))
@@ -2047,8 +2167,12 @@ class FlowBrowser:
                     candidates.append((box.get("y", 0), box.get("x", 0),
                                        str(asset.get("sig", "")), el,
                                        str(asset.get("kind", "image")).lower()))
-                except Exception:
+                except Exception as exc:
+                    if self._looks_like_browser_closed_error(exc):
+                        raise FlowBrowserClosedError(str(exc))
                     pass
+        except FlowBrowserClosedError:
+            raise
         except Exception:
             pass
 
@@ -3298,8 +3422,12 @@ class FlowBrowserProvider(VideoProvider):
                         request = json.load(f)
                     if not request.get("project_url"):
                         break
-                    self.recover_browser(compiled.get("project") or "AutoVideoAI",
-                                         project_url=request["project_url"])
+                    if FlowBrowser._looks_like_browser_closed_error(exc):
+                        self.recover_browser(compiled.get("project") or "AutoVideoAI",
+                                             project_url=request["project_url"])
+                    # download_latest_asset now polls the live project for this
+                    # exact signature; do not burn a blind delay between scans.
+                    print("[Flow] Will rescan the exact recorded image after restoring the project; no prompt will be submitted.")
                 except Exception:
                     pass
         # A failed download of a visible asset is NOT permission to regenerate.
@@ -3711,6 +3839,9 @@ class FlowBrowserProvider(VideoProvider):
                      " Ultra detailed still frame, sharp focus, professional photography.")
             mode = b.detect_editor_mode()
             if mode == "agent":
+                reference_paths = compiled.get("reference_paths") or []
+                if reference_paths and b.attach_agent_media(reference_paths, reuse_existing=True) != len(reference_paths):
+                    raise FlowUIChanged("Image worker could not attach all master references; generation not submitted")
                 before_assets = b.media_asset_signatures()
                 b._fill_editor_box("agent_prompt_box", b._agent_image_instruction(still, aspect, 1))
                 self._record_submission(out_path, project_url, before_assets, "image")

@@ -289,41 +289,60 @@ def test_v573_recovery_is_idempotent_for_an_already_accepted_shot(tmp_path):
     assert result["new_credits"] == 0
 
 
-def test_v571_parallel_image_workers_share_one_bootstrapped_project(monkeypatch, tmp_path):
+def test_v571_parallel_image_workers_use_concurrent_isolated_projects(monkeypatch, tmp_path):
+    import threading
     import engine.providers.flow_browser as flow_module
     import engine.qc.video_qc as qc_module
     from engine.factory import Factory
     from engine.project.manifest import Shot
 
-    canonical = "https://flow.google.com/project/one-project"
-    seen = {"created": 0, "worker_urls": []}
+    seen = {"projects": [], "worker_urls": [], "active": 0, "max_active": 0}
+    lock = threading.Lock()
+    rendezvous = threading.Barrier(2)
 
     class Browser:
+        def __init__(self):
+            self.project = ""
+
         def ensure_project(self, project, project_url=None):
-            seen["created"] += 1
+            self.project = project
+            with lock:
+                seen["projects"].append(project)
 
         def current_project_url(self):
-            return canonical
+            project_id = self.project.rsplit("-", 1)[-1].lower()
+            return f"https://flow.google.com/project/{project_id}"
 
     class Provider:
         def __init__(self, headless=False, profile_dir=None):
             self.profile_dir = profile_dir
+            self.browser = Browser()
 
         def _ensure(self):
-            return Browser()
+            return self.browser
 
         def generate_image(self, shot, compiled, out_path, vertical, dry_run=False):
-            seen["worker_urls"].append(compiled.get("project_url"))
+            with lock:
+                seen["worker_urls"].append((compiled.get("project"), compiled.get("project_url")))
+                seen["active"] += 1
+                seen["max_active"] = max(seen["max_active"], seen["active"])
+            # Both workers must reach generation concurrently; a shared Playwright
+            # page/project would make this test fail rather than merely look parallel.
+            rendezvous.wait(timeout=5)
             Path(out_path).write_bytes(b"x" * 6001)
-            return {"path": out_path, "project_url": canonical}
+            with lock:
+                seen["active"] -= 1
+            return {"path": out_path, "project_url": compiled["project_url"]}
 
         def close(self):
             return None
 
     monkeypatch.setattr(flow_module, "FlowBrowserProvider", Provider)
+    monkeypatch.setattr(flow_module, "PROFILE_DIR", str(tmp_path / "no-base-profile"))
     monkeypatch.setattr(qc_module, "score_image", lambda path: {"overall": 80})
 
     f = Factory(outputs=str(tmp_path / "outputs"), db_path=str(tmp_path / "jobs.db"))
+    f._is_valid_image_file = lambda path: Path(path).is_file()
     job = f.create_job("parallel", profile="FLOW_ECONOMY", images_per_shot=2,
                        flow_image_workers=2)
     m = f.pm.load_manifest(job)
@@ -335,9 +354,11 @@ def test_v571_parallel_image_workers_share_one_bootstrapped_project(monkeypatch,
         m, f.pm.dirs(job), refs, True, 2, lambda *args: None,
         {"flow_image_workers": 2}, 2)
 
-    assert seen["created"] == 1
-    assert seen["worker_urls"] == [canonical, canonical]
-    assert f.db.get(job)["flow_project"] == canonical
+    assert len(set(seen["projects"])) == 2
+    assert len({url for _, url in seen["worker_urls"]}) == 2
+    assert seen["max_active"] == 2
+    assert all(project.endswith("worker-1") or project.endswith("worker-2")
+               for project, _ in seen["worker_urls"])
 
 
 def test_v571_old_pause_without_baseline_refuses_to_guess_latest_tile(tmp_path):

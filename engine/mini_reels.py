@@ -17,12 +17,13 @@ import re
 import shutil
 import uuid
 from urllib.parse import urljoin, urlsplit, urlunsplit
-import xml.etree.ElementTree as ET
-
 import requests
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from .project.manifest import Shot
 from .providers.flow_browser import FlowBrowserProvider, FlowRequestPending
+from .version import get_version
 
 
 TREND_REGIONS = {
@@ -105,7 +106,7 @@ def fetch_trend_ideas(region: str = "IN", count: int = 10) -> list[dict]:
 
     response = requests.get(
         TREND_RSS_URL.format(geo=geo),
-        headers={"User-Agent": "AutoVideoAI-TrendIdeas/6.0.10"},
+        headers={"User-Agent": f"AutoVideoAI-TrendIdeas/{get_version()}"},
         timeout=(5, 20),
         stream=True,
     )
@@ -127,6 +128,8 @@ def fetch_trend_ideas(region: str = "IN", count: int = 10) -> list[dict]:
         raise ValueError("Google Trends XML with DTD/entities is not accepted")
     try:
         root = ET.fromstring(payload)
+    except DefusedXmlException as exc:
+        raise ValueError("Google Trends XML with DTD/entities is not accepted") from exc
     except ET.ParseError as exc:
         raise RuntimeError("Google Trends returned an unreadable RSS feed") from exc
 
@@ -238,7 +241,7 @@ def _read_content_feed(source_id: str) -> bytes:
         response = requests.get(
             url,
             headers={
-                "User-Agent": "AutoVideoAI-ContentIdeas/6.0.10",
+                "User-Agent": f"AutoVideoAI-ContentIdeas/{get_version()}",
                 "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml",
             },
             timeout=(5, 20),
@@ -290,6 +293,8 @@ def fetch_content_ideas(source_id: str, count: int = 10) -> list[dict]:
         raise ValueError("Article feed XML with DTD/entities is not accepted")
     try:
         root = ET.fromstring(payload)
+    except DefusedXmlException as exc:
+        raise ValueError("Article feed XML with DTD/entities is not accepted") from exc
     except ET.ParseError as exc:
         raise RuntimeError(f"{CONTENT_IDEA_SOURCES[key]['name']} returned an unreadable RSS/Atom feed") from exc
 

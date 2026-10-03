@@ -67,12 +67,24 @@ def test_trends_parse_bounded_google_rss_and_deduplicate(monkeypatch):
     assert rows[0]["region"] == "IN"
     assert seen["url"] == "https://trends.google.com/trending/rss?geo=IN"
     assert seen["kwargs"]["timeout"] == (5, 20)
+    assert seen["kwargs"]["headers"]["User-Agent"].endswith(f"/{reels.get_version()}")
 
 
 def test_trends_fail_closed_on_invalid_region_or_unsafe_xml(monkeypatch):
     with pytest.raises(ValueError, match="supported trend region"):
         reels.fetch_trend_ideas("ZZ")
     monkeypatch.setattr(reels.requests, "get", lambda *a, **k: FakeResponse(b"<!DOCTYPE rss><rss/>"))
+    with pytest.raises(ValueError, match="DTD/entities"):
+        reels.fetch_trend_ideas("US")
+
+    # A byte-level ASCII check misses UTF-16 markup, but an XML parser must
+    # still forbid DTDs and internal-entity expansion.
+    utf16_payload = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<!DOCTYPE rss [<!ENTITY topic "unsafe entity">]>'
+        '<rss><channel><item><title>&topic;</title></item></channel></rss>'
+    ).encode("utf-16")
+    monkeypatch.setattr(reels.requests, "get", lambda *a, **k: FakeResponse(utf16_payload))
     with pytest.raises(ValueError, match="DTD/entities"):
         reels.fetch_trend_ideas("US")
 
@@ -129,6 +141,7 @@ def test_article_rss_fetch_parses_and_cleans_recent_ideas(monkeypatch):
     assert seen["url"] == "https://technivella.com/feed/"
     assert seen["kwargs"]["allow_redirects"] is False
     assert seen["kwargs"]["timeout"] == (5, 20)
+    assert seen["kwargs"]["headers"]["User-Agent"].endswith(f"/{reels.get_version()}")
 
 
 def test_article_idea_selection_builds_safe_editable_gemini_input():
@@ -165,6 +178,15 @@ def test_article_feed_rejects_unknown_source_unsafe_redirect_and_unsafe_xml(monk
         reels.fetch_content_ideas("technivella")
 
     monkeypatch.setattr(reels.requests, "get", lambda *a, **k: FakeResponse(b"<!DOCTYPE rss><rss/>"))
+    with pytest.raises(ValueError, match="DTD/entities"):
+        reels.fetch_content_ideas("technivella")
+
+    utf16_payload = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<!DOCTYPE rss [<!ENTITY topic "unsafe entity">]>'
+        '<rss><channel><item><title>&topic;</title></item></channel></rss>'
+    ).encode("utf-16")
+    monkeypatch.setattr(reels.requests, "get", lambda *a, **k: FakeResponse(utf16_payload))
     with pytest.raises(ValueError, match="DTD/entities"):
         reels.fetch_content_ideas("technivella")
 

@@ -105,7 +105,8 @@ class SourceInbox:
 
     def feed(self, url, count=10):
         """Read bounded public feed items as ideas, never execute links/media."""
-        import xml.etree.ElementTree as ET
+        from defusedxml import ElementTree as ET
+        from defusedxml.common import DefusedXmlException
         if type(count) is not int or not 1 <= count <= 30:
             raise ValueError('Feed import count must be 1–30')
         checked_url(url,self.domains)
@@ -119,7 +120,10 @@ class SourceInbox:
             payload,final=_read_url(session,url,self.domains)
         if '<!DOCTYPE' in payload.upper() or '<!ENTITY' in payload.upper():
             raise ValueError('DTD/entities are not accepted in source feeds')
-        xml=ET.fromstring(payload)
+        try:
+            xml=ET.fromstring(payload)
+        except DefusedXmlException as exc:
+            raise ValueError('DTD/entities are not accepted in source feeds') from exc
         items=[]
         for entry in xml.findall('.//item')[:count]:
             title=entry.findtext('title') or ''

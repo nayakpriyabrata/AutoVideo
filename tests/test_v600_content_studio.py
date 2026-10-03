@@ -175,6 +175,15 @@ def test_feed_items_are_bounded_offline_and_not_autoapproved(tmp_path,monkeypatc
     assert entries[0]['approved_for_generation'] is False
     with pytest.raises(ValueError):module.SourceInbox(tmp_path).feed('https://factozone.com/feed/',count=100)
 
+    def unsafe_response(_session, url, _domains):
+        if url.endswith('/robots.txt'):
+            return 'User-agent: *\nAllow: /', url
+        return '<!DOCTYPE rss [<!ENTITY idea "unsafe">]><rss/>', url
+
+    monkeypatch.setattr(module, '_read_url', unsafe_response)
+    with pytest.raises(ValueError, match='DTD/entities'):
+        module.SourceInbox(tmp_path/'unsafe').feed('https://factozone.com/feed/',count=1)
+
 
 def test_approved_script_beat_edit_cannot_bypass_recreation_review(tmp_path,ffmpeg_media):
     from engine.clip_recreation import create_recreation_job,approve_recreation,require_recreation_approval
@@ -208,11 +217,11 @@ def test_recreation_identity_block_contains_no_old_person(tmp_path,monkeypatch,f
 
 
 def test_new_content_pages_render_without_provider_calls(tmp_path,monkeypatch):
-    from tests.test_presentation_dashboard import dashboard
+    from tests.test_presentation_dashboard import dashboard, navigate
     f,app=dashboard(tmp_path,monkeypatch)
     for page in ('CONTENT INBOX','CHARACTER LIBRARY','AI RECREATE','PUBLISHING DESK','CLIP STUDIO','MINI REELS'):
-        next(r for r in app.radio if r.label=='Navigate').set_value(page).run()
+        navigate(app, page)
         assert not app.exception,[e.message for e in app.exception]
-    next(r for r in app.radio if r.label=='Navigate').set_value('CLIP STUDIO').run()
+    navigate(app, 'CLIP STUDIO')
     checkbox=next(x for x in app.checkbox if x.label=='Add soft background music')
     assert checkbox.value is False

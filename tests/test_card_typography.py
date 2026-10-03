@@ -84,3 +84,20 @@ def test_automatic_cards_never_stack_over_one_another():
                                        narration=f'Step {i+1}: Choose a kind action every day.') for i in range(4)])
     events = [e for e in plan_overlays(m, {}) if e.kind != 'watermark']
     assert all(a.end <= b.start for a, b in zip(events, events[1:]))
+
+
+def test_indic_font_render_cache_does_not_retain_font_instances():
+    import gc
+    import weakref
+    from engine.render.indic_font import IndicFont
+
+    face = IndicFont(Path(__file__).resolve().parents[1] / 'assets/fonts/NotoSansDevanagari-Variable.ttf', 32)
+    cached = face._render('नमस्ते दुनिया', 0)
+    assert face._render('नमस्ते दुनिया', 0) is cached
+    for index in range(260):
+        face._render(f'परीक्षण {index}', 0)
+    assert len(face._render_cache) == 256
+    ref = weakref.ref(face)
+    del face
+    gc.collect()
+    assert ref() is None, 'global method cache must not keep FreeType/HarfBuzz font instances alive'

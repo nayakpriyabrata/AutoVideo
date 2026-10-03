@@ -1,8 +1,14 @@
-# AutoVideoAI v6.0.10 — Mini Reels Article Ideas and Trends RSS Repair
+# AutoVideoAI v6.0.13 — Workspace Navigation and Guided UI
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. Older release archives are preserved as reference builds.
 
-**New in v6.0.10:** [Mini Reels website ideas and Google Trends RSS repair](V6_0_10_MINI_REEL_ARTICLE_IDEAS.md). Pick a manual idea, current Google Trends topic, or recent article from TechniVella, The Fact Site, Interesting Facts, or ScienceDaily. Article titles/excerpts seed the visible Gemini Web prompt as unverified inspiration; the Flow prompt remains editable and generation still requires explicit approval. Google Trends now uses its current `/trending/rss?geo=…` feed route.
+**New in v6.0.13:** [Workspace navigation and UI audit](V6_0_13_UI_NAVIGATION.md). Groups the 18 dashboard pages into five workspaces, clarifies Guided Studio versus Advanced Create, and includes an independent feature-coverage and production-readiness review.
+
+**Previous in v6.0.12:** [Safe RSS parsing and Indic font cache repair](V6_0_12_XML_INDIC_CACHE.md). DTD/entity declarations are now blocked even when feed XML uses UTF-16, and the Indic font fallback keeps its render cache per font instance so completed jobs can release FreeType/HarfBuzz resources. Includes the v6.0.11 CLI JSON repair.
+
+**Previous in v6.0.11:** [CLI JSON output repair](V6_0_11_CLI_JSON_REPAIR.md). Fixes Python's local-import scoping error that made several v3 JSON-producing commands fail, adds offline regression coverage, and makes Mini Reels feed User-Agent version labels follow `VERSION` automatically.
+
+**Previous in v6.0.10:** [Mini Reels website ideas and Google Trends RSS repair](V6_0_10_MINI_REEL_ARTICLE_IDEAS.md). Pick a manual idea, current Google Trends topic, or recent article from TechniVella, The Fact Site, Interesting Facts, or ScienceDaily. Article titles/excerpts seed the visible Gemini Web prompt as unverified inspiration; the Flow prompt remains editable and generation still requires explicit approval. Google Trends now uses its current `/trending/rss?geo=…` feed route.
 
 **Previous in v6.0.9:** [Flow video type and recovery repair](V6_0_9_FLOW_VIDEO_RECOVERY.md). Select the visible Image/Video mode before Agent generation, never accept a fresh still as a completed video, repair wrong-kind pending signatures through unique post-baseline video matching, and recover image downloads when a Flow viewer closes during `save_as`—without blind video resubmission or weakening media validation.
 
@@ -61,7 +67,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.10
+# ZIP download: cd AutoVideoAI-v6.0.13
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -101,9 +107,11 @@ On WSL, the most reliable way to reuse signed-in Windows Chrome is `chrome-debug
 # or: python3 cli.py v3 dashboard
 ```
 
-Open <http://localhost:8501>. **STUDIO** provides controls for production mode, theme, script/TTS providers, Flow workers, frame source, project reuse, Gemini cleanup, music, captions, branding, credits, and render quality.
+Open <http://localhost:8501>. The sidebar is organized into five workspaces: **Create**, **Review & Render**, **Jobs & Recovery**, **Content & Delivery**, and **Setup & Legacy**. **Guided Studio** is the recommended starting point; **Advanced Create** exposes provider, scene, retry, and credit-budget controls. The older Quick v2 path is under Setup & Legacy.
 
-Select **MINI REELS** for the separate 8-second vertical workflow: optional Google Trends ideas → visible Gemini Web prompt → reviewed Flow/Veo generation. The page can request Flow-native voiceover/ambience but does not run separate TTS; see [v6.0.5 notes](V6_0_5_MINI_REELS.md) for account, audio, credit, and recovery limitations.
+**Guided Studio** provides controls for production mode, theme, script/TTS providers, Flow workers, frame source, project reuse, Gemini cleanup, music, captions, branding, credits, and render quality.
+
+Select **Mini Reels** for the separate 8-second vertical workflow: optional Google Trends/article ideas → visible Gemini Web prompt → reviewed Flow/Veo generation. The page can request Flow-native voiceover/ambience but does not run separate TTS; see [v6.0.5 notes](V6_0_5_MINI_REELS.md) for account, audio, credit, and recovery limitations.
 
 The dashboard and CLI use the same engine. The dashboard refreshes the log while Flow is waiting; it no longer updates only when a pipeline stage finishes. Progress is shown on screen and written to:
 

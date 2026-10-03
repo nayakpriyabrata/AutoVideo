@@ -4,6 +4,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from engine.factory import Factory
+from tests.test_presentation_dashboard import navigate
 
 
 def test_article_feed_idea_is_selected_into_mini_reels_topic(tmp_path, monkeypatch):
@@ -35,7 +36,7 @@ def test_article_feed_idea_is_selected_into_mini_reels_topic(tmp_path, monkeypat
 
     app_path = Path(__file__).resolve().parents[1] / "app.py"
     app = AppTest.from_file(str(app_path), default_timeout=30).run()
-    app.sidebar.radio[0].set_value("MINI REELS").run()
+    navigate(app, "MINI REELS")
     assert not app.exception
 
     next(widget for widget in app.radio if widget.label == "Choose where to start").set_value("articles").run()

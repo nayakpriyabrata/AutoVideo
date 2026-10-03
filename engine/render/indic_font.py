@@ -3,9 +3,8 @@
 Shape complete Indic runs (not individual letters), then render their glyphs.
 Pillow's ImageDraw API can use this scalable adapter like a regular font.
 """
-from functools import lru_cache
+from collections import OrderedDict
 from pathlib import Path
-import math
 
 import numpy as np
 from PIL import Image, ImageFilter
@@ -29,6 +28,9 @@ class IndicFont:
         except (AttributeError,ValueError):
             pass
         self._freetype = freetype
+        # Cache rendered text per font instance. A class-level lru_cache on a
+        # method keeps each `self` alive in its global cache until eviction.
+        self._render_cache = OrderedDict()
 
     def getname(self):
         return (self._ft.family_name.decode(),self._ft.style_name.decode())
@@ -42,8 +44,18 @@ class IndicFont:
     def getlength(self,text,*args,**kwargs):
         return sum(position.x_advance for _,position in self._shape(text))/64
 
-    @lru_cache(maxsize=256)
     def _render(self,text,stroke):
+        key=(str(text),int(stroke))
+        if key in self._render_cache:
+            self._render_cache.move_to_end(key)
+            return self._render_cache[key]
+        rendered=self._render_uncached(*key)
+        self._render_cache[key]=rendered
+        if len(self._render_cache)>256:
+            self._render_cache.popitem(last=False)
+        return rendered
+
+    def _render_uncached(self,text,stroke):
         glyphs=[];x=y=0
         for info,pos in self._shape(text):
             self._ft.load_glyph(info.codepoint,self._freetype.FT_LOAD_RENDER)

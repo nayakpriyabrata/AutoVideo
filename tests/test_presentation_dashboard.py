@@ -5,6 +5,24 @@ from streamlit.testing.v1 import AppTest
 from engine.factory import Factory
 
 
+PAGE_GROUPS = {
+    "STUDIO": "Create", "MINI REELS": "Create", "CREATE": "Create",
+    "STORYBOARD": "Review & Render", "DIRECTOR REVIEW": "Review & Render",
+    "PRODUCTION QC": "Review & Render", "ASSETS": "Review & Render", "RENDER": "Review & Render",
+    "QUEUE": "Jobs & Recovery", "HISTORY": "Jobs & Recovery", "FLOW SESSION": "Jobs & Recovery",
+    "CLIP STUDIO": "Content & Delivery", "CONTENT INBOX": "Content & Delivery",
+    "CHARACTER LIBRARY": "Content & Delivery", "AI RECREATE": "Content & Delivery",
+    "PUBLISHING DESK": "Content & Delivery", "SETTINGS": "Setup & Legacy", "Quick (v2)": "Setup & Legacy",
+}
+
+
+def navigate(app, page):
+    group = PAGE_GROUPS[page]
+    next(w for w in app.sidebar.selectbox if w.label == "Workspace").set_value(group).run()
+    next(r for r in app.sidebar.radio if r.label == "Page").set_value(page).run()
+    assert not app.exception, [e.message for e in app.exception]
+
+
 def dashboard(tmp_path, monkeypatch):
     import engine.factory as module
     f = Factory(str(tmp_path/'outputs'), str(tmp_path/'db.sqlite'))
@@ -12,6 +30,20 @@ def dashboard(tmp_path, monkeypatch):
     import engine.project.database as database
     monkeypatch.setattr(database, 'JobDB', lambda *args, **kwargs: f.db)
     return f, AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=30).run()
+
+
+def test_sidebar_navigation_groups_pages_into_workspaces(tmp_path, monkeypatch):
+    _, app = dashboard(tmp_path, monkeypatch)
+    workspace = next(w for w in app.sidebar.selectbox if w.label == "Workspace")
+    assert workspace.value == "Create"
+    page = next(r for r in app.sidebar.radio if r.label == "Page")
+    assert len(page.options) == 3
+
+    navigate(app, "RENDER")
+    workspace = next(w for w in app.sidebar.selectbox if w.label == "Workspace")
+    assert workspace.value == "Review & Render"
+    page = next(r for r in app.sidebar.radio if r.label == "Page")
+    assert set(page.options) == {"Storyboard", "Director Review", "Production QC", "Assets", "Render & B-roll"}
 
 
 def test_studio_music_only_plan_persists_independent_switches(tmp_path, monkeypatch):
@@ -51,7 +83,7 @@ def test_existing_job_editor_does_not_run_or_mutate_visuals(tmp_path, monkeypatc
     monkeypatch.setattr(database, 'JobDB', lambda *args, **kwargs: f.db)
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=30).run()
     next(x for x in app.selectbox if x.label == 'Active job').set_value(job).run()
-    next(r for r in app.radio if r.label == 'Navigate').set_value('QUEUE').run()
+    navigate(app, 'QUEUE')
     assert not app.exception
     next(r for r in app.radio if r.label == 'Output audio mode').set_value('Music only').run()
     next(x for x in app.checkbox if x.label == 'Include text cards').uncheck()

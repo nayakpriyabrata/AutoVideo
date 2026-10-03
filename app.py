@@ -1,7 +1,6 @@
 """
-AutoVideoAI v4.0 - Storyboard Economy Video Factory dashboard.
-Pages: CREATE / STORYBOARD / DIRECTOR REVIEW / QUEUE / FLOW SESSION /
-       ASSETS / RENDER / HISTORY / SETTINGS (+ Quick v2).
+AutoVideoAI Studio dashboard.
+The Streamlit routes are grouped into user-facing workspaces in NAV_GROUPS.
 """
 import os
 import glob
@@ -75,9 +74,48 @@ if "job_id" not in st.session_state:
 st.sidebar.title(f"🎬 AutoVideoAI v{APP_VERSION} Studio")
 mode_badge = {"STORYBOARD_ECONOMY": "🌱", "FLOW_CINEMATIC": "💎", "FLOW_BALANCED": "⚖️", "FLOW_ECONOMY": "💰",
               "LOCAL_FREE": "🖥️", "FREE_HYBRID": "🆓", "MANUAL_DIRECTOR": "🎥"}
-page = st.sidebar.radio("Navigate", ["STUDIO", "MINI REELS", "CREATE", "STORYBOARD", "DIRECTOR REVIEW", "QUEUE",
-                                     "FLOW SESSION", "CLIP STUDIO", "CONTENT INBOX", "CHARACTER LIBRARY", "AI RECREATE", "PUBLISHING DESK", "PRODUCTION QC", "ASSETS", "RENDER", "HISTORY",
-                                     "SETTINGS", "Quick (v2)"])
+NAV_GROUPS = {
+    "Create": ["STUDIO", "MINI REELS", "CREATE"],
+    "Review & Render": ["STORYBOARD", "DIRECTOR REVIEW", "PRODUCTION QC", "ASSETS", "RENDER"],
+    "Jobs & Recovery": ["QUEUE", "HISTORY", "FLOW SESSION"],
+    "Content & Delivery": ["CLIP STUDIO", "CONTENT INBOX", "CHARACTER LIBRARY", "AI RECREATE", "PUBLISHING DESK"],
+    "Setup & Legacy": ["SETTINGS", "Quick (v2)"],
+}
+PAGE_TO_GROUP = {item: group for group, items in NAV_GROUPS.items() for item in items}
+PAGE_LABELS = {
+    "STUDIO": "Guided Studio",
+    "MINI REELS": "Mini Reels",
+    "CREATE": "Advanced Create",
+    "STORYBOARD": "Storyboard",
+    "DIRECTOR REVIEW": "Director Review",
+    "PRODUCTION QC": "Production QC",
+    "ASSETS": "Assets",
+    "RENDER": "Render & B-roll",
+    "QUEUE": "Queue & Resume",
+    "HISTORY": "History",
+    "FLOW SESSION": "Flow Session",
+    "CLIP STUDIO": "Clip Studio",
+    "CONTENT INBOX": "Content Inbox",
+    "CHARACTER LIBRARY": "Character Library",
+    "AI RECREATE": "AI Recreate",
+    "PUBLISHING DESK": "Publishing Desk",
+    "SETTINGS": "Settings",
+    "Quick (v2)": "Quick (legacy v2)",
+}
+current_page = st.session_state.get("autovideo_current_page", "STUDIO")
+default_group = PAGE_TO_GROUP.get(current_page, "Create")
+workspace = st.sidebar.selectbox(
+    "Workspace", list(NAV_GROUPS), index=list(NAV_GROUPS).index(default_group),
+    key="autovideo_workspace")
+page_options = NAV_GROUPS[workspace]
+page_key = "autovideo_page_" + workspace.lower().replace(" ", "-").replace("&", "and")
+preferred_page = st.session_state.get(page_key, current_page)
+page_index = page_options.index(preferred_page) if preferred_page in page_options else 0
+page = st.sidebar.radio(
+    "Page", page_options, index=page_index,
+    format_func=lambda value: PAGE_LABELS.get(value, value), key=page_key)
+st.session_state["autovideo_current_page"] = page
+st.sidebar.caption(f"{workspace} · {PAGE_LABELS.get(page, page)}")
 st.sidebar.divider()
 jobs = DB.list(30)
 job_ids = [j["job_id"] for j in jobs]
@@ -342,8 +380,9 @@ if queued_resume:
     run_with_ui(queued_resume, "")
 
 if page == "STUDIO":
-    st.title("🎛️ AutoVideoAI Studio")
-    st.caption("Create from friendly controls. The same settings can be saved in video_config.yaml and reproduced from CLI.")
+    st.title("🎛️ Guided Studio")
+    st.caption("Recommended for most productions. Set a topic, choose a production recipe, then review the saved job in Queue. The same settings can be saved in video_config.yaml and reproduced from CLI.")
+    st.info("Need per-scene, retry, or routing controls? Use **Advanced Create** in the Create workspace. Choose **Mini Reels** for the separate visible-Gemini → review → one-Flow-clip workflow.")
     studio_audio_mode = st.radio("Audio mode", ["Voiceover", "Music only", "Silent"], horizontal=True, key="studio-audio-mode")
     studio_voice_on = studio_audio_mode == "Voiceover"
     st.caption("Music only skips voice synthesis and speech captions. Silent also turns music, ambience and SFX off. Text cards can be switched independently.")
@@ -740,8 +779,9 @@ elif page == "MINI REELS":
 
 # ================= CREATE =================
 elif page == "CREATE":
-    st.title("🎬 Create Production")
-    st.caption("Topic → planning → script → narration → storyboard → generation → QC → render.")
+    st.title("🎬 Advanced Create")
+    st.caption("Full-control path for provider routing, scene allocation, retry and credit budgets. For a shorter guided path, choose **Guided Studio**.")
+    st.info("For credit-bearing Flow work, keep the per-generation and per-video caps at amounts you accept. Use a dry run or plan-only pass first when you want to inspect the plan without launching production.")
     with st.expander("⚡ FIRST TIME HERE? Make a FREE test video in one click (no login, no Chrome, ~3 min)", expanded=True):
         st.caption("Uses free AI images + motion + voiceover. Proves everything works before you touch Flow.")
         with st.form("quickfree"):

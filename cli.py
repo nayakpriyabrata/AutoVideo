@@ -9,6 +9,7 @@ Examples:
   python cli.py --trending 5
 """
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -573,7 +574,6 @@ def main_v3(argv):
             return
         print(f.run_job(job, progress_cb=cb))
     elif args.cmd == "create-config":
-        import json
         import yaml
         from engine.studio_config import load_video_config, config_to_factory_kwargs
         cfg = load_video_config(args.config)
@@ -649,7 +649,6 @@ def main_v3(argv):
             b.close()
     elif args.cmd == "flow-project":
         from engine.providers.flow_browser import FlowBrowser
-        import json
         url = FlowBrowser.normalize_project_url(args.url)
         if not url:
             raise SystemExit("Invalid Flow project URL. Expected https://flow.google.com/project/<uuid>")
@@ -686,7 +685,6 @@ def main_v3(argv):
             for n, action in enumerate(pause.get("actions", []), 1):
                 print(f"  {n}. {action.get('label')}:\n     {action.get('command')}")
     elif args.cmd == "audit":
-        import json
         m = f.pm.load_manifest(args.job_id)
         ds = [float(x.duration_target or 0) for x in m.shots]
         planned = {}

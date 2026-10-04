@@ -14,7 +14,7 @@ Version 7 is a separate release; extract it into a new folder. It includes the c
 
 ### Validation status
 
-- v7 focused discovery/content/delivery/package tests: **61 passed, 7 media-dependent cases deselected**.
+- v7 focused discovery/content/delivery/package tests from a clean extraction of the ZIP: **68 passed**.
 - Full offline suite: **588 passed, 5 skipped, 8 failed**. The eight existing clip/B-roll render tests need system `ffmpeg`/`ffprobe`, which are unavailable in the build sandbox. Install both before using render/export workflows, then rerun those media tests.
 - The generated archive passed ZIP CRC and manifest checks; all 317 packaged source-file hashes matched the embedded `RELEASE_MANIFEST.json`. The committed v6.0.19 ZIP remains unchanged.
 

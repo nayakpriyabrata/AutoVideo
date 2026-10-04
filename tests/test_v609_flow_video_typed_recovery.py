@@ -145,16 +145,54 @@ def test_stable_fresh_video_does_not_wait_for_stale_page_wide_busy_text(monkeypa
     assert 3.0 <= clock.now <= 4.0
 
 
-def test_flow_signature_classifier_recognizes_material_play_arrow_but_not_a_still():
+def test_flow_image_poster_requires_specific_video_evidence():
     assert FlowBrowser._classify_media_kind(
         "IMG", "https://media.google/opaque-still", "", "", False, False, False
     ) == "image"
+    # A bare "video" URL fragment or play icon is common in surrounding UI
+    # text and on queued thumbnails; neither alone identifies a playable clip.
     assert FlowBrowser._classify_media_kind(
-        "IMG", "https://media.google/opaque-video", "", "play_arrow", False, False, False
+        "IMG", "https://media.google/opaque-video", "", "play_arrow", True, False, False
+    ) == "image"
+    assert FlowBrowser._classify_media_kind(
+        "IMG", "https://media.google/opaque-video", "", "play_arrow 360p", True, True, False
     ) == "video"
     assert FlowBrowser._classify_media_kind(
         "IMG", "https://media.google/clip.mp4?signature=hidden", "", "", False, False, False
     ) == "video"
+
+
+def test_generic_gallery_video_heading_does_not_promote_every_wide_image():
+    raw_assets = []
+    for index in range(15):
+        raw_assets.append({
+            "src": f"https://media.google/still-{index}", "alt": "", "tag": "IMG",
+            "dom_index": index + 1, "width": 396, "height": 223,
+            "hint": "video gallery", "tile_hint": "gallery item",
+            "queue_context": False, "hasPlay": False,
+            "hasResolution": False, "hasVideoNode": False,
+        })
+    raw_assets.append({
+        "src": "https://media.google/generated-clip", "alt": "", "tag": "IMG",
+        "dom_index": 0, "width": 429, "height": 241,
+        "hint": "video gallery", "tile_hint": "play_arrow 360p",
+        "queue_context": False, "hasPlay": True,
+        "hasResolution": True, "hasVideoNode": False,
+    })
+    raw_assets.append({
+        "src": "https://media.google/queued-chat-preview", "alt": "", "tag": "IMG",
+        "dom_index": 118, "width": 192, "height": 108,
+        "hint": "video gallery", "tile_hint": "play_arrow",
+        "queue_context": False, "hasPlay": True,
+        "hasResolution": False, "hasVideoNode": False,
+    })
+    browser = FlowBrowser.__new__(FlowBrowser)
+    browser._page = SimpleNamespace(evaluate=lambda _script: raw_assets)
+
+    videos = [asset for asset in browser.media_assets() if asset["kind"] == "video"]
+
+    assert len(videos) == 1
+    assert videos[0]["dom_index"] == 0
 
 
 def test_gallery_video_tile_ignores_queue_text_from_a_separate_flow_chat_message():

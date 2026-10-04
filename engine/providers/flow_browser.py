@@ -1767,12 +1767,17 @@ class FlowBrowser:
                           else bool(queue_context))
         if tile_is_queued and not tag_is_video:
             return "pending"
+        # A surrounding gallery heading/Agent message often contains the bare
+        # word "video". It is not tile identity: 15 ordinary 16:9 thumbnails
+        # were previously promoted by that text during the user's recovery scan.
+        # Require media-specific evidence; a play icon alone can also belong to
+        # the queued chat thumbnail. Require a play control plus resolution badge,
+        # a playable URL/node, or an explicit tile label for a generated clip.
         video_hint = bool(re.search(
-            r"\bvideo\b|video preview|generated video|smart[_\s-]?display|"
-            r"play(?:[_\s-]?(?:arrow|circle|circle_filled))?|(?:^|\W)movie(?:\W|$)",
-            text, re.I))
-        if (tag_is_video or has_video_node or has_play
-                or has_resolution or video_url or video_hint):
+            r"video\s+(?:preview|clip|asset)|generated video|play video|"
+            r"smart[_\s-]?display|(?:^|\W)movie(?:\W|$)", text, re.I))
+        if (tag_is_video or has_video_node or video_url or video_hint
+                or (has_play and has_resolution)):
             return "video"
         return "image"
 
@@ -1780,11 +1785,11 @@ class FlowBrowser:
         """Return fingerprints for large visible image/video assets in DOM order.
 
         Flow often exposes a generated video as an ``img`` poster card rather
-        than a literal ``<video>`` element.  Classify from evidence associated
-        with that tile, including Material icon names such as ``play_arrow``;
-        those icon tokens are not accessible as the word "play" and were a
-        common way a real video tile could be missed.  A plain fresh image never
-        counts as a completed video.
+        than a literal ``<video>`` element. The Material ``play_arrow`` icon is
+        captured as a diagnostic signal, but is not sufficient by itself: queue
+        thumbnails also have play buttons. Prefer a video node/URL, resolution
+        badge, or explicit video label. A plain fresh image never counts as a
+        completed video.
         """
         try:
             raw_assets = self._page.evaluate(r"""() => Array.from(document.querySelectorAll('img,video')).map((el, i) => {

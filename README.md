@@ -1,8 +1,10 @@
-# AutoVideoAI v6.0.17 — Flow gallery tile recovery
+# AutoVideoAI v6.0.18 — precise Flow gallery video matching
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. Older release archives are preserved as reference builds.
 
-**New in v6.0.17:** [Flow gallery tile recovery](V6_0_17_FLOW_GALLERY_CLASSIFICATION.md). Queue-status text in Flow's chat no longer demotes a separate generated gallery video tile; recovery classifies queue text locally to each card and still requires an exact, fresh video asset before download.
+**New in v6.0.18:** [Precise Flow gallery video matching](V6_0_18_FLOW_GALLERY_VIDEO_MATCHING.md). A live recovery diagnostic returned 17 video candidates: generic “video” text promoted 15 ordinary stills, and a sidebar preview was promoted by its play icon. The classifier now requires stronger tile evidence, so the fresh clip can be matched without guessing by order.
+
+**Previous in v6.0.17:** [Flow gallery tile recovery](V6_0_17_FLOW_GALLERY_CLASSIFICATION.md). Queue-status text in Flow's chat no longer demotes a separate generated gallery video tile; queue text is scoped to the tile's card, with exact fresh-asset matching retained.
 
 **Previous in v6.0.16:** [Flow video tile recovery](V6_0_16_FLOW_VIDEO_TILE_RECOVERY.md). A fresh typed video tile is not blocked by stale page-wide status text; AutoVideo attempts the exact asset sooner, validates the downloaded video, and reports recovery causes without silently submitting a duplicate. Includes Storyboard Economy workers and prompt-only/frame-guided Flow input.
 
@@ -75,7 +77,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.17
+# ZIP download: cd AutoVideoAI-v6.0.18
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

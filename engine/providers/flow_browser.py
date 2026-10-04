@@ -2289,15 +2289,115 @@ class FlowBrowser:
             if os.path.isfile(temporary):
                 os.remove(temporary)
 
+    @staticmethod
+    def _is_trusted_flow_download_url(url: str) -> bool:
+        """Accept only HTTPS URLs on Google-owned hosts for UI download recovery."""
+        from urllib.parse import urlsplit
+        try:
+            parsed = urlsplit(str(url or ""))
+            host = (parsed.hostname or "").lower().rstrip(".")
+            allowed = ("google", "google.com", "googleapis.com", "googleusercontent.com",
+                       "googlevideo.com", "gstatic.com")
+            return (parsed.scheme.lower() == "https" and not parsed.username
+                    and not parsed.password and any(
+                        host == domain or host.endswith("." + domain) for domain in allowed))
+        except Exception:
+            return False
+
+    def _save_video_download_url(self, download, out_path: str) -> str | None:
+        """Stream the exact browser-triggered video URL if save_as lost its target.
+
+        This is the URL supplied by Playwright's Download event after the user
+        selected a specific project tile and resolution; it is not a private Flow
+        API. Signed URLs are never printed or persisted. Only Google HTTPS hosts
+        and MP4 bytes are accepted, and the provider performs full media validation
+        before marking the request downloaded.
+        """
+        if not str(out_path).lower().endswith(".mp4"):
+            return None
+        import requests
+        from urllib.parse import urljoin
+        temporary = out_path + ".download.tmp"
+        response = None
+        try:
+            current_url = str(getattr(download, "url", "") or "")
+            if not self._is_trusted_flow_download_url(current_url):
+                return None
+            os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+            prefix = bytearray()
+            byte_count = 0
+            deadline = time.monotonic() + 120
+            with requests.Session() as session:
+                session.trust_env = False
+                for _redirect in range(4):
+                    remaining_s = deadline - time.monotonic()
+                    if remaining_s <= 0:
+                        return None
+                    timeout = (min(10.0, remaining_s), min(20.0, remaining_s))
+                    response = session.get(current_url, stream=True, timeout=timeout,
+                                           allow_redirects=False)
+                    status = int(getattr(response, "status_code", 200) or 200)
+                    if 300 <= status < 400:
+                        location = (getattr(response, "headers", {}) or {}).get("Location")
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+                        response = None
+                        if not location:
+                            return None
+                        current_url = urljoin(current_url, str(location))
+                        if not self._is_trusted_flow_download_url(current_url):
+                            return None
+                        continue
+                    response.raise_for_status()
+                    content_type = str((getattr(response, "headers", {}) or {}).get(
+                        "Content-Type", "")).split(";", 1)[0].strip().lower()
+                    if content_type and not (content_type.startswith("video/")
+                                              or content_type in ("application/mp4",
+                                                                  "application/octet-stream")):
+                        return None
+                    with open(temporary, "wb") as output:
+                        for chunk in response.iter_content(128 * 1024):
+                            if not chunk:
+                                continue
+                            if time.monotonic() > deadline:
+                                raise TimeoutError("video download exceeded 120 seconds")
+                            byte_count += len(chunk)
+                            if byte_count > 512 * 1024 * 1024:
+                                raise ValueError("video download exceeds 512 MB")
+                            if len(prefix) < 64:
+                                prefix.extend(chunk[:64 - len(prefix)])
+                            output.write(chunk)
+                    break
+                else:
+                    return None
+            if byte_count < 16 or b"ftyp" not in bytes(prefix[:64]):
+                return None
+            os.replace(temporary, out_path)
+            print("[Flow] Recovered the exact video from the browser download URL after save_as failed.")
+            return out_path
+        except Exception:
+            return None
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            if os.path.isfile(temporary):
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
+
     def _recover_download_save(self, download, out_path: str) -> str | None:
-        """Recover the exact UI-triggered download through temp-file or image URL."""
+        """Recover the exact UI-triggered download through temp file or its signed URL."""
         salvaged = self._salvage_playwright_download(download, out_path)
         if salvaged:
             return salvaged
-        # When Flow closes its detail target during save_as, the Download event's
-        # signed URL is the same asset selected from the visible tile. This
-        # fallback is deliberately image-only; video downloads still require the
-        # normal browser download and strict container validation.
+        if str(out_path).lower().endswith(".mp4"):
+            return self._save_video_download_url(download, out_path)
         return self._save_image_download_url(download, out_path)
 
     def _download_from_tile_button(self, button, out_path: str) -> str:
@@ -2321,7 +2421,8 @@ class FlowBrowser:
                     self._click_download_control(option)
                 elif not downloads:
                     # Scoped visible resolution items only, never another tile.
-                    for label in ("1080p", "720p", "360p", "Original", "MP4", "1K", "Original size"):
+                    for label in ("Original size", "Download original", "Original", "MP4",
+                                  "1K", "360p", "720p", "1080p"):
                         options = page.get_by_text(label, exact=True)
                         if options.count() == 1 and options.first.is_visible(timeout=100):
                             self._click_download_control(options.first, timeout=2000)
@@ -2508,10 +2609,10 @@ class FlowBrowser:
                     pass
                 option = self._try_resolve("download_original_option", timeout_ms=3500)
                 if option is None:
-                    # Video menus use resolution/MP4 labels while image menus use
-                    # 1K/Original size. Prefer the highest visible video option.
-                    for label in ("1080p", "720p", "360p", "Download original",
-                                  "Original", "MP4", "1K", "Original size"):
+                    # Prefer Flow's native export; an "Original size" item may
+                    # carry a smaller 360p label beside an upscaled 720p option.
+                    for label in ("Original size", "Download original", "Original",
+                                  "MP4", "1K", "360p", "720p", "1080p"):
                         try:
                             cand = self._page.get_by_text(label, exact=True).first
                             if cand.is_visible(timeout=400):

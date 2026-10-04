@@ -174,18 +174,23 @@ actions:
     - {by: css, selector: "button:has(mat-icon:text-is('download_2'))"}
     - {by: text, text: "Download"}
   download_original_option:
-    - {by: role, role: menuitem, name_contains: "1080p"}
-    - {by: role, role: menuitem, name_contains: "720p"}
-    - {by: role, role: menuitem, name_contains: "360p"}
+    # Prefer the native/original export over Flow's upscaled variants.
+    - {by: role, role: menuitem, name_contains: "Original size"}
     - {by: role, role: menuitem, name_contains: "Download original"}
-    - {by: role, role: option, name_contains: "1080p"}
-    - {by: role, role: option, name_contains: "720p"}
+    - {by: role, role: option, name_contains: "Original size"}
+    - {by: role, role: option, name_contains: "Download original"}
+    - {by: text, text: "Original size"}
+    - {by: text, text: "Download original"}
+    - {by: role, role: menuitem, name_contains: "360p"}
     - {by: role, role: option, name_contains: "360p"}
+    - {by: role, role: menuitem, name_contains: "720p"}
+    - {by: role, role: option, name_contains: "720p"}
+    - {by: role, role: menuitem, name_contains: "1080p"}
+    - {by: role, role: option, name_contains: "1080p"}
     - {by: role, role: menuitem, name_contains: "1K"}
     - {by: role, role: option, name_contains: "1K"}
     - {by: role, role: button, name_contains: "1K"}
     - {by: text, text: "1K"}
-    - {by: text, text: "Original size"}
   upscale_button:
     - {by: role, role: button, name_contains: "Upscale"}
     - {by: text, text: "Upscale"}

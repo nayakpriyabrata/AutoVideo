@@ -1,8 +1,10 @@
-# AutoVideoAI v6.0.18 — precise Flow gallery video matching
+# AutoVideoAI v6.0.19 — resilient Flow video download recovery
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. Older release archives are preserved as reference builds.
 
-**New in v6.0.18:** [Precise Flow gallery video matching](V6_0_18_FLOW_GALLERY_VIDEO_MATCHING.md). A live recovery diagnostic returned 17 video candidates: generic “video” text promoted 15 ordinary stills, and a sidebar preview was promoted by its play icon. The classifier now requires stronger tile evidence, so the fresh clip can be matched without guessing by order.
+**New in v6.0.19:** [Flow video download recovery](V6_0_19_FLOW_VIDEO_DOWNLOAD_RECOVERY.md). If Flow closes the Playwright target after a download event, recovery streams the exact matched asset from that event's Google-hosted signed URL and validates the MP4 without regenerating. The download menu prefers **360p Original size** over **720p Upscaled**.
+
+**Previous in v6.0.18:** [Precise Flow gallery video matching](V6_0_18_FLOW_GALLERY_VIDEO_MATCHING.md). A live recovery diagnostic returned 17 video candidates: generic “video” text promoted 15 ordinary stills, and a sidebar preview was promoted by its play icon. The classifier now requires stronger tile evidence, so the fresh clip can be matched without guessing by order.
 
 **Previous in v6.0.17:** [Flow gallery tile recovery](V6_0_17_FLOW_GALLERY_CLASSIFICATION.md). Queue-status text in Flow's chat no longer demotes a separate generated gallery video tile; queue text is scoped to the tile's card, with exact fresh-asset matching retained.
 

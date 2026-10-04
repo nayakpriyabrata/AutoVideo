@@ -490,6 +490,123 @@ def test_viewer_image_download_falls_back_to_exact_download_url_after_target_clo
         recovered.verify()
 
 
+def test_video_tile_download_recovers_exact_event_url_after_save_as_target_close(
+        tmp_path, monkeypatch, capsys):
+    import requests
+
+    video_data = (b"\x00\x00\x00\x18ftypisom" + b"\x00" * 16
+                  + b"\x00\x00\x00\x08mdat" + b"video-payload")
+    signed_url = "https://storage.googleapis.com/flow-assets/exact-tile.mp4?X-Goog-Signature=secret"
+    requested_urls = []
+
+    class _Response:
+        status_code = 200
+        headers = {"Content-Type": "video/mp4"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, _size):
+            yield video_data[:9]
+            yield video_data[9:]
+
+        def close(self):
+            return None
+
+    class _Session:
+        trust_env = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, **kwargs):
+            requested_urls.append((url, kwargs))
+            return _Response()
+
+    monkeypatch.setattr(requests, "Session", _Session)
+
+    class _Download:
+        url = signed_url
+
+        def path(self):
+            return None
+
+        def save_as(self, _path):
+            raise RuntimeError("TargetClosedError: target page, context, or browser closed")
+
+    download = _Download()
+
+    class _Page:
+        def __init__(self):
+            self.listener = None
+            self.removed = False
+
+        def on(self, event, callback):
+            assert event == "download"
+            self.listener = callback
+
+        def remove_listener(self, event, callback):
+            assert event == "download"
+            assert callback is self.listener
+            self.removed = True
+
+        def wait_for_timeout(self, _ms):
+            return None
+
+    page = _Page()
+
+    class _Button:
+        clicks = 0
+
+        def click(self, **_kwargs):
+            self.clicks += 1
+            page.listener(download)
+
+    button = _Button()
+    browser = FlowBrowser.__new__(FlowBrowser)
+    browser._page = page
+    output = tmp_path / "take.mp4"
+
+    saved = browser._download_from_tile_button(button, str(output))
+
+    assert saved == str(output)
+    assert output.read_bytes() == video_data
+    assert requested_urls == [(signed_url, {
+        "stream": True, "timeout": (10.0, 20.0), "allow_redirects": False,
+    })]
+    assert button.clicks == 1
+    assert page.removed is True
+    assert "X-Goog-Signature=secret" not in capsys.readouterr().out
+
+
+def test_video_download_recovery_restricts_signed_urls_to_google_https_hosts():
+    assert FlowBrowser._is_trusted_flow_download_url(
+        "https://storage.googleapis.com/asset.mp4?signature=private")
+    assert FlowBrowser._is_trusted_flow_download_url("https://flow.google/download/asset.mp4")
+    assert not FlowBrowser._is_trusted_flow_download_url("http://storage.googleapis.com/asset.mp4")
+    assert not FlowBrowser._is_trusted_flow_download_url(
+        "https://google.com.attacker.invalid/asset.mp4")
+    assert not FlowBrowser._is_trusted_flow_download_url(
+        "https://user:password@storage.googleapis.com/asset.mp4")
+
+
+def test_download_original_selector_prefers_original_size_over_upscale():
+    import yaml
+
+    config = yaml.safe_load((Path(__file__).parents[1] / "config" / "flow_ui.yaml").read_text(
+        encoding="utf-8"))
+    selectors = config["actions"]["download_original_option"]
+    original_index = next(i for i, selector in enumerate(selectors)
+                          if selector.get("name_contains") == "Original size")
+    upscale_index = next(i for i, selector in enumerate(selectors)
+                         if selector.get("name_contains") == "720p")
+    assert original_index < upscale_index
+    assert selectors[original_index]["role"] == "menuitem"
+
+
 def test_signature_kind_parser_ignores_untyped_or_malformed_values():
     assert media_signature_kind("IMG|https://media.google/still|still|image|320|180") == "image"
     assert media_signature_kind("VIDEO|https://media.google/clip|preview|video|320|180") == "video"

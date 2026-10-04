@@ -16,7 +16,6 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
 REVIEW_SCHEMA = 1
 MIN_CUTAWAY_SECONDS = 0.5
@@ -98,6 +97,22 @@ def _file_duration(path: str) -> float | None:
         return duration if proc.returncode == 0 and math.isfinite(duration) and duration > 0 else None
     except Exception:
         return None
+
+
+def _file_dimensions(path: str) -> tuple[int, int]:
+    """Read the encoded output frame size, not a stock asset's preview size."""
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "json", path],
+            capture_output=True, text=True, timeout=30)
+        streams = json.loads(proc.stdout or "{}").get("streams") or []
+        width, height = int(streams[0].get("width") or 0), int(streams[0].get("height") or 0)
+        if proc.returncode == 0 and width >= 2 and height >= 2:
+            return width, height
+    except Exception:
+        pass
+    raise RuntimeError("Could not determine the rendered highlight's frame size; install/repair ffprobe.")
 
 
 def _public_metadata(meta: dict, query: str) -> dict:
@@ -477,8 +492,10 @@ def _ensure_clip_caption_path(highlight: dict, output_dir: str) -> str:
     from .render.captions_ass import build_captions
     tag = _safe_id(Path(str(highlight.get("output") or "clip")).stem)
     caption_root = os.path.join(output_dir, "_clip_work", "broll_captions", tag)
-    cap = build_captions(words, caption_root, template="OPUS", aspect="9:16",
-                         W=1080, H=1920,
+    width, height = _file_dimensions(str(highlight.get("output") or ""))
+    aspect = "9:16" if height > width else "16:9"
+    cap = build_captions(words, caption_root, template="OPUS", aspect=aspect,
+                         W=width, H=height,
                          duration=float(highlight.get("duration") or data.get("source_end", 0) - data.get("source_start", 0)))
     if not cap.get("ass") or not os.path.isfile(cap["ass"]):
         raise ValueError("Could not rebuild the original highlight captions for the B-roll cutaway.")
@@ -512,6 +529,7 @@ def prepare_clip_studio_review(result: dict, max_candidates: int = 3,
         cut_duration = min(float(default_duration), MAX_CUTAWAY_SECONDS, duration - 0.5)
         start = min(max(0.0, round(duration * 0.42, 3)), max(0.0, duration - cut_duration))
         captions = _ensure_clip_caption_path(highlight, output_dir)
+        frame_width, frame_height = _file_dimensions(output)
         face_x = float(highlight.get("face_center_x", 0.5) or 0.5)
         slots.append({
             "candidate_id": f"clip_{index:02d}_{_safe_id(Path(output).stem)}",
@@ -532,13 +550,17 @@ def prepare_clip_studio_review(result: dict, max_candidates: int = 3,
             "clip_duration": duration,
             "caption_ass_path": captions,
             "framing": str(highlight.get("framing") or "face-crop"),
+            "output_width": frame_width,
+            "output_height": frame_height,
             "face_center_x": face_x,
             "title": str(highlight.get("title") or "")[:120],
         })
     if not slots:
         raise ValueError("No eligible highlight clips were found.")
+    first_slot = slots[0]
+    vertical = int(first_slot.get("output_height", 0)) > int(first_slot.get("output_width", 0))
     report = prepare_review(review_path, slots, workflow="clip_studio", max_candidates=max_candidates,
-                            default_duration=default_duration, vertical=True, replace=replace)
+                            default_duration=default_duration, vertical=vertical, replace=replace)
     report["path"] = os.path.abspath(review_path)
     return review_path, report
 
@@ -571,10 +593,15 @@ def _render_clip_studio_cutaway(candidate: dict) -> str:
         raise ValueError("B-roll cutaway placement is outside the selected highlight.")
 
     face_x = max(0.15, min(0.85, float(candidate.get("face_center_x", 0.5))))
-    framing = framing_filter(str(candidate.get("framing") or "face-crop"), face_x)
+    framing_mode = str(candidate.get("framing") or "face-crop")
+    frame_width, frame_height = _file_dimensions(original)
+    if framing_mode == "face-crop" and (frame_width, frame_height) != (1080, 1920):
+        raise ValueError("The selected face-crop highlight is not 1080x1920; refusing to alter its layout.")
+    framing = framing_filter(framing_mode, face_x,
+                             width=frame_width, height=frame_height)
     broll_filter = (
-        "scale=1080:1920:force_original_aspect_ratio=increase,"
-        "crop=1080:1920,setsar=1,fps=30,format=yuv420p,"
+        f"scale={frame_width}:{frame_height}:force_original_aspect_ratio=increase:force_divisible_by=2,"
+        f"crop={frame_width}:{frame_height},setsar=1,fps=30,format=yuv420p,"
         f"trim=duration={cut_duration:.3f},setpts=PTS-STARTPTS+{start:.3f}/TB")
     graph = [
         f"[0:v]{framing},fps=30,format=yuv420p,setpts=PTS-STARTPTS[base]",
@@ -624,6 +651,12 @@ def _render_clip_studio_cutaway(candidate: dict) -> str:
         except OSError:
             pass
         raise RuntimeError("B-roll highlight duration QC failed; original clip remains unchanged.")
+    if _file_dimensions(output) != (frame_width, frame_height):
+        try:
+            os.remove(output)
+        except OSError:
+            pass
+        raise RuntimeError("B-roll highlight framing QC failed; original clip remains unchanged.")
     return output
 
 

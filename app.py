@@ -301,7 +301,7 @@ def run_with_ui(job_id, dry_label):
                              "model": shot.actual_model or shot.model,
                              "accepted_take": shot.accepted_take or ""}
                             for shot in manifest.shots if shot.status != "accepted"]
-                    st.dataframe(rows, use_container_width=True)
+                    st.dataframe(rows, width="stretch")
             except (OSError, ValueError, KeyError) as report_error:
                 st.caption(f"Coverage details remain saved at `{coverage_path}` ({type(report_error).__name__}).")
 
@@ -405,15 +405,22 @@ if page == "STUDIO":
         with st.expander("Flow, visuals, audio and branding", expanded=True):
             h, i, j = st.columns(3)
             flow_workers = h.selectbox("Parallel Flow image workers", [1, 2, 3], index=0,
-                                       disabled=profile == "STORYBOARD_ECONOMY",
-                                       help="Used by per-shot candidate image generation in Flow profiles. Storyboard Economy's master/continuity-frame pipeline is sequential and does not use this setting. Each worker uses a separate Flow project and browser tab/profile to keep asset matching safe. Start with 1; Google may throttle 2–3.")
+                                       help="1 is serial. With 2–3, independent Flow stills use isolated projects/tabs. Storyboard Economy parallelizes independent openings and closings while preserving exact continuity-linked openings and distinct scene pairs. Video generation itself remains sequential. Google may throttle concurrent sessions; start with 1 or 2.")
             if profile == "STORYBOARD_ECONOMY":
-                st.caption("Parallel workers are not used by Storyboard Economy's continuity-first frame pipeline.")
+                st.caption("In Storyboard Economy, independent opening photos and closing frames can run in parallel; linked openings still copy the exact previous close, and paid video clips remain sequential.")
             frame_source = i.selectbox("Frame source", ["auto", "flow", "free"])
             flow_approval = j.selectbox("Flow credit approval", ["once", "manual", "always"])
             flow_project_url = st.text_input("Existing Google Flow project URL (optional)",
                                              placeholder="https://flow.google.com/project/<uuid>",
                                              help="Stored with the job and automatically reused on resume.")
+            if profile == "STORYBOARD_ECONOMY":
+                flow_video_mode = st.selectbox(
+                    "Flow video input", ["frames", "prompt"],
+                    format_func=lambda value: ("Storyboard frames (continuity)" if value == "frames"
+                                               else "Prompt only (no images attached)"),
+                    help="Applies only to paid Flow motion scenes. Prompt-only clips are generated from the scene prompt; storyboard photos remain available for image-motion scenes and fallback.")
+            else:
+                flow_video_mode = "frames"
             flow_pause_on_unresolved_request = st.checkbox(
                 "Pause when a Flow request cannot be safely recovered (opt-in)",
                 value=_flow_pause_setting_default(),
@@ -438,7 +445,10 @@ if page == "STUDIO":
             r1, r2, r3 = st.columns(3)
             max_credits = r1.number_input("Max credits/video", 0, 5000, 30)
             flow_scenes = r2.number_input("Exact Flow motion scenes (0=auto)", 0, 500, 0)
-            images_per_shot = r3.number_input("Candidate images/shot", 0, 10, 2)
+            images_per_shot = r3.number_input(
+                "Candidate images/shot", 0, 10, 2,
+                disabled=profile == "STORYBOARD_ECONOMY",
+                help="Used by non-Economy profiles. Storyboard Economy instead creates one opening photo per scene and a closing frame only for selected Flow-video scenes.")
         plan_only = st.checkbox("Create plan only (run later with Resume)")
         submitted = st.form_submit_button("🚀 Create production", type="primary")
     if submitted:
@@ -456,6 +466,7 @@ if page == "STUDIO":
                         "script_provider": script_provider, "tts_provider": tts_provider,
                         "render_quality": render_quality, "flow_image_workers": flow_workers,
                         "frame_source": frame_source, "flow_approval": flow_approval,
+                        "flow_video_mode": flow_video_mode,
                         "flow_project_url": flow_project_url.strip(), "flow_reuse_mode": reuse_mode,
                         "flow_pause_on_unresolved_request": flow_pause_on_unresolved_request,
                         "gemini_chat_cleanup": gemini_cleanup,
@@ -902,7 +913,7 @@ elif page == "STORYBOARD":
                  "model": s.model, "gen_s": s.gen_duration, "takes": s.num_candidates,
                  "status": s.status} for s in m.shots]
         df = pd.DataFrame(rows)
-        edited = st.data_editor(df, use_container_width=True, key="sb_table",
+        edited = st.data_editor(df, width="stretch", key="sb_table",
                                 column_config={"model": st.column_config.SelectboxColumn(options=["omni_draft", "omni_standard", "veo_lite", "veo_fast", "veo_quality", "wan_t2v", "wan_i2v", "ltx_t2v", "stock", "kenburns_plus"]),
                                                "priority": st.column_config.SelectboxColumn(options=["LOW", "NORMAL", "HERO"]),
                                                "status": st.column_config.SelectboxColumn(options=["planned", "approved", "skipped"])})
@@ -987,7 +998,7 @@ elif page == "QUEUE":
              "est": j["est_credits"], "gens": j["actual_generations"],
              "✅": j["accepted_shots"], "❌": j["rejected_shots"],
              "retries": j["retry_count"], "updated": j["updated_at"]} for j in jobs]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch")
     if st.session_state.job_id:
         selected_row = DB.get(st.session_state.job_id) or {}
         current_flow_pause = bool(F._settings(st.session_state.job_id).get(
@@ -1115,15 +1126,23 @@ elif page == "CLIP STUDIO":
                     help="Recorded with the clip report; include any attribution required by the source.")
             music_volume = st.slider("Music volume", 0.0, 0.35, 0.08, 0.01)
     gemini_cleanup = st.selectbox("Temporary Gemini browser chat", ["delete-after-read", "keep"])
-    framing = st.selectbox("Framing", ["face-crop", "fit"],
-                           help="Fit keeps the complete picture. Face crop uses a static estimate and may miss speaker changes.")
+    framing = st.selectbox(
+        "Framing", ["face-crop", "fit"],
+        format_func=lambda mode: {
+            "face-crop": "Face crop — vertical 9:16",
+            "fit": "Fit — preserve source orientation and full frame",
+        }[mode],
+        help="Fit preserves the full source picture and outputs in its original orientation/aspect ratio (landscape stays landscape; portrait stays portrait). Face crop creates a vertical 9:16 short and uses a static face estimate.")
     clip_broll_enabled = st.checkbox(
-        "Optional: find related stock B-roll cutaways for these highlights",
+        "Prepare related stock B-roll suggestions for these highlights",
         value=False,
-        help="The count only limits search results. Each exact stock file must be previewed and explicitly approved or skipped; save decisions before applying. Approved inserts render as separate B-roll copies and originals remain unchanged.")
+        help="When enabled, AutoVideoAI searches after the highlights are rendered and previews the exact stock candidates. Nothing is inserted automatically: explicitly approve or skip every candidate, save decisions, then apply approved inserts as separate copies.")
     cb1, cb2, cb3 = st.columns(3)
-    clip_broll_count = cb1.number_input("Maximum B-roll suggestions", 1, 5, 3, 1,
-                                        disabled=not clip_broll_enabled, key="clip-studio-broll-count")
+    clip_broll_count = cb1.number_input(
+        "Maximum B-roll suggestions", 1, 5, 3, 1,
+        disabled=not clip_broll_enabled, key="clip-studio-broll-count",
+        help=("A maximum, not a guarantee. At most one suggestion is prepared per highlight. "
+              "A configured stock source may have no valid downloadable match; each unmatched slot shows why."))
     clip_broll_duration = cb2.slider("Cutaway duration (seconds)", 0.5, 6.0, 2.0, 0.5,
                                       disabled=not clip_broll_enabled, key="clip-studio-broll-duration")
     clip_broll_replace = cb3.checkbox(
@@ -1132,6 +1151,7 @@ elif page == "CLIP STUDIO":
         key="clip-studio-broll-replace")
     clip_broll_query_hint = ""
     if clip_broll_enabled:
+        st.caption("B-roll workflow: render highlights → automatically find up to the selected maximum → preview and approve/skip each exact asset → save decisions → apply approved cutaways. The original clips are never overwritten.")
         clip_broll_query_hint = st.text_input(
             "Optional English visual-search hint (useful for non-English transcript)", value="",
             key="clip-studio-broll-hint",
@@ -1165,6 +1185,31 @@ elif page == "CLIP STUDIO":
                     progress_cb=clip_progress)
                 st.session_state['last_clip_result'] = result
                 st.session_state.pop('clip_broll_review_path', None)
+                st.session_state.pop('clip_broll_search_error', None)
+                st.session_state.pop('clip_broll_search_summary', None)
+                if clip_broll_enabled:
+                    try:
+                        from engine.broll import prepare_clip_studio_review
+                        suggestion_limit = min(int(clip_broll_count), len(result.get("highlights") or []))
+                        with st.spinner(
+                                f"Searching for up to {suggestion_limit} reviewable B-roll candidate(s). "
+                                "Nothing will be inserted until you approve it…"):
+                            review_path, review = prepare_clip_studio_review(
+                                result, max_candidates=int(clip_broll_count),
+                                default_duration=float(clip_broll_duration),
+                                query_hint=clip_broll_query_hint)
+                        st.session_state['clip_broll_review_path'] = review_path
+                        ready_count = sum(
+                            1 for item in review.get("candidates", [])
+                            if item.get("status") == "ready")
+                        searched_count = len(review.get("candidates", []))
+                        st.session_state['clip_broll_search_summary'] = (
+                            f"Found {ready_count} previewable B-roll candidate(s); "
+                            f"{searched_count - ready_count} were unmatched/invalid. No B-roll is applied yet.")
+                    except Exception as broll_exc:
+                        st.session_state['clip_broll_search_error'] = (
+                            f"Highlights were created, but B-roll search could not complete "
+                            f"({type(broll_exc).__name__}). Retry the search below; no insert was made.")
                 st.success(f"Created {len(result['outputs'])} clips using {result['method']}.")
                 music_info = result.get("music") or {}
                 if music_info.get("enabled"):
@@ -1206,8 +1251,16 @@ elif page == "CLIP STUDIO":
         clip_result = st.session_state['last_clip_result']
         st.divider()
         st.subheader("🌿 Preview and approve B-roll cutaways")
-        st.caption("The suggestion count only sets a search limit; it does not insert B-roll. Preview each exact asset, then explicitly approve or skip every suggestion and save decisions. Apply creates separate rendered clips; original highlights/audio remain unchanged.")
-        if st.button("🔎 Search related stock for these highlights", key="clip-broll-search"):
+        st.caption("The main clip action searches automatically when B-roll is enabled. Preview each exact stock file, explicitly approve or skip every suggestion, save decisions, then apply approved inserts. Each insert is a separate rendered copy; original highlights/audio remain unchanged.")
+        if st.session_state.get('clip_broll_search_summary'):
+            st.info(st.session_state['clip_broll_search_summary'])
+        if st.session_state.get('clip_broll_search_error'):
+            st.warning(st.session_state['clip_broll_search_error'])
+        current_review_path = st.session_state.get('clip_broll_review_path')
+        search_label = ("🔄 Replace B-roll suggestions with a new search"
+                        if current_review_path else "🔎 Search related stock for these highlights")
+        if st.button(search_label, key="clip-broll-search",
+                     disabled=bool(current_review_path) and not clip_broll_replace):
             try:
                 with st.spinner("Searching configured stock sources; no Flow/Veo generation is submitted…"):
                     review_path, review = prepare_clip_studio_review(
@@ -1215,9 +1268,14 @@ elif page == "CLIP STUDIO":
                         default_duration=float(clip_broll_duration), replace=clip_broll_replace,
                         query_hint=clip_broll_query_hint)
                 st.session_state['clip_broll_review_path'] = review_path
+                st.session_state.pop('clip_broll_search_error', None)
                 ready_count = sum(1 for x in review.get("candidates", []) if x.get("status") == "ready")
                 missing_count = len(review.get("candidates", [])) - ready_count
-                st.success(f"Search complete: {ready_count} exact preview candidate(s), {missing_count} unmatched/invalid. Nothing is inserted until each suggestion is explicitly approved or skipped, saved, and approved inserts are applied.")
+                st.session_state['clip_broll_search_summary'] = (
+                    f"Prepared {ready_count} previewable B-roll candidate(s) and "
+                    f"{missing_count} unmatched/invalid result(s). Nothing is inserted yet.")
+                st.success(st.session_state['clip_broll_search_summary'] +
+                           " Review every candidate and save a decision before applying approved cutaways.")
             except Exception as exc:
                 st.error(str(exc))
         clip_review_path = st.session_state.get('clip_broll_review_path')

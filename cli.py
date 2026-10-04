@@ -167,6 +167,10 @@ def main_v3(argv):
                    help="hard cap on paid Flow motion scenes (not a requested count; budget cap still applies)")
     c.add_argument("--frame-source", default="auto", choices=["auto", "flow", "free"],
                    help="opening/closing stills: auto=retry Flow then visibly fall back; flow=strict Flow only; free=free provider only")
+    c.add_argument("--flow-image-workers", type=int, default=1, choices=[1, 2, 3],
+                   help="parallel isolated Flow still workers; Storyboard Economy keeps continuity-linked openings ordered")
+    c.add_argument("--flow-video-mode", default="frames", choices=["frames", "prompt"],
+                   help="Flow motion input: frames attaches storyboard references; prompt creates prompt-only clips")
     c.add_argument("--pause-on-unresolved-flow-request", dest="flow_pause_on_unresolved_request",
                    action=argparse.BooleanOptionalAction, default=None,
                    help="opt in to PAUSED jobs when a Flow request cannot be safely recovered; default is no automatic pause. Image recovery retries downloads first and permits at most one credit-bearing replacement after two scans prove absence")
@@ -554,6 +558,8 @@ def main_v3(argv):
                             images_per_shot=args.images_per_shot,
                             video_share=args.video_share, stock_share=args.stock_share,
                             flow_scenes=args.flow_scenes, max_flow_scenes=args.max_flow_scenes, frame_source=args.frame_source,
+                            flow_image_workers=args.flow_image_workers,
+                            flow_video_mode=args.flow_video_mode,
                             flow_approval=args.flow_approval,
                             max_generation_credits=args.max_generation_credits,
                             shot_max_seconds=args.shot_max_seconds,

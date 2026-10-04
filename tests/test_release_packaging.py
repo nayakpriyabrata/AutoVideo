@@ -29,7 +29,9 @@ def source(root):
 def test_source_zip_excludes_credentials_profiles_outputs_and_prior_archives(tmp_path):
     root = source(tmp_path / "project")
     for name in (".env", ".env.local", "config/user_settings.yaml", "outputs/job/pause_state.json", "data/jobs.db",
-                 ".git/config", ".flow-profile/Default/Cookies", ".venv/bin/python", "private-config.yaml",
+                 ".git/config", ".flow-profile/Default/Cookies",
+                 ".flow-workers/job-economy-worker-1/Default/Cookies",
+                 ".venv/bin/python", "private-config.yaml",
                  "old-release.zip", "engine/__pycache__/module.pyc", "config/.env", "config/credentials.json",
                  "assets/music/private-song.mp3", "assets/stock_library/private-video.mp4"):
         write(root, name, "PRIVATE CONTENT")

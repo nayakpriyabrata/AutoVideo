@@ -2,6 +2,7 @@
 venv/
 releases/
 .flow-profile/
+.flow-workers/
 .gemini-profile/
 .movieflow-profile/
 .env

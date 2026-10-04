@@ -126,6 +126,25 @@ def test_video_wait_keeps_polling_after_still_until_explicit_video_is_stable(mon
     assert browser.last_generated_asset_signature == "fresh-video"
 
 
+def test_stable_fresh_video_does_not_wait_for_stale_page_wide_busy_text(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(flow_module, "time", clock)
+    browser = _wait_browser(clock, lambda: [
+        {"sig": "old", "kind": "image"},
+        {"sig": "fresh-video", "kind": "video"},
+    ])
+    # Flow's conversation history can retain these words after the current
+    # request is done. They must not block an exact, stable video tile forever.
+    browser._page.inner_text = lambda _selector: (
+        "Previous request pending; earlier generation in progress. New clip is ready.")
+
+    assert browser.wait_for_agent_generation(
+        before_assets={"old"}, timeout_s=8, required_kind="video",
+    ) is True
+    assert browser.last_generated_asset_signature == "fresh-video"
+    assert 3.0 <= clock.now <= 4.0
+
+
 def test_flow_signature_classifier_recognizes_material_play_arrow_but_not_a_still():
     assert FlowBrowser._classify_media_kind(
         "IMG", "https://media.google/opaque-still", "", "", False, False, False
@@ -391,3 +410,126 @@ def test_signature_kind_parser_ignores_untyped_or_malformed_values():
     assert media_signature_kind("VIDEO|https://media.google/clip|preview|video|320|180") == "video"
     assert media_signature_kind("opaque-signature") is None
     assert media_signature_kind("IMG|src|alt|unknown|320|180") is None
+
+
+def test_queued_flow_thumbnail_is_pending_not_a_completed_image_or_video():
+    queue_text = "Your video has been scheduled and is waiting in a high-demand queue."
+
+    assert FlowBrowser._classify_media_kind(
+        "IMG", "https://media.google/opaque-thumb", queue_text, "", False, True, False
+    ) == "pending"
+    assert FlowBrowser._classify_media_kind(
+        "IMG", "https://media.google/opaque-thumb", "", queue_text, False, True, False
+    ) == "pending"
+    assert FlowBrowser._classify_media_kind(
+        "IMG", "https://media.google/preview.mp4", queue_text, "", True, True, False
+    ) == "pending"
+    assert FlowBrowser._classify_media_kind(
+        "VIDEO", "https://media.google/clip.mp4", queue_text, "", True, True, True
+    ) == "video"
+    assert media_signature_kind(
+        "IMG|https://media.google/opaque-thumb|queue|pending|320|180"
+    ) == "pending"
+
+
+def test_initial_queue_observation_is_persisted_in_request_journal(tmp_path):
+    output = tmp_path / "take.mp4"
+    journal = Path(str(output) + ".flow-request.json")
+    journal.write_text(json.dumps({
+        "status": "pending", "kind": "video", "project_url": "https://flow.google.com/project/test",
+        "baseline": ["older"], "signature": "",
+    }), encoding="utf-8")
+    provider = FlowBrowserProvider.__new__(FlowBrowserProvider)
+
+    provider._record_queue_observation(str(output), elapsed_s=43)
+
+    saved = json.loads(journal.read_text(encoding="utf-8"))
+    assert saved["queue_detected"] is True
+    assert saved["queue_wait_elapsed_s"] == 43
+    assert saved["last_queue_observed_at"] > 0
+
+
+def test_video_wait_stays_bounded_on_fresh_high_demand_queue_card(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(flow_module, "time", clock)
+    browser = _wait_browser(clock, lambda: [
+        {"sig": "old", "kind": "image"},
+        {"sig": "fresh-queued-thumbnail", "kind": "pending"},
+    ])
+    browser._page.inner_text = lambda _selector: (
+        "Your video has been scheduled and is waiting in a high-demand queue.")
+
+    completed = browser.wait_for_agent_generation(
+        before_assets={"old"}, timeout_s=8, required_kind="video",
+        video_ready_grace_s=5,
+    )
+
+    assert completed is False
+    assert browser.last_agent_queue_observed is True
+    assert browser.last_agent_queue_elapsed_s >= 7
+    assert browser.last_generated_asset_signature is None
+
+
+def test_resume_with_fresh_queue_card_preserves_request_without_download_or_regeneration(tmp_path):
+    project_url = "https://flow.google.com/project/saved-project"
+    queued_sig = (
+        "IMG|https://media.google/queued-thumb|scheduled queue card|pending|320|180")
+    assets = [
+        {"sig": "old", "kind": "image"},
+        {"sig": queued_sig, "kind": "pending"},
+    ]
+
+    class _Bridge:
+        _page = SimpleNamespace(wait_for_timeout=lambda _ms: None)
+
+        def __init__(self):
+            self.downloads = []
+
+        def ensure_project(self, _project, project_url=None):
+            assert project_url == project_url_expected
+
+        def media_assets(self):
+            return list(assets)
+
+        def download_latest_asset(self, *args, **kwargs):
+            self.downloads.append((args, kwargs))
+            raise AssertionError("a queued thumbnail is not a downloadable video")
+
+    project_url_expected = project_url
+    bridge = _Bridge()
+    provider = FlowBrowserProvider.__new__(FlowBrowserProvider)
+    provider.bridge = bridge
+    provider._ensure = lambda: bridge
+    provider._asset_valid = lambda _path, _kind: False
+    provider._generate_video_once = lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("queue recovery must never submit a duplicate generation"))
+
+    shot = SimpleNamespace(shot_id="shot_017", model="omni_draft")
+    compiled = {"prompt": "exact pending video prompt", "project": "Flow job",
+                "project_url": project_url, "flow_image_signature_wait_ms": 0}
+    request_hash = hashlib.sha256(json.dumps(
+        ["video", shot.shot_id, compiled["prompt"], True], sort_keys=True
+    ).encode()).hexdigest()
+    output = tmp_path / "take.mp4"
+    journal = Path(str(output) + ".flow-request.json")
+    journal.write_text(json.dumps({
+        "status": "pending", "kind": "video", "project_url": project_url,
+        "baseline": ["old"], "signature": queued_sig,
+        "request_hash": request_hash,
+    }), encoding="utf-8")
+
+    from engine.providers.flow_browser import FlowRequestPending
+    try:
+        provider._guarded_generation_once(
+            shot, compiled, {}, str(output), True, False, "video")
+    except FlowRequestPending as error:
+        assert "still shows only its high-demand queue card" in str(error)
+    else:
+        raise AssertionError("a queued thumbnail cannot complete the saved video request")
+
+    saved = json.loads(journal.read_text(encoding="utf-8"))
+    assert saved["queue_detected"] is True
+    assert saved["signature"] == ""
+    assert saved["signature_kind_rejected"] == "queued-thumbnail"
+    assert saved["rejected_signatures"] == [queued_sig]
+    assert bridge.downloads == []

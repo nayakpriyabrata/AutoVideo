@@ -153,9 +153,10 @@ def test_chart_requires_evidence_and_finite_values():
         validate_events([chart], 6)
 
 
-def test_fit_preserves_full_source():
+def test_fit_preserves_full_source_orientation_and_face_crop_stays_vertical():
     assert 'crop=' not in framing_filter('fit')
-    assert 'pad=1080:1920' in framing_filter('fit')
+    assert 'pad=1920:1080' in framing_filter('fit', width=1920, height=1080)
+    assert 'pad=1080:1920' in framing_filter('fit', width=1080, height=1920)
     assert 'crop=' in framing_filter('face-crop')
     with pytest.raises(ValueError):
         framing_filter('unsupported')

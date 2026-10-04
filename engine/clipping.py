@@ -22,6 +22,7 @@ import time
 import unicodedata
 import hashlib
 from pathlib import Path
+from fractions import Fraction
 
 import requests
 
@@ -111,6 +112,61 @@ def _duration(path: str) -> float:
     if not math.isfinite(d) or d <= 0:
         raise RuntimeError(f"Invalid video duration: {path}")
     return d
+
+
+def _video_display_dimensions(path: str) -> tuple[float, float]:
+    """Return display width/height after pixel aspect and rotation are applied."""
+    probe = _run([
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries",
+        "stream=width,height,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation",
+        "-of", "json", path,
+    ], timeout=60)
+    try:
+        streams = json.loads(probe.stdout or "{}").get("streams") or []
+        stream = streams[0]
+        width, height = float(stream.get("width") or 0), float(stream.get("height") or 0)
+        if probe.returncode != 0 or width <= 0 or height <= 0:
+            raise ValueError("missing video dimensions")
+        sar_text = str(stream.get("sample_aspect_ratio") or "1:1")
+        try:
+            sar = float(Fraction(sar_text.replace(":", "/")))
+        except (ValueError, ZeroDivisionError):
+            sar = 1.0
+        if not math.isfinite(sar) or sar <= 0:
+            sar = 1.0
+        display_width, display_height = width * sar, height
+        rotations = []
+        tag_rotation = (stream.get("tags") or {}).get("rotate")
+        if tag_rotation is not None:
+            try:
+                rotations.append(float(tag_rotation))
+            except (TypeError, ValueError):
+                pass
+        for side_data in stream.get("side_data_list") or []:
+            try:
+                rotations.append(float(side_data.get("rotation")))
+            except (TypeError, ValueError):
+                pass
+        rotation = rotations[-1] if rotations else 0.0
+        if abs(round(rotation / 90)) % 2 == 1:
+            display_width, display_height = display_height, display_width
+        return display_width, display_height
+    except (ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Cannot read source video orientation; install/repair ffprobe and try again.") from exc
+
+
+def fit_output_dimensions(path: str, max_dimension: int = 1920) -> tuple[int, int]:
+    """Choose an even, capped output size that preserves the source display ratio."""
+    if type(max_dimension) is not int or max_dimension < 2:
+        raise ValueError("max_dimension must be an integer of at least 2")
+    display_width, display_height = _video_display_dimensions(path)
+    scale = min(1.0, max_dimension / max(display_width, display_height))
+
+    def even(value: float) -> int:
+        return max(2, int(math.floor(value * scale / 2.0 + 0.5)) * 2)
+
+    return even(display_width), even(display_height)
 
 
 def resolve_input(source: str, work_dir: str, rights_confirmed: bool = False,
@@ -219,7 +275,8 @@ def _headline_filename(title: str, index: int, used: set[str] | None = None) -> 
 
 
 def _clip_qc_report(path: str, expected_duration: float, editorial_score: float,
-                    caption_words: int) -> dict:
+                    caption_words: int,
+                    expected_dimensions: tuple[int, int] | None = None) -> dict:
     """Strict post-render gates plus an explainable Opus-style quality score.
 
     The score estimates editorial/technical readiness; it is deliberately not
@@ -253,11 +310,15 @@ def _clip_qc_report(path: str, expected_duration: float, editorial_score: float,
         freeze = {"ratio": None, "longest": None}
 
     width, height = int(video.get("width") or 0), int(video.get("height") or 0)
+    expected_width, expected_height = expected_dimensions or (1080, 1920)
+    if (type(expected_width) is not int or type(expected_height) is not int
+            or expected_width < 2 or expected_height < 2):
+        raise ValueError("Expected clip dimensions must be positive integers")
     duration_delta = abs(actual - float(expected_duration)) if actual else float(expected_duration)
     checks = {
         "video_stream": bool(video),
         "audio_stream": bool(audio),
-        "vertical_1080x1920": width == 1080 and height == 1920,
+        "framing_dimensions_match": width == expected_width and height == expected_height,
         "duration_aligned": duration_delta <= max(1.0, float(expected_duration) * 0.04),
         "decodes_cleanly": decode.returncode == 0 and not decode_lines,
         "black_frames_ok": black_ratio is not None and black_ratio < 0.08,
@@ -266,7 +327,7 @@ def _clip_qc_report(path: str, expected_duration: float, editorial_score: float,
     }
     technical_score = 100.0
     penalties = {
-        "video_stream": 45, "audio_stream": 30, "vertical_1080x1920": 16,
+        "video_stream": 45, "audio_stream": 30, "framing_dimensions_match": 16,
         "duration_aligned": 18, "decodes_cleanly": 35, "black_frames_ok": 30,
         "motion_ok": 20, "captions_present": 10,
     }
@@ -292,6 +353,7 @@ def _clip_qc_report(path: str, expected_duration: float, editorial_score: float,
         "checks": checks, "blocking_issues": blocking, "review_issues": review,
         "media": {"duration": round(actual, 3), "expected_duration": round(float(expected_duration), 3),
                   "width": width, "height": height,
+                  "expected_width": expected_width, "expected_height": expected_height,
                   "video_codec": video.get("codec_name"), "audio_codec": audio.get("codec_name"),
                   "black_ratio": black_ratio, "freeze_ratio": freeze.get("ratio"),
                   "longest_freeze": freeze.get("longest"),
@@ -728,10 +790,19 @@ def _transcribe_in_chunks(local: str, work: str, total: float,
     return _normalize_word_timings(combined, total=total)
 
 
-def framing_filter(mode, face_x=.5):
+def framing_filter(mode, face_x=.5, width=None, height=None):
     if mode == "fit":
-        return ("scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x18202b,setsar=1")
+        # When dimensions are supplied by fit_output_dimensions(), both source
+        # orientations are rendered on a matching canvas (landscape stays
+        # landscape; portrait stays portrait). The no-dimensions form remains
+        # useful for callers that simply want an even-sized, uncropped frame.
+        if width is None or height is None:
+            return "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
+        if (type(width) is not int or type(height) is not int
+                or width < 2 or height < 2 or width % 2 or height % 2):
+            raise ValueError("fit framing dimensions must be positive even integers")
+        return (f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x18202b,setsar=1")
     if mode != "face-crop":
         raise ValueError("framing must be fit or face-crop")
     return ("crop='min(iw,ih*9/16)':ih:"
@@ -860,6 +931,12 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
     local = resolve_input(source, work, rights_confirmed=rights_confirmed,
                           source_rights=source_rights)
     total = _duration(local)
+    if framing == "fit":
+        output_width, output_height = fit_output_dimensions(local)
+        caption_aspect = "9:16" if output_height > output_width else "16:9"
+    else:
+        output_width, output_height = 1080, 1920
+        caption_aspect = "9:16"
     emit("Transcribing and timing speech", 18)
     words = (_transcribe_in_chunks(local, work, total, caption_provider, emit) if language == 'en'
              else _transcribe_in_chunks(local, work, total, caption_provider, emit, language=language))
@@ -947,16 +1024,17 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         emit(f"Rendering highlight {i}/{len(highlights)}", 25 + int(70 * (i-1) / len(highlights)))
         clip_words = _clip_word_timings(words, float(h["start"]), float(h["end"]))
         cap = build_captions(clip_words, os.path.join(work, f"clip_{i:02d}"),
-                             template="OPUS", aspect="9:16", W=1080, H=1920,
+                             template="OPUS", aspect=caption_aspect,
+                             W=output_width, H=output_height,
                              duration=h["duration"])
         if cap.get("warnings"):
             h["caption_warnings"] = cap["warnings"]
             emit("Caption timing needs review", 25 + int(70 * (i-1) / len(highlights)),
                  "; ".join(cap["warnings"]))
         face_x = _face_crop_x(local, h["start"], h["duration"]) if framing == "face-crop" else .5
-        # Crop to 9:16 around the median detected speaker position.  Clamp x so
-        # FFmpeg never requests pixels outside the source frame.
-        vf = framing_filter(framing, face_x)
+        # Face-crop makes a vertical 9:16 short. Fit uses a source-matched
+        # canvas and retains the video's display orientation/aspect ratio.
+        vf = framing_filter(framing, face_x, width=output_width, height=output_height)
         ass = os.path.abspath(cap["ass"]).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         from .render.ffmpeg_renderer import _fontsdir, _esc_filter_path
         font_dir = _fontsdir()
@@ -988,7 +1066,9 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
             raise RuntimeError("FFmpeg clip render failed: " + (p.stderr or "")[-900:])
         emit(f"Quality checking highlight {i}/{len(highlights)}",
              25 + int(70 * (i-.35) / len(highlights)), os.path.basename(out))
-        qc = _clip_qc_report(out, h["duration"], h.get("score", 0), len(clip_words))
+        qc = _clip_qc_report(
+            out, h["duration"], h.get("score", 0), len(clip_words),
+            (output_width, output_height))
         qc_path = os.path.splitext(out)[0] + ".qc.json"
         with open(qc_path, "w", encoding="utf-8") as qf:
             json.dump(qc, qf, indent=2, ensure_ascii=False)
@@ -1005,6 +1085,10 @@ def create_highlight_clips(source: str, output_dir: str, count: int = 3,
         h["caption_ass_path"] = os.path.abspath(cap["ass"]) if cap.get("ass") else ""
         h["face_center_x"] = round(face_x, 3)
         h["framing"] = framing
+        h["output_width"] = output_width
+        h["output_height"] = output_height
+        h["output_orientation"] = ("portrait" if output_height > output_width else
+                                   "landscape" if output_width > output_height else "square")
         h["quality_score"] = qc["quality_score"]
         h["qc"] = qc
         if qc["decision"] == "BLOCK":

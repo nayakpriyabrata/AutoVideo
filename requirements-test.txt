@@ -12,7 +12,7 @@ python-dotenv>=1.0.0
 moviepy==1.0.3
 imageio-ffmpeg>=0.4.9
 playwright>=1.40
-streamlit>=1.32,<2  # Real form/option regressions; no server or provider calls.
+streamlit>=1.50,<2  # Real form/option regressions; width="stretch" API; no server or provider calls.
 
 uharfbuzz>=0.40
 freetype-py>=2.4

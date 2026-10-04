@@ -24,8 +24,8 @@ ROOT_FILES = {"VERSION", ".env.example", ".gitignore", "app.py", "cli.py", "requ
 SOURCE_DIRS = {"engine", "config", "chrome_extension", "tests", "tools", ".github", "assets"}
 SOURCE_SUFFIXES = ROOT_SUFFIXES | {".json", ".js", ".css", ".html", ".example", ".svg", ".png", ".jpg", ".jpeg"}
 EXCLUDED_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".cache", ".local",
-                 ".flow-profile", ".gemini-profile", ".movieflow-profile", "cookies", "credentials",
-                 "outputs", "data", "releases", "node_modules", "build", "dist"}
+                 ".flow-profile", ".flow-workers", ".gemini-profile", ".movieflow-profile",
+                 "cookies", "credentials", "outputs", "data", "releases", "node_modules", "build", "dist"}
 EXCLUDED_FILES = {".flow_session.json", "config/user_settings.yaml", "config/user_settings.yml"}
 
 

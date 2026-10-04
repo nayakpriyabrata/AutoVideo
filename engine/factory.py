@@ -92,6 +92,7 @@ class Factory:
         self.pm.log(m.job_id, "flow_request_failed_without_pause", {
             "shot": shot_id, "project_url": project_url,
             "error_type": type(error).__name__,
+            "error": " ".join(str(error).split())[:1200],
         })
 
     def _archive_flow_request_for_fallback(self, out_path: str) -> str:
@@ -167,6 +168,7 @@ class Factory:
                    tts_provider: str = "auto", images_per_shot: int = 2,
                    video_share: float = 0.20, stock_share: float = 0.60,
                    flow_scenes: int | None = None, max_flow_scenes: int | None = None, frame_source: str = "auto",
+                   flow_video_mode: str = "frames",
                    flow_approval: str = "once", max_generation_credits: int = 10,
                    shot_max_seconds: float | None = None, flow_frame_retries: int = 3,
                    network_wait_seconds: int = 300, flow_capacity_wait_seconds: int = 900,
@@ -250,6 +252,7 @@ class Factory:
                     "images_per_shot": images_per_shot,
                     "video_share": float(video_share), "stock_share": float(stock_share),
                     "flow_scenes": flow_scenes, "max_flow_scenes": max_flow_scenes, "frame_source": frame_source,
+                    "flow_video_mode": str(flow_video_mode or "frames"),
                     "flow_approval": flow_approval,
                     "max_generation_credits": int(max_generation_credits),
                     "shot_max_seconds": shot_max_seconds,
@@ -326,6 +329,7 @@ class Factory:
                     "movieflow_recovery_wait_seconds": 300,
                     "images_per_shot": 2, "video_share": 0.20, "stock_share": 0.60,
                     "flow_scenes": None, "max_flow_scenes": None, "frame_source": "auto",
+                    "flow_video_mode": "frames",
                     "flow_approval": "once", "max_generation_credits": 10,
                     "shot_max_seconds": None, "flow_frame_retries": 3,
                     "network_wait_seconds": 300, "flow_capacity_wait_seconds": 900,
@@ -357,7 +361,7 @@ class Factory:
                 merged["tts_provider"] = g.get("tts_provider", "auto")
                 merged["monthly_credits"] = g.get("monthly_credits")
                 merged["images_per_shot"] = int(g.get("images_per_shot", 2) or 0)
-                for key in ("cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds", "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes", "max_flow_scenes", "frame_source",
+                for key in ("cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds", "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes", "max_flow_scenes", "frame_source", "flow_video_mode",
                             "flow_approval", "max_generation_credits", "shot_max_seconds",
                             "flow_frame_retries", "network_wait_seconds",
                             "flow_capacity_wait_seconds", "flow_capacity_retries",
@@ -384,7 +388,7 @@ class Factory:
             merged["tts_provider"] = j.get("tts_provider", merged["tts_provider"])
             if "images_per_shot" in j:
                 merged["images_per_shot"] = int(j["images_per_shot"] or 0)
-            for key in ("cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds", "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes", "max_flow_scenes", "frame_source",
+            for key in ("cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds", "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes", "max_flow_scenes", "frame_source", "flow_video_mode",
                         "flow_approval", "max_generation_credits", "shot_max_seconds",
                         "flow_frame_retries", "network_wait_seconds",
                         "flow_capacity_wait_seconds", "flow_capacity_retries",
@@ -1168,7 +1172,8 @@ class Factory:
         try:
             self._generate_all(m, D, refs, router, vertical, dry, prog, settings)
         except FlowRequestFailed as e:
-            prog("❌ Flow request recovery failed; automatic pause is disabled.", 82)
+            detail = " ".join(str(e).split())[:1200]
+            prog(f"❌ Flow request recovery failed; no replacement generation was submitted. {detail}", 82)
             return {"job_id": job_id, "status": "failed", "message": str(e),
                     "resume": f"python3 cli.py v3 resume {job_id}"}
 
@@ -1428,10 +1433,13 @@ class Factory:
         return None
 
     def _previous_project_video(self, m, project_url: str, shot_id: str,
-                                reuse_mode: str) -> str | None:
-        """Return a previously accepted *Flow* video for the same reusable shot."""
-        for jobroot, manifest, _ in self._external_project_jobs(
+                                reuse_mode: str, video_mode: str = "frames") -> str | None:
+        """Return a prior *Flow* video generated with the same input mode."""
+        wanted_mode = str(video_mode or "frames").lower()
+        for jobroot, manifest, old_settings in self._external_project_jobs(
                 project_url, topic=m.topic, aspect=m.aspect, reuse_mode=reuse_mode):
+            if str(old_settings.get("flow_video_mode", "frames") or "frames").lower() != wanted_mode:
+                continue
             if manifest.get("job_id") == m.job_id:
                 continue
             for s in manifest.get("shots", []) or []:
@@ -1589,6 +1597,283 @@ class Factory:
                   "Each scene gets an opening and closing still. When continuity is appropriate, the previous scene's closing frame becomes the next scene's opening frame. Image-only scenes are animated locally with pan/zoom/crossfade, while selected motion-critical scenes use the same frame pair as first/last-frame guidance for Flow when supported."]
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
+
+    def _generate_economy_frames_parallel(self, m, D, refs, vertical: bool,
+                                          settings: dict, prog, tasks: list[dict],
+                                          workers: int, source: str) -> dict[str, str]:
+        """Generate independent Economy storyboard frames in isolated Flow projects.
+
+        Opening frames that inherit a prior closing frame are deliberately not
+        submitted here. Scene pairs stay linked in the serial continuity pass;
+        only independent openings and distinct closing frames enter this queue.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from .providers.flow_browser import (
+            FlowBrowserProvider, PROFILE_DIR, FlowAuthNeeded, FlowQuotaExceeded,
+            FlowRequestPending, FlowServiceBusy, resolve_browser_cfg,
+        )
+        from .providers.image_provider import ImageProvider
+
+        worker_root = os.path.join(D["root"], ".flow-workers")
+        artifact_root = os.path.join(worker_root, "economy-frame-artifacts")
+        os.makedirs(worker_root, exist_ok=True)
+        os.makedirs(artifact_root, exist_ok=True)
+
+        def artifact_path(task):
+            label = "open" if task["label"] == "opening frame" else "close"
+            token = hashlib.sha256(
+                f"{m.job_id}|{task['shot'].shot_id}|{task['label']}|{task['prompt']}|{vertical}".encode()).hexdigest()[:16]
+            return os.path.join(artifact_root,
+                                f"{task['shot'].shot_id}_{label}_{token}.jpg")
+        try:
+            with open("config/flow_ui.yaml", encoding="utf-8") as handle:
+                browser_cfg = resolve_browser_cfg(yaml.safe_load(handle) or {})
+            worker_uses_cdp = (str(browser_cfg.get("mode", "auto")).lower() in ("auto", "cdp")
+                               and bool(browser_cfg.get("cdp_url")))
+        except Exception:
+            worker_uses_cdp = False
+
+        worker_profile_root = os.path.join(
+            os.path.dirname(os.path.abspath(PROFILE_DIR)), ".flow-workers")
+        os.makedirs(worker_profile_root, exist_ok=True)
+
+        def profile_for(index: int) -> str:
+            # Browser profiles stay outside the job folder; only project bindings
+            # and request evidence are kept with the job. FlowBrowser recognizes
+            # isolated workers because each profile is a direct child of this dir.
+            dst = os.path.join(
+                worker_profile_root, f"{m.job_id}-economy-worker-{index + 1}")
+            if worker_uses_cdp:
+                os.makedirs(dst, exist_ok=True)
+            elif not os.path.isdir(dst) and os.path.isdir(PROFILE_DIR):
+                try:
+                    shutil.copytree(PROFILE_DIR, dst, ignore=shutil.ignore_patterns(
+                        "Singleton*", "LOCK", "lockfile", "DevToolsActivePort", "*.tmp"))
+                except Exception:
+                    os.makedirs(dst, exist_ok=True)
+            else:
+                os.makedirs(dst, exist_ok=True)
+            return dst
+
+        by_shot_index = {shot.shot_id: index for index, shot in enumerate(m.shots)}
+        batches = [[] for _ in range(workers)]
+        for task in tasks:
+            index = by_shot_index.get(task["shot"].shot_id, 0) % workers
+            batches[index].append(task)
+        completed_results = []
+        failures = []
+
+        def run_batch(worker_index: int, batch: list[dict]):
+            provider = None
+            free_provider = ImageProvider()
+            outcomes = []
+            project = f"AutoVideo-{m.job_id}-economy-worker-{worker_index + 1}"
+            binding_path = os.path.join(worker_root, f"economy-worker-{worker_index + 1}-project.json")
+            project_url = ""
+
+            def result_for(task, path="", source_name="failed", error="", exception=None):
+                return (task, path, source_name, str(error)[:600], exception, project_url)
+
+            def fallback_or_error(task, error):
+                if isinstance(error, FlowRequestPending) and settings.get(
+                        "flow_pause_on_unresolved_request", False):
+                    return result_for(task, error=str(error), exception=error)
+                if source == "auto":
+                    try:
+                        fallback_compiled = {
+                            "prompt": task["prompt"],
+                            "negative": getattr(task["shot"], "negative", ""),
+                            "project": project, "project_url": project_url,
+                        }
+                        worker_out = artifact_path(task)
+                        path = self._free_image_fallback(
+                            task["shot"], fallback_compiled, worker_out, vertical,
+                            free_provider, label=task["label"])
+                        if os.path.abspath(path) != os.path.abspath(task["out"]):
+                            shutil.copy2(path, task["out"])
+                        if not self._is_valid_image_file(task["out"]):
+                            raise RuntimeError("free fallback did not produce a valid storyboard frame")
+                        return result_for(task, task["out"], "free", f"Flow fallback: {error}")
+                    except Exception as fallback_error:
+                        return result_for(task, error=(
+                            f"Flow failed: {error}; free fallback failed: {fallback_error}"),
+                            exception=fallback_error)
+                return result_for(task, error=str(error), exception=error)
+
+            try:
+                provider = FlowBrowserProvider(profile_dir=profile_for(worker_index))
+                if os.path.isfile(binding_path):
+                    try:
+                        with open(binding_path, encoding="utf-8") as handle:
+                            project_url = str(json.load(handle).get("project_url", "") or "")
+                    except (OSError, ValueError, TypeError):
+                        project_url = ""
+                browser = provider._ensure()
+                browser.ensure_project(project, project_url=project_url or None)
+                project_url = browser.current_project_url()
+                if not project_url:
+                    raise RuntimeError("Parallel Economy worker did not expose its Flow project URL")
+                temporary = binding_path + ".tmp"
+                with open(temporary, "w", encoding="utf-8") as handle:
+                    json.dump({"project_url": project_url}, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, binding_path)
+
+                max_attempts = max(1, int(settings.get("flow_frame_retries", 3) or 3))
+                capacity_wait = int(settings.get("flow_capacity_wait_seconds", 900) or 900)
+                capacity_retries = int(settings.get("flow_capacity_retries", 8) or 8)
+                master_refs = [path for role in ("character", "location")
+                               for path in refs.get(role)
+                               if path and os.path.isfile(path)][:3]
+                for task in batch:
+                    shot, prompt, out_path, label = (
+                        task["shot"], task["prompt"], task["out"], task["label"])
+                    worker_out = artifact_path(task)
+                    os.makedirs(os.path.dirname(os.path.abspath(worker_out)), exist_ok=True)
+                    if self._is_valid_image_file(worker_out):
+                        if os.path.abspath(worker_out) != os.path.abspath(out_path):
+                            shutil.copy2(worker_out, out_path)
+                        fallback_archive = glob.glob(worker_out + ".flow-request.fallback*.json")
+                        recovered_source = "free" if fallback_archive else "flow-parallel-recovered"
+                        outcomes.append(result_for(task, out_path, recovered_source))
+                        continue
+                    paired_open = task.get("paired_open_path", "")
+                    references = list(master_refs)
+                    if paired_open and self._is_valid_image_file(paired_open):
+                        references.append(paired_open)
+                    compiled = {
+                        "prompt": prompt,
+                        "negative": getattr(shot, "negative", ""),
+                        "project": project,
+                        "project_url": project_url,
+                        "approval": "once",
+                        "max_generation_credits": 0,
+                        "flow_reuse_project_media": True,
+                        "flow_capacity_wait_seconds": capacity_wait,
+                        "flow_capacity_retries": capacity_retries,
+                        "reference_paths": references[:4],
+                    }
+                    attempt = 1
+                    errors = []
+                    generated = False
+                    network_recoveries = 0
+                    browser_recoveries = 0
+                    while attempt <= max_attempts:
+                        try:
+                            result = provider.generate_image(
+                                shot, compiled, worker_out, vertical, dry_run=False)
+                            candidate = result.get("path") or ""
+                            if candidate and self._is_valid_image_file(candidate):
+                                if os.path.abspath(candidate) != os.path.abspath(out_path):
+                                    shutil.copy2(candidate, out_path)
+                                if not self._is_valid_image_file(out_path):
+                                    raise RuntimeError("Flow worker frame copy was corrupt/incomplete")
+                                outcomes.append(result_for(task, out_path, "flow-parallel"))
+                                generated = True
+                                break
+                            if candidate and os.path.exists(candidate):
+                                self._remove_invalid_image(candidate)
+                            error = RuntimeError(result.get("error", "Flow returned no valid still"))
+                        except FlowRequestPending as error:
+                            outcomes.append(fallback_or_error(task, error))
+                            break
+                        except FlowServiceBusy as error:
+                            outcomes.append(fallback_or_error(task, error))
+                            break
+                        except (FlowAuthNeeded, FlowQuotaExceeded) as error:
+                            outcomes.append(fallback_or_error(task, error))
+                            break
+                        except Exception as error:
+                            try:
+                                transient_browser = (provider.is_browser_closed_error(error)
+                                                     if hasattr(provider, "is_browser_closed_error") else False)
+                                if (transient_browser and browser_recoveries < 2
+                                        and provider.recover_browser(project, project_url=project_url)):
+                                    browser_recoveries += 1
+                                    continue
+                                transient_network = (provider.is_transient_network_error(error)
+                                                     if hasattr(provider, "is_transient_network_error") else False)
+                                if (transient_network and network_recoveries < 3
+                                        and provider.recover_network(
+                                            project, timeout_s=max(15, int(settings.get(
+                                                "network_wait_seconds", 300) or 300)),
+                                            project_url=project_url)):
+                                    network_recoveries += 1
+                                    continue
+                            except Exception:
+                                pass
+                        errors.append(f"attempt {attempt}: {type(error).__name__}: {error}")
+                        if attempt < max_attempts:
+                            time.sleep(min(6.0, 1.5 * attempt))
+                        attempt += 1
+                    if generated:
+                        continue
+                    if outcomes and outcomes[-1][0] is task:
+                        # The handler above already recorded a pending/strict error
+                        # or a successful free fallback for this exact frame.
+                        if outcomes[-1][4] is not None or outcomes[-1][1]:
+                            continue
+                    detail = "; ".join(errors) or "Flow worker did not return an image"
+                    outcomes.append(fallback_or_error(task, RuntimeError(detail[-900:])))
+            except Exception as error:
+                # A worker bootstrap failure is still bounded to its assigned
+                # frames. Auto mode may use the configured free fallback; strict
+                # Flow mode leaves these frames failed rather than changing source.
+                for task in batch:
+                    outcomes.append(fallback_or_error(task, error))
+            finally:
+                if provider is not None:
+                    try:
+                        provider.close()
+                    except Exception:
+                        pass
+            return outcomes
+
+        active_batches = [(index, batch) for index, batch in enumerate(batches) if batch]
+        total = len(tasks)
+        prog(f"🖼️ Storyboard Economy: generating {total} independent frame(s) with "
+             f"{len(active_batches)} isolated Flow worker(s); continuity-linked openings stay ordered.", 25)
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="flow-economy-frame") as pool:
+            futures = [pool.submit(run_batch, index, batch) for index, batch in active_batches]
+            completed = 0
+            for future in as_completed(futures):
+                for task, path, source_name, error, exception, project_url in future.result():
+                    completed += 1
+                    record = {"shot": task["shot"].shot_id, "label": task["label"],
+                              "source": source_name, "path": path,
+                              "worker_project_url": project_url, "error": error}
+                    self.pm.log(m.job_id, "economy_parallel_frame", record)
+                    if path and self._is_valid_image_file(path):
+                        completed_results.append((task, path, source_name))
+                    else:
+                        failures.append((task, error or "no valid frame", exception, project_url))
+                    prog(f"🖼️ Storyboard frames completed {completed}/{total}",
+                         25 + 4 * completed / max(1, total))
+
+        pending = next((failure for failure in failures
+                        if isinstance(failure[2], FlowRequestPending)), None)
+        if pending:
+            task, error_text, exception, project_url = pending
+            if settings.get("flow_pause_on_unresolved_request", False):
+                self._pause_pending_flow(m, task["shot"].shot_id, exception,
+                                         project_url=project_url)
+            self._fail_pending_flow(m, task["shot"].shot_id, exception,
+                                    project_url=project_url)
+            raise RuntimeError(
+                f"Flow request for {task['shot'].shot_id} {task['label']} remains unresolved. "
+                "No replacement generation was submitted; the exact request remains available for Resume. "
+                + str(error_text)[-700:]) from exception
+        if failures:
+            task, error_text, exception, _project_url = failures[0]
+            strict_prefix = "Strict --frame-source flow: " if source == "flow" else ""
+            message = (f"{strict_prefix}Storyboard Economy parallel frame failed for "
+                       f"{task['shot'].shot_id} {task['label']}: {error_text}")
+            if exception:
+                raise RuntimeError(message) from exception
+            raise RuntimeError(message)
+        return {os.path.abspath(path): source_name
+                for task, path, source_name in completed_results}
 
     def _generate_economy_frames(self, m, D, refs, vertical: bool, settings: dict, bible: dict, prog):
         """Create continuity-first opening/closing stills for every scene.
@@ -1793,6 +2078,98 @@ class Factory:
                 if source == "flow":
                     raise
 
+        # Parallelize only frames that do not depend on the previous scene's
+        # closing-frame identity. Continuity-linked openings are copied later in
+        # the story-ordered pass; each selected video scene still keeps its own
+        # opening/closing pair (long-form single-frame optimization excepted).
+        parallel_sources = {}
+        frame_workers = max(1, min(3, int(settings.get("flow_image_workers", 1) or 1)))
+        if frame_workers > 1 and source in ("auto", "flow"):
+            parallel_tasks = []
+            main_project_url = self._flow_project_url(m.job_id, settings)
+
+            def plan_parallel_frame(shot, prompt, out_path, label, paired_open_path=""):
+                if self._remove_invalid_image(out_path):
+                    prog(f"🧹 {shot.shot_id} {label}: removed corrupt/incomplete cached image.", 25)
+                if self._is_valid_image_file(out_path):
+                    return
+                if reuse_project_media and main_project_url:
+                    cached = self._flow_frame_cache_get(main_project_url, prompt, vertical, label)
+                    if cached:
+                        try:
+                            shutil.copy2(cached, out_path)
+                            if self._is_valid_image_file(out_path):
+                                parallel_sources[os.path.abspath(out_path)] = "flow-project-cache"
+                                self.pm.log(m.job_id, "flow_frame_cache_hit", {
+                                    "shot": shot.shot_id, "label": label,
+                                    "project_url": main_project_url, "mode": "exact"})
+                                return
+                        except Exception:
+                            self._remove_invalid_image(out_path)
+                    reuse_mode = str(settings.get("flow_reuse_mode", "exact") or "exact").lower()
+                    previous = self._previous_project_frame(
+                        m, main_project_url, shot.shot_id, label, reuse_mode)
+                    if previous:
+                        try:
+                            shutil.copy2(previous, out_path)
+                            if self._is_valid_image_file(out_path):
+                                self._flow_frame_cache_put(
+                                    main_project_url, prompt, vertical, label, out_path, m.job_id)
+                                parallel_sources[os.path.abspath(out_path)] = (
+                                    f"flow-project-{reuse_mode}-reuse")
+                                self.pm.log(m.job_id, "flow_project_existing_frame_reuse", {
+                                    "shot": shot.shot_id, "label": label,
+                                    "project_url": main_project_url, "mode": reuse_mode,
+                                    "source": previous})
+                                return
+                        except Exception:
+                            self._remove_invalid_image(out_path)
+                parallel_tasks.append({"shot": shot, "prompt": prompt,
+                                       "out": out_path, "label": label,
+                                       "paired_open_path": paired_open_path})
+
+            planned_previous_close = False
+            planned_previous_shot = None
+            refresh_coverages = {"hook", "insert", "broll", "hero_outro"}
+            for planned_shot in m.shots:
+                if planned_shot.status not in ("planned", "approved", "failed"):
+                    prior_close = getattr(planned_shot, "closing_frame", None)
+                    if self._is_valid_image_file(prior_close):
+                        planned_previous_close = True
+                    continue
+                planned_open = os.path.join(
+                    D["storyboard"], f"{planned_shot.shot_id}_open.jpg")
+                planned_close = os.path.join(
+                    D["storyboard"], f"{planned_shot.shot_id}_close.jpg")
+                same_environment = bool(
+                    planned_previous_shot and
+                    self._norm_prompt_key(getattr(planned_previous_shot, "environment", "")) ==
+                    self._norm_prompt_key(getattr(planned_shot, "environment", "")))
+                uses_previous_close = bool(
+                    planned_previous_close and same_environment and
+                    getattr(planned_shot, "coverage", "primary") not in refresh_coverages)
+                if not uses_previous_close and not self._is_valid_image_file(planned_open):
+                    plan_parallel_frame(
+                        planned_shot,
+                        frame_prompt(planned_shot, bible, vertical, "open"),
+                        planned_open, "opening frame")
+                skip_planned_close = bool(
+                    longform_single_frame
+                    and getattr(planned_shot, "provider", "") not in ("flow", "movieflow")
+                    and not self._is_valid_image_file(planned_close))
+                if not skip_planned_close and not self._is_valid_image_file(planned_close):
+                    plan_parallel_frame(
+                        planned_shot,
+                        frame_prompt(planned_shot, bible, vertical, "close"),
+                        planned_close, "closing frame", paired_open_path=planned_open)
+                planned_previous_close = bool(
+                    self._is_valid_image_file(planned_close) or not skip_planned_close)
+                planned_previous_shot = planned_shot
+            if parallel_tasks:
+                parallel_sources.update(self._generate_economy_frames_parallel(
+                    m, D, refs, vertical, settings, prog, parallel_tasks,
+                    frame_workers, source))
+
         previous_close = None
         previous_shot = None
         for i, s in enumerate(m.shots):
@@ -1834,7 +2211,7 @@ class Factory:
                      min(29, 25 + int(4 * (i + 1) / max(1, len(m.shots)))))
                 _, open_src = gen(frame_prompt(s, bible, vertical, "open"), open_path, s, "opening frame")
             else:
-                open_src = "cached"
+                open_src = parallel_sources.get(os.path.abspath(open_path), "cached")
 
             # A stale Flow asset selector/cache can accidentally return the
             # generic location master as the shot opening. Do not let a master
@@ -1898,7 +2275,7 @@ class Factory:
                     else:
                         raise
             else:
-                close_src = "cached"
+                close_src = parallel_sources.get(os.path.abspath(close_path), "cached")
 
             # v4.6 could bootstrap a poisoned cache created by older Flow asset
             # selection bugs. In the reported run shot_001_open.jpg and
@@ -2132,10 +2509,14 @@ class Factory:
                                and bool(browser_cfg.get("cdp_url")))
         except Exception:
             worker_uses_cdp = False
-        # Bootstrap a worker's persistent profile once. Lock/socket files must
-        # never be copied from an active Chromium profile.
+        # Browser profiles are private and live outside the job directory. Lock
+        # and socket files must never be copied from an active Chromium profile.
+        profile_root = os.path.join(
+            os.path.dirname(os.path.abspath(PROFILE_DIR)), ".flow-workers")
+        os.makedirs(profile_root, exist_ok=True)
+
         def profile_for(index):
-            dst = os.path.join(worker_root, f"worker-{index + 1}")
+            dst = os.path.join(profile_root, f"{m.job_id}-candidate-worker-{index + 1}")
             if worker_uses_cdp:
                 # These profiles are not used by CDP-attached workers. Avoid
                 # copying a potentially live Chrome profile just to attach tabs.
@@ -2386,6 +2767,7 @@ class Factory:
                         "flow_capacity_retries": int((settings or {}).get("flow_capacity_retries", 8) or 8),
                         "flow_video_ready_grace_seconds": int((settings or {}).get("flow_video_ready_grace_seconds", 20) or 20),
                         "flow_video_recovery_wait_seconds": int((settings or {}).get("flow_video_recovery_wait_seconds", 180) or 180),
+                        "flow_video_mode": str((settings or {}).get("flow_video_mode", "frames") or "frames"),
                         "flow_reuse_project_media": bool((settings or {}).get("flow_reuse_project_media", True)),
                         "flow_reuse_mode": str((settings or {}).get("flow_reuse_mode", "exact") or "exact"),
                         "movieflow_project_url": str((settings or {}).get("movieflow_project_url", "") or ""),
@@ -2416,7 +2798,8 @@ class Factory:
                                     and bool((settings or {}).get("flow_reuse_project_media", True))):
                                 reused_video = self._previous_project_video(
                                     m, compiled.get("project_url", ""), s.shot_id,
-                                    str((settings or {}).get("flow_reuse_mode", "exact") or "exact"))
+                                    str((settings or {}).get("flow_reuse_mode", "exact") or "exact"),
+                                    str(compiled.get("flow_video_mode", "frames") or "frames"))
                             if reused_video:
                                 shutil.copy2(reused_video, take_path)
                                 prog(f"♻️ {s.shot_id}: reused an existing accepted Flow video from this project.", min(82, pct))
@@ -2431,9 +2814,11 @@ class Factory:
                                 if (settings or {}).get("flow_pause_on_unresolved_request", False):
                                     self._pause_pending_flow(m, s.shot_id, e, project_url)
                                 self._fail_pending_flow(m, s.shot_id, e, project_url)
+                                detail = " ".join(str(e).split())[:800]
                                 raise FlowRequestFailed(
                                     f"Flow video request for {s.shot_id} remains unresolved. Automatic pause is off; "
-                                    "no duplicate video generation was submitted. The saved request remains available for explicit Resume.") from e
+                                    "no duplicate video generation was submitted. The saved request remains available for explicit Resume. "
+                                    f"Provider recovery detail: {type(e).__name__}: {detail}") from e
                             # The Flow provider owns post-submit recovery. Do not
                             # start another full recovery timer here; v5.3.2 could
                             # stack multiple 179s waits for one shot. A browser-

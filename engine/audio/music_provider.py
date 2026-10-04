@@ -18,6 +18,47 @@ from .sound_design import pick_music
 PIXABAY_LICENSE_URL = "https://pixabay.com/service/license-summary/"
 
 
+_SEARCH_ERRORS = {
+    "playwright_missing": (
+        "Playwright is not installed in the Python environment running Streamlit. "
+        "Install requirements.txt, then retry or choose a local music file."),
+    "browser_install_missing": (
+        "Playwright Chromium is not installed in this WSL environment. Run "
+        "`python -m playwright install chromium` with the same Python used by Streamlit, then retry."),
+    "browser_launch_failed": (
+        "Chromium could not start for the Pixabay search. Check the WSL browser dependencies "
+        "or set AUTOVIDEO_MEDIA_BROWSER_VISIBLE=1 to inspect the browser, then retry."),
+    "pixabay_unreachable": (
+        "Pixabay could not be reached from this WSL session. Check Internet/proxy access and retry."),
+    "no_track_results": (
+        "Pixabay loaded, but no music item pages were found for this search. Try a concrete term "
+        "such as soft piano background music, or use a local file."),
+    "no_audio_media": (
+        "Pixabay track pages loaded, but their audio preview/download was unavailable. "
+        "Try AUTOVIDEO_MEDIA_BROWSER_VISIBLE=1 or choose a local file."),
+    "download_rejected": (
+        "Pixabay returned links, but they were not valid downloadable audio. "
+        "Check network restrictions or choose a local file."),
+    "browser_failed": (
+        "The isolated Pixabay browser search did not complete. Check WSL network/browser setup "
+        "or choose a local file."),
+    "browser_timeout": (
+        "Pixabay music search exceeded its bounded four-minute limit. Check browser/network access "
+        "or choose a local file."),
+}
+
+
+def _safe_browser_search_error(stderr: str) -> str:
+    """Translate only helper status codes; never echo signed URLs or raw stderr."""
+    prefix = "AUTOVIDEO_MEDIA_SEARCH="
+    for line in str(stderr or "").splitlines():
+        line = line.strip()
+        if line.startswith(prefix):
+            code = line[len(prefix):].strip()
+            return _SEARCH_ERRORS.get(code, _SEARCH_ERRORS["browser_failed"])
+    return _SEARCH_ERRORS["browser_failed"]
+
+
 def _sha256(path: str) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -63,7 +104,7 @@ def ensure_background_music(mood: str, workdir: str, mode: str = "auto") -> dict
     cmd = [sys.executable, "-m", "engine.providers.web_media_helper",
            "music", "--query", query, "--out", out]
     try:
-        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
         if cp.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 30000:
             meta = {}
             try:
@@ -92,26 +133,24 @@ def ensure_background_music(mood: str, workdir: str, mode: str = "auto") -> dict
                 pass
             return media_meta
 
-        # Do not expose subprocess output verbatim: it may contain signed media
-        # URLs. This actionable message includes no request credentials.
-        try:
-            if os.path.isfile(out):
-                os.remove(out)
-        except OSError:
-            pass
-        return {
-            "path": None,
-            "source": "pixabay-browser",
-            "error": "No downloadable Pixabay music was found. Check Internet/browser access and try a more concrete soft-instrumental search term.",
-        }
+        # Translate only the helper's allowlisted status code. Never echo its
+        # raw output: transport errors can contain signed media URLs.
+        error = _safe_browser_search_error(cp.stderr)
+        for path in (out, out + ".part", out + ".source.json"):
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        return {"path": None, "source": "pixabay-browser", "error": error}
+    except subprocess.TimeoutExpired:
+        error = _SEARCH_ERRORS["browser_timeout"]
     except Exception as exc:
+        error = f"Pixabay music search failed ({type(exc).__name__}). Check WSL browser dependencies or use a local track."
+    for path in (out, out + ".part", out + ".source.json"):
         try:
-            if os.path.isfile(out):
-                os.remove(out)
+            if os.path.isfile(path):
+                os.remove(path)
         except OSError:
             pass
-        return {
-            "path": None,
-            "source": "pixabay-browser",
-            "error": f"Pixabay music search failed ({type(exc).__name__}). Check Internet/browser dependencies or use a local track.",
-        }
+    return {"path": None, "source": "pixabay-browser", "error": error}

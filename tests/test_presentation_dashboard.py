@@ -32,6 +32,11 @@ def dashboard(tmp_path, monkeypatch):
     return f, AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=30).run()
 
 
+def test_dashboard_uses_streamlit_width_argument_instead_of_deprecated_flag():
+    source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    assert "use_container_width=" not in source
+
+
 def test_sidebar_navigation_groups_pages_into_workspaces(tmp_path, monkeypatch):
     _, app = dashboard(tmp_path, monkeypatch)
     workspace = next(w for w in app.sidebar.selectbox if w.label == "Workspace")

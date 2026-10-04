@@ -22,11 +22,13 @@ from ..runtime_log import runtime_print as print
 from .base import VideoProvider, ProviderStatus, FlowState
 
 
-def media_signature_matches(left, right):
-    """Compare the same media URL/kind, independent of tile size and label.
+def media_signature_matches(left, right, *, ignore_kind: bool = False):
+    """Compare media identity independent of tile size and label.
 
     Old journals include viewport dimensions. Never match on a generic prompt,
     DOM position or newest tile. Signed URL normalization requires a stable ID.
+    ``ignore_kind`` is reserved for diagnosing a stale queued-thumbnail signature;
+    it must not be used to authorize downloading or accepting an asset.
     """
     if left == right and left:
         return True
@@ -35,7 +37,7 @@ def media_signature_matches(left, right):
         try:
             tag, src, tail = str(sig).split('|', 2)
             _, kind, width, height = tail.rsplit('|', 3)
-            if tag not in ('IMG', 'VIDEO') or kind not in ('image', 'video') or not src:
+            if tag not in ('IMG', 'VIDEO') or kind not in ('image', 'video', 'pending') or not src:
                 return None
             float(width); float(height)
             u = urlsplit(src)
@@ -51,7 +53,9 @@ def media_signature_matches(left, right):
         except (ValueError, TypeError):
             return None
     a, b = identity(left), identity(right)
-    return a is not None and a == b
+    if a is None or b is None:
+        return False
+    return a[0] == b[0] if ignore_kind else a == b
 
 
 def media_signature_kind(signature):
@@ -59,13 +63,35 @@ def media_signature_kind(signature):
     try:
         tag, src, tail = str(signature).split('|', 2)
         _, kind, width, height = tail.rsplit('|', 3)
-        if tag.upper() not in ('IMG', 'VIDEO') or kind.lower() not in ('image', 'video') or not src:
+        if tag.upper() not in ('IMG', 'VIDEO') or kind.lower() not in ('image', 'video', 'pending') or not src:
             return None
         float(width)
         float(height)
         return kind.lower()
     except (ValueError, TypeError):
         return None
+
+
+_FLOW_QUEUE_STATUS_RE = re.compile(
+    r"(?:"
+    r"(?:video|image|generation|request).{0,100}(?:scheduled|queued|waiting\s+(?:in\s+)?the\s+queue)|"
+    r"(?:scheduled|queued).{0,100}(?:waiting\s+(?:in\s+)?the\s+queue|high\s+demand)|"
+    r"waiting\s+(?:in\s+)?the\s+queue|queued\s+due\s+to\s+high\s+demand|"
+    r"scheduled\s+and\s+waiting\s+in\s+queue|"
+    r"your\s+video\s+has\s+been\s+scheduled"
+    r")",
+    re.I,
+)
+
+
+def _is_flow_queue_status(text: str) -> bool:
+    """Recognize Flow's accepted-but-not-rendered queue cards.
+
+    The Agent may render the queue card with an image thumbnail. That thumbnail
+    is not a playable clip and must not be promoted to a video merely because the
+    surrounding card says "your video".
+    """
+    return bool(_FLOW_QUEUE_STATUS_RE.search(str(text or "")))
 
 
 def find_system_chrome() -> str | None:
@@ -1726,11 +1752,18 @@ class FlowBrowser:
         """Classify a Flow tile from its own video controls/labels, not DOM order."""
         text = " ".join(str(value or "") for value in (src, alt, hints)).lower()
         video_url = bool(re.search(r"\.(?:mp4|webm|mov|m4v)(?:$|[?#])", str(src or ""), re.I))
+        tag_is_video = str(tag or "").lower() == "video"
+        # Flow's high-demand card contains an image thumbnail and the word
+        # "video". It is a queued request, not a completed media tile. Only a
+        # literal video element overrides that state; a URL or play/resolution
+        # badge alone is not enough while the card explicitly says it is queued.
+        if _is_flow_queue_status(text) and not tag_is_video:
+            return "pending"
         video_hint = bool(re.search(
             r"\bvideo\b|video preview|generated video|smart[_\s-]?display|"
             r"play(?:[_\s-]?(?:arrow|circle|circle_filled))?|(?:^|\W)movie(?:\W|$)",
             text, re.I))
-        if (str(tag or "").lower() == "video" or has_video_node or has_play
+        if (tag_is_video or has_video_node or has_play
                 or has_resolution or video_url or video_hint):
             return "video"
         return "image"
@@ -1837,7 +1870,8 @@ class FlowBrowser:
         # running rather than repeatedly clicking an old Retry card.
         progress_markers = (
             "generation in progress", "creating video", "creating image",
-            "generating", "pending",
+            "generating", "pending", "waiting in the queue",
+            "scheduled and is waiting", "scheduled and waiting", "queued due to high demand",
         )
         newest_progress = max((body.rfind(x) for x in progress_markers), default=-1)
         if newest_progress > newest_busy[0]:
@@ -1935,8 +1969,12 @@ class FlowBrowser:
                 before_count = 0
         self._generation_baseline_signatures = set(baseline or ())
         self.last_generated_asset_signature = None
+        self.last_agent_queue_observed = False
+        self.last_agent_queue_elapsed_s = 0.0
         wanted = str(required_kind or "").strip().lower() or None
         saw_busy = False
+        queue_wait_started_at = None
+        last_queue_heartbeat = 0.0
         untyped_ready_at = None
         video_candidate_sig = None
         video_candidate_since = None
@@ -1990,61 +2028,102 @@ class FlowBrowser:
             busy = any(x in body for x in (
                 "pending", "generating", "creating video", "creating image",
                 "generation in progress", "rendering video", "making your video"))
-            saw_busy = saw_busy or busy
 
+            matching = []
+            new_assets = []
+            queue_assets = []
             if baseline is not None:
                 assets = self.media_assets()
                 new_assets = [a for a in assets if a.get("sig") and not any(
                     media_signature_matches(a["sig"], old) for old in baseline)]
-                if new_assets:
-                    matching = new_assets
-                    if wanted:
-                        matching = [a for a in new_assets if str(a.get("kind", "")).lower() == wanted]
-                    if matching:
-                        if wanted == "video":
-                            untyped_ready_at = None
-                            untyped_warning_logged = False
-                        sig = str(matching[-1].get("sig"))
-                        if wanted == "video":
-                            # A real video card should stop changing before we click
-                            # into it/download it. This is a small stability window,
-                            # not an additional generation timeout.
-                            if sig != video_candidate_sig:
-                                video_candidate_sig = sig
-                                video_candidate_since = time.time()
-                                if not announced_wait:
-                                    print("[Flow] Video tile detected; waiting briefly for Flow to finish the playable/download-ready asset...")
-                                    announced_wait = True
-                            elif not busy and video_candidate_since is not None and time.time() - video_candidate_since >= 3.0:
-                                self.last_generated_asset_signature = sig
-                                self._set(FlowState.GENERATION_COMPLETE)
-                                return True
-                        elif saw_busy or not busy:
-                            self.last_generated_asset_signature = sig
-                            self._set(FlowState.GENERATION_COMPLETE)
-                            return True
+                matching = new_assets
+                if wanted:
+                    matching = [a for a in new_assets if str(a.get("kind", "")).lower() == wanted]
+                queue_assets = [a for a in new_assets
+                                if str(a.get("kind", "")).lower() == "pending"]
 
-                    # Flow may add a still/poster before it exposes the video card.
-                    # Keep polling, but never turn that image into the identity of
-                    # the pending video request, even after the grace period.
-                    if wanted == "video" and not busy and not matching:
-                        if untyped_ready_at is None:
-                            untyped_ready_at = time.time()
-                            if not announced_wait:
-                                print(f"[Flow] Fresh media appeared; waiting up to {grace}s for an explicit video tile...")
-                                announced_wait = True
-                        elif (time.time() - untyped_ready_at >= grace
-                              and not untyped_warning_logged):
-                            print("[Flow] Fresh media is still image-only/untyped; it is not eligible as a video. Continuing to wait for explicit video evidence.")
-                            untyped_warning_logged = True
-                    elif wanted != "video":
-                        untyped_ready_at = None
-                else:
+            # The Flow Agent can show a thumbnail inside an "accepted / waiting in
+            # queue" card. That thumbnail is not a completed asset. Only wait on
+            # a queue card when no requested-kind media is present; an actual new
+            # playable video tile is allowed to proceed even if old queue text is
+            # still visible elsewhere in the project history.
+            queue_pending = bool(not matching and (
+                queue_assets or (wanted == "video" and _is_flow_queue_status(body))))
+            if queue_pending:
+                busy = True
+                saw_busy = True
+                self.last_agent_queue_observed = True
+                if queue_wait_started_at is None:
+                    queue_wait_started_at = now
+                    print("[Flow] Flow accepted the request but it is still scheduled in the high-demand queue. "
+                          "Waiting for this same request to finish; no download or replacement generation will be attempted while queued.")
+                elapsed = max(0.0, now - queue_wait_started_at)
+                self.last_agent_queue_elapsed_s = elapsed
+                if now - last_queue_heartbeat >= 30.0:
+                    remaining = max(0, int(deadline - now))
+                    print(f"[Flow] Queue wait heartbeat: elapsed={int(elapsed)}s remaining={remaining}s; "
+                          "the queued thumbnail is not treated as a generated video.")
+                    last_queue_heartbeat = now
+                video_candidate_sig = None
+                video_candidate_since = None
+            else:
+                queue_wait_started_at = None
+
+            saw_busy = saw_busy or busy
+
+            if matching:
+                if wanted == "video":
                     untyped_ready_at = None
                     untyped_warning_logged = False
-                    video_candidate_sig = None
-                    video_candidate_since = None
-            else:
+                sig = str(matching[-1].get("sig"))
+                if wanted == "video":
+                    # A real video card should stop changing before we click
+                    # into it/download it. This is a small stability window,
+                    # not an additional generation timeout.
+                    if sig != video_candidate_sig:
+                        video_candidate_sig = sig
+                        video_candidate_since = now
+                        if not announced_wait:
+                            print("[Flow] Explicit video tile detected; checking this exact asset after a brief stability window...")
+                            announced_wait = True
+                    elif video_candidate_since is not None and now - video_candidate_since >= 3.0:
+                        # A new, typed video tile is stronger evidence than broad
+                        # page text such as "pending" or "generating". The Agent
+                        # keeps old turns/status cards in its DOM, so requiring the
+                        # *entire page* to become idle can strand an already-present
+                        # video until the 15-minute generation timeout. Continue to
+                        # the exact-signature download and media validation instead;
+                        # if it is not playable yet, bounded download-only recovery
+                        # will retain the request without submitting another video.
+                        self.last_generated_asset_signature = sig
+                        self._set(FlowState.GENERATION_COMPLETE)
+                        return True
+                elif saw_busy or not busy:
+                    self.last_generated_asset_signature = sig
+                    self._set(FlowState.GENERATION_COMPLETE)
+                    return True
+
+            # Flow may add a still/poster before it exposes the video card.
+            # Keep polling, but never turn that image into the identity of the
+            # pending video request, even after the grace period.
+            if wanted == "video" and new_assets and not busy and not matching:
+                if untyped_ready_at is None:
+                    untyped_ready_at = now
+                    if not announced_wait:
+                        print(f"[Flow] Fresh media appeared; waiting up to {grace}s for an explicit video tile...")
+                        announced_wait = True
+                elif (now - untyped_ready_at >= grace and not untyped_warning_logged):
+                    print("[Flow] Fresh media is still image-only/untyped; it is not eligible as a video. Continuing to wait for explicit video evidence.")
+                    untyped_warning_logged = True
+            elif wanted != "video":
+                untyped_ready_at = None
+
+            if baseline is not None and not new_assets:
+                untyped_ready_at = None
+                untyped_warning_logged = False
+                video_candidate_sig = None
+                video_candidate_since = None
+            elif baseline is None:
                 now_assets = self.media_asset_count()
                 if now_assets > before_count and wanted != "video" and (saw_busy or not busy):
                     self._set(FlowState.GENERATION_COMPLETE)
@@ -3009,6 +3088,8 @@ class FlowBrowser:
             "pending", "generating", "creating image", "creating video",
             "generation in progress", "rendering video", "making your video",
             "i'm going to generate", "i’m going to generate",
+            "waiting in the queue", "scheduled and is waiting",
+            "scheduled and waiting", "queued due to high demand",
         )
         newest_progress = max((tail.rfind(x) for x in progress_markers), default=-1)
 
@@ -3581,6 +3662,22 @@ class FlowBrowserProvider(VideoProvider):
         request["signature"] = str(signature or "")
         self._save_request(out_path, request)
 
+    def _record_queue_observation(self, out_path, elapsed_s: float = 0):
+        """Persist that Flow exposed an accepted queue card for this request."""
+        journal = out_path + ".flow-request.json"
+        try:
+            with open(journal, encoding="utf-8") as handle:
+                request = json.load(handle)
+            request["queue_detected"] = True
+            request["last_queue_observed_at"] = time.time()
+            request["queue_wait_elapsed_s"] = max(
+                int(request.get("queue_wait_elapsed_s", 0) or 0), int(elapsed_s or 0))
+            self._save_request(out_path, request)
+        except (OSError, ValueError, TypeError):
+            # A missing journal is not permission to resubmit; the outer request
+            # guard will report the unresolved provider result independently.
+            return
+
     def _asset_valid(self, path, kind):
         if kind == "video":
             return self._is_valid_video_file(path)
@@ -3728,7 +3825,15 @@ class FlowBrowserProvider(VideoProvider):
             except (FlowAuthNeeded, FlowQuotaExceeded):
                 raise
             except Exception as exc:
-                print(f"[Flow] Missing-image replacement could not complete: {type(exc).__name__}")
+                # The previous log kept only the exception class, hiding which
+                # sidecar disappeared during an allowed one-time replacement.
+                # Keep useful diagnostics without printing a user-specific path.
+                if isinstance(exc, OSError) and getattr(exc, "filename", None):
+                    detail = f"file={os.path.basename(str(exc.filename))}"
+                else:
+                    detail = " ".join(str(exc).split())[:240]
+                print(f"[Flow] Missing-image replacement could not complete: "
+                      f"{type(exc).__name__}: {detail}")
         raise last
 
     def _guarded_generation_once(self, shot, compiled, refs, out_path, vertical, dry_run, kind):
@@ -3736,8 +3841,15 @@ class FlowBrowserProvider(VideoProvider):
         args = (shot, compiled, refs, out_path, vertical) if kind == "video" else (shot, compiled, out_path, vertical)
         if dry_run:
             return generate_once(*args, dry_run=True)
-        key = hashlib.sha256(json.dumps([kind, str(getattr(shot, "shot_id", "")),
-            compiled.get("prompt", ""), vertical], sort_keys=True).encode()).hexdigest()
+        request_identity = [kind, str(getattr(shot, "shot_id", "")),
+                            compiled.get("prompt", ""), vertical]
+        flow_video_mode = str(compiled.get("flow_video_mode", "frames") or "frames").lower()
+        # Preserve the v6.0.14 fingerprint for the default continuity-frame mode
+        # so existing pending requests can still Resume. Prompt-only requests get
+        # a distinct journal identity and cannot be confused with frame-guided work.
+        if kind == "video" and flow_video_mode not in ("", "frames"):
+            request_identity.append(f"flow_video_mode:{flow_video_mode}")
+        key = hashlib.sha256(json.dumps(request_identity, sort_keys=True).encode()).hexdigest()
         self._active_request_hash = key
         journal = out_path + ".flow-request.json"
         if kind == "image":
@@ -3765,6 +3877,37 @@ class FlowBrowserProvider(VideoProvider):
                         raise FlowRequestPending("Request has no saved project URL; use assisted recovery, not regeneration")
                     print(f"[Flow] Download-only recovery of pending {kind}; no new prompt will be submitted: {url}")
                     b.ensure_project(compiled.get("project") or "AutoVideoAI", project_url=url)
+                    try:
+                        current_assets = b.media_assets()
+                    except AttributeError:
+                        # Compatibility for older bridge adapters that can still
+                        # download a recorded exact signature but expose no gallery
+                        # scanner. They cannot classify a queue card, so never infer
+                        # an asset from DOM order or invent a replacement request.
+                        current_assets = None
+                    fresh_assets = (self._fresh_asset_candidates(
+                        current_assets, request.get("baseline") or [])
+                        if current_assets is not None else [])
+                    queued_fresh = [a for a in fresh_assets
+                                    if str(a.get("kind", "")).lower() == "pending"]
+                    ready_fresh_videos = [a for a in fresh_assets
+                                          if str(a.get("kind", "")).lower() == "video"]
+                    if kind == "video" and queued_fresh and not ready_fresh_videos:
+                        old_signature = str(request.get("signature") or "")
+                        if old_signature:
+                            rejected = list(request.get("rejected_signatures") or [])
+                            if old_signature not in rejected:
+                                rejected.append(old_signature)
+                            request["rejected_signatures"] = rejected[-8:]
+                            request["signature"] = ""
+                            request["signature_kind_rejected"] = "queued-thumbnail"
+                            request["signature_rejection_reason"] = (
+                                "saved video fingerprint now resolves to an accepted-but-queued Flow card")
+                        request["queue_detected"] = True
+                        request["last_queue_observed_at"] = time.time()
+                        self._save_request(out_path, request)
+                        print("[Flow] This saved video request is still queued in Flow; its thumbnail is not downloadable media. "
+                              "No Generate action will be resubmitted.")
                     rejected_kind = self._discard_wrong_kind_signature(request, kind)
                     if rejected_kind:
                         self._save_request(out_path, request)
@@ -3773,6 +3916,11 @@ class FlowBrowserProvider(VideoProvider):
                         request["signature"] = self._identify_single_fresh_asset(
                             b, request, kind, timeout_ms=int(compiled.get("flow_image_signature_wait_ms", 15000)))
                         if not request["signature"]:
+                            if kind == "video" and queued_fresh:
+                                raise FlowRequestPending(
+                                    "Flow accepted this video request but still shows only its high-demand queue card; "
+                                    "there is no completed downloadable video yet. The exact request is saved. Wait for Flow to finish, "
+                                    "then Resume this same job; do not click Generate again.")
                             raise FlowRequestPending(
                                 "Existing request still has no single identifiable asset after bounded gallery scans; "
                                 "no recovery click submitted")
@@ -3881,6 +4029,13 @@ class FlowBrowserProvider(VideoProvider):
         aspect = "9:16" if vertical else "16:9"
         model_label = self.MODEL_LABELS.get(shot.model, "Gemini Omni Flash 360p")
         duration = int(shot.gen_duration or 8)
+        flow_video_mode = str(compiled.get("flow_video_mode", "frames") or "frames").lower()
+        if flow_video_mode == "prompt":
+            # Use a pure prompt-to-video clip when requested. Storyboard stills
+            # remain available to the image-motion fallback and final QC, but are
+            # not attached to this Flow video request.
+            refs = {}
+            print("[Flow] Prompt-only video mode selected; no storyboard/master images will be attached.")
         approval = str(compiled.get("approval", "once") or "once")
         cap = compiled.get("max_generation_credits", 10)
         recovery_wait_s = max(0, int(compiled.get("flow_video_recovery_wait_seconds", 180) or 0))
@@ -3995,9 +4150,21 @@ class FlowBrowserProvider(VideoProvider):
                         approval=approval,
                         max_generation_credits=int(cap) if cap is not None else None):
                     info = getattr(b, "last_agent_confirmation", {}) or info
+                    if getattr(b, "last_agent_queue_observed", False):
+                        elapsed = int(getattr(b, "last_agent_queue_elapsed_s", 0) or 0)
+                        self._record_queue_observation(out_path, elapsed)
+                        error = (
+                            "Flow accepted the video request and showed a high-demand queue card "
+                            f"during the bounded wait (last observed interval {elapsed}s), but no completed "
+                            "playable/downloadable video became available. No download was attempted and "
+                            "no replacement generation was submitted; the exact request remains saved "
+                            "for Resume after Flow finishes."
+                        )
+                    else:
+                        error = "Flow Agent generation did not reach a detectable completed asset"
                     return {"path": None, "provider": "flow", "model": shot.model,
                             "credits": info.get("cost", 0) or 0, "dry_run": False,
-                            "error": "Flow Agent generation did not reach a detectable completed asset"}
+                            "error": error}
                 # A late first-project approval may have been clicked inside the
                 # generation wait. Preserve its cost/action in the result.
                 info = getattr(b, "last_agent_confirmation", {}) or info

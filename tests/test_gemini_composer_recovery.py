@@ -47,6 +47,93 @@ def test_prompt_box_chooses_visible_accessible_editable_textbox():
     assert browser._prompt_box() is visible
 
 
+def test_prompt_box_prefers_quill_editor_and_never_selects_clipboard():
+    from engine.providers.gemini_web import GeminiWebBrowser
+
+    class Candidate:
+        def __init__(self, classes):
+            self.classes = classes
+
+        def get_attribute(self, name):
+            return self.classes if name == "class" else ""
+
+        def is_visible(self, timeout=100):
+            return True
+
+        def is_editable(self, timeout=100):
+            return True
+
+    class Matches:
+        def __init__(self, values):
+            self.values = values
+
+        def count(self):
+            return len(self.values)
+
+        def nth(self, index):
+            return self.values[index]
+
+    clipboard = Candidate("ql-clipboard")
+    editor = Candidate("ql-editor")
+    selectors_seen = []
+
+    class Page:
+        def locator(self, selector):
+            selectors_seen.append(selector)
+            if selector == "rich-textarea .ql-editor[contenteditable='true']:not(.ql-clipboard)":
+                return Matches([editor])
+            if selector == "[contenteditable='true']:not(.ql-clipboard)":
+                return Matches([editor])
+            if selector == "[contenteditable='true']":
+                return Matches([clipboard, editor])
+            return Matches([])
+
+        def get_by_role(self, role, **kwargs):
+            return Matches([])
+
+    browser = object.__new__(GeminiWebBrowser)
+    browser._page = Page()
+    assert browser._prompt_box() is editor
+    assert selectors_seen[0] == (
+        "rich-textarea .ql-editor[contenteditable='true']:not(.ql-clipboard)")
+    assert browser._prompt_box() is not clipboard
+
+
+def test_composer_diagnostics_report_structure_counts_without_page_text():
+    from engine.providers.gemini_web import GeminiWebBrowser
+
+    class Candidate:
+        def is_visible(self, timeout=100):
+            return True
+
+        def is_editable(self, timeout=100):
+            return True
+
+    class Matches:
+        def __init__(self, values):
+            self.values = values
+
+        def count(self):
+            return len(self.values)
+
+        def nth(self, index):
+            return self.values[index]
+
+    class Page:
+        def locator(self, selector):
+            return Matches([Candidate()] if selector in {
+                ".ql-editor:not(.ql-clipboard)",
+                "[role='dialog'], dialog, mat-dialog-container",
+            } else [])
+
+    browser = object.__new__(GeminiWebBrowser)
+    browser._page = Page()
+    summary = browser._composer_diagnostics()
+    assert "quill-editor=1/1" in summary
+    assert "dialog=1/1" in summary
+    assert "private account text" not in summary
+
+
 def test_fresh_chat_wait_is_bounded_and_recovers_when_composer_appears(monkeypatch):
     import engine.providers.gemini_web as gw
 

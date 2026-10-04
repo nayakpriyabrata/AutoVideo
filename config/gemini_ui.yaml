@@ -6,6 +6,9 @@ browser:
   cdp_url: ""
 actions:
   prompt_box:
+    - {by: css, selector: "rich-textarea .ql-editor[contenteditable='true']:not(.ql-clipboard)"}
+    - {by: css, selector: "input-area-v2 .ql-editor[contenteditable='true']:not(.ql-clipboard)"}
+    - {by: css, selector: ".ql-editor[contenteditable='true']:not(.ql-clipboard)"}
     - {by: css, selector: "rich-textarea textarea"}
     - {by: css, selector: "textarea[placeholder*='prompt' i]"}
     - {by: css, selector: "textarea[aria-label*='prompt' i]"}

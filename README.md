@@ -1,8 +1,14 @@
-# AutoVideoAI v6.0.13 — Workspace Navigation and Guided UI
+# AutoVideoAI v6.0.16 — Flow video tile recovery
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. Older release archives are preserved as reference builds.
 
-**New in v6.0.13:** [Workspace navigation and UI audit](V6_0_13_UI_NAVIGATION.md). Groups the 18 dashboard pages into five workspaces, clarifies Guided Studio versus Advanced Create, and includes an independent feature-coverage and production-readiness review.
+**New in v6.0.16:** [Flow video tile recovery](V6_0_16_FLOW_VIDEO_TILE_RECOVERY.md). A fresh typed video tile is no longer blocked by stale page-wide status text; AutoVideo tries the exact asset sooner, validates the downloaded video, and reports recovery causes without silently submitting a duplicate. The release also includes v6.0.15's Storyboard Economy parallel still workers and prompt-only/frame-guided Flow input.
+
+**Previous in v6.0.15:** [Flow queue recovery and Storyboard Economy workers](V6_0_15_FLOW_QUEUE_STORYBOARD_WORKERS.md). Scheduled queue thumbnails remain pending; bounded waits and exact-request Resume avoid duplicate video generation. Storyboard Economy parallelizes independent Flow stills without breaking continuity-linked frames.
+
+**Previous in v6.0.14:** [Clip workflow and Gemini Web repairs](V6_0_14_CLIP_WORKFLOW_REPAIRS.md). Fit preserves landscape/portrait orientation; enabled B-roll search prepares reviewable previews automatically; Pixabay music lookup validates actual downloads; Streamlit's width deprecation is removed; and Gemini Web detection targets the current Quill composer without exposing page text.
+
+**Previous in v6.0.13:** [Workspace navigation and UI audit](V6_0_13_UI_NAVIGATION.md). Groups the 18 dashboard pages into five workspaces, clarifies Guided Studio versus Advanced Create, and includes an independent feature-coverage and production-readiness review.
 
 **Previous in v6.0.12:** [Safe RSS parsing and Indic font cache repair](V6_0_12_XML_INDIC_CACHE.md). DTD/entity declarations are now blocked even when feed XML uses UTF-16, and the Indic font fallback keeps its render cache per font instance so completed jobs can release FreeType/HarfBuzz resources. Includes the v6.0.11 CLI JSON repair.
 
@@ -67,7 +73,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.13
+# ZIP download: cd AutoVideoAI-v6.0.16
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -294,7 +300,7 @@ cp clip_config.yaml my_clip.yaml
 python3 cli.py v3 clip-config my_clip.yaml
 ```
 
-The dashboard also has **CLIP STUDIO**, with the same Gemini/local selection, source-rights confirmation, duration and optional-music controls. Choosing a B-roll suggestion count only sets a search limit; each exact suggestion must be previewed and explicitly approved or skipped before it can be rendered. v6.0.7 added the preview-first cutaway workflow for production renders and individual Clip Studio highlights; see [the cutaway guide](V6_0_7_REVIEW_FIRST_BROLL.md).
+The dashboard also has **CLIP STUDIO**, with the same Gemini/local selection, source-rights confirmation, duration and optional-music controls. When B-roll is enabled, creating highlights automatically searches for up to the selected maximum (at most one candidate per highlight). Preview each exact suggestion and explicitly approve or skip every one, save decisions, then apply approved cutaways as separate copies; original highlights/audio remain unchanged. v6.0.7 added the review-first cutaway workflow for production renders and individual Clip Studio highlights; see [the cutaway guide](V6_0_7_REVIEW_FIRST_BROLL.md).
 
 For a public YouTube URL, `--ranking-provider gemini-hybrid` now follows this visible chain:
 
@@ -312,7 +318,7 @@ Gemini proposes multiple timestamped hooks using both audio and visuals. AutoVid
 
 Temporary browser-analysis chats default to `delete-after-read`. Override with `--gemini-chat-cleanup keep` when diagnosing Gemini UI behavior.
 
-Downloads prefer H.264/AVC instead of AV1 for WSL compatibility. Five-minute mono audio chunks reduce Groq upload size. FFmpeg burns active-word captions without an opaque card. Optional `--framing fit` preserves the full source picture inside a 1080×1920 canvas with coloured padding. This prevents another destructive crop but cannot recover a face already cropped in the source file. The restored default `--framing face-crop` uses one median face position per clip; it is not active-speaker tracking and can miss people after camera cuts. Use the original uncropped video as input.
+Downloads prefer H.264/AVC instead of AV1 for WSL compatibility. Five-minute mono audio chunks reduce Groq upload size. FFmpeg burns active-word captions without an opaque card. `--framing fit` preserves the entire source picture and its display aspect/orientation: landscape stays landscape, portrait stays portrait, and the long edge is capped at 1920 pixels. It does not crop the source or force every clip into a vertical canvas. The default `--framing face-crop` still makes a filled 1080×1920 reel using one median face position per clip; it is not active-speaker tracking and can miss people after camera cuts. Use the original uncropped video as input.
 
 Optional quiet background music has no separate music-acknowledgement gate. Keep it off by default, or explicitly turn it on to search Pixabay for a soft instrumental bed. The exact source page, licence label and file SHA-256 are retained in `highlights.json`; review the item page and current terms rather than treating a provider label as automatic clearance. YouTube Audio Library remains a YouTube Studio/manual-download workflow; some tracks require attribution. Download those tracks yourself and record the source/credit in CLIP STUDIO or with `--music-source-url`.
 
@@ -347,7 +353,7 @@ outputs/my-clips/
 └── highlights.json       # timestamps, scores, reasons and output paths
 ```
 
-Each `.qc.json` checks that the result has video and audio streams, 1080×1920 framing, expected duration, clean decoding, acceptable black/frozen intervals, and captions. A broken decode, missing stream, severe black interval, or stuck picture is `BLOCK` and is not marked upload-ready. Minor framing/caption issues are `REVIEW`; healthy output is `PASS`. The 0–100 score combines the editorial candidate score with technical readiness.
+Each `.qc.json` checks that the result has video and audio streams, the selected framing dimensions (1080×1920 for face-crop or the source-matched size for fit), expected duration, clean decoding, acceptable black/frozen intervals, and captions. A broken decode, missing stream, severe black interval, or stuck picture is `BLOCK` and is not marked upload-ready. A size mismatch or caption issue is `REVIEW`; healthy output is `PASS`. The 0–100 score combines the editorial candidate score with technical readiness.
 
 OpusClip uses a proprietary model, so identical rankings or viral predictions are not promised. AutoVideoAI's score is an explainable editorial/technical readiness score, not a guarantee that a clip will become viral.
 
@@ -653,7 +659,7 @@ The main engine remains Python/Pillow/FFmpeg with optional configured providers.
 
 ## 18. v5.8.1 resume and reels correction
 
-The default clip framing is restored to `face-crop`: a filled 1080×1920 reel. `fit` is optional padding, not a landscape output file. Existing YAML with `framing: fit` still overrides the new default: change it to `face-crop`. Existing MP4 files are not changed. Static face cropping can still miss speaker changes.
+The default clip framing is `face-crop`: a filled 1080×1920 reel. `fit` keeps the complete source frame and matches its orientation/aspect (landscape remains landscape; portrait remains portrait). Existing YAML with `framing: fit` continues to use that source-matched behavior; existing MP4 files are not changed. Static face cropping can still miss speaker changes.
 
 The session log confirms Gemini cleanup succeeded and four verified selections were retained from the requested ten. Those parts should not be retried solely to fix framing. To reprocess the original source, append `--framing face-crop` to your clip command and use a new output folder.
 

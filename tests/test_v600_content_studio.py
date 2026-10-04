@@ -1,11 +1,8 @@
 """First-stage content studio: offline safety, language rendering and approvals."""
 from pathlib import Path
-from types import SimpleNamespace
-import hashlib
-import json
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from engine.languages import language_pack, script_language, check_tts_language
 from engine.content_plan import validate_plan, script_from_plan
@@ -225,3 +222,5 @@ def test_new_content_pages_render_without_provider_calls(tmp_path,monkeypatch):
     navigate(app, 'CLIP STUDIO')
     checkbox=next(x for x in app.checkbox if x.label=='Add soft background music')
     assert checkbox.value is False
+    assert next(x for x in app.checkbox if x.label.startswith('Prepare related stock B-roll suggestions')).value is False
+    assert next(x for x in app.checkbox if x.label == 'I confirm the selected rights/licence declaration is accurate')

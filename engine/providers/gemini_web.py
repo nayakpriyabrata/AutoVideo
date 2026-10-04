@@ -111,10 +111,20 @@ class GeminiWebBrowser(FlowBrowser):
         not.
         """
         selectors = (
+            # Gemini now wraps its Quill composer in rich-textarea. The broad
+            # contenteditable selector also matches Quill's hidden clipboard, so
+            # prefer the real editor and explicitly exclude that clipboard node.
+            "rich-textarea .ql-editor[contenteditable='true']:not(.ql-clipboard)",
+            "input-area-v2 .ql-editor[contenteditable='true']:not(.ql-clipboard)",
+            ".ql-editor[contenteditable='true']:not(.ql-clipboard)",
+            "rich-textarea [contenteditable='true']:not(.ql-clipboard)",
+            "input-area-v2 [contenteditable='true']:not(.ql-clipboard)",
             "rich-textarea textarea",
+            "textarea[placeholder*='prompt' i]",
+            "textarea[aria-label*='prompt' i]",
             "textarea",
-            "[contenteditable='true']",
-            "[contenteditable]:not([contenteditable='false'])",
+            "[contenteditable='true']:not(.ql-clipboard)",
+            "[contenteditable]:not([contenteditable='false']):not(.ql-clipboard)",
             "[role='textbox']",
         )
         for selector in selectors:
@@ -122,6 +132,16 @@ class GeminiWebBrowser(FlowBrowser):
                 matches = self._page.locator(selector)
                 for index in range(min(matches.count(), 30)):
                     candidate = matches.nth(index)
+                    try:
+                        class_names = str(candidate.get_attribute("class") or "").split()
+                    except Exception:
+                        class_names = []
+                    try:
+                        aria_hidden = str(candidate.get_attribute("aria-hidden") or "").lower()
+                    except Exception:
+                        aria_hidden = ""
+                    if "ql-clipboard" in class_names or aria_hidden == "true":
+                        continue
                     try:
                         if (candidate.is_visible(timeout=100)
                                 and candidate.is_editable(timeout=100)
@@ -159,6 +179,34 @@ class GeminiWebBrowser(FlowBrowser):
         except Exception:
             pass
         return None
+
+    def _composer_diagnostics(self) -> str:
+        """Return structural counts only; never capture page text or account data."""
+        probes = (
+            ("rich-textarea", "rich-textarea", False),
+            ("input-area-v2", "input-area-v2", False),
+            ("quill-editor", ".ql-editor:not(.ql-clipboard)", True),
+            ("quill-clipboard", ".ql-clipboard", False),
+            ("textarea", "textarea", True),
+            ("contenteditable", "[contenteditable]:not(.ql-clipboard)", True),
+            ("role-textbox", "[role='textbox']", True),
+            ("dialog", "[role='dialog'], dialog, mat-dialog-container", False),
+        )
+        summaries = []
+        for label, selector, editable_probe in probes:
+            try:
+                matches = self._page.locator(selector)
+                total = min(matches.count(), 99)
+                visible = 0
+                for index in range(total):
+                    candidate = matches.nth(index)
+                    if candidate.is_visible(timeout=100) and (
+                            not editable_probe or candidate.is_editable(timeout=100)):
+                        visible += 1
+                summaries.append(f"{label}={visible}/{total}")
+            except Exception:
+                summaries.append(f"{label}=unavailable")
+        return ", ".join(summaries)
 
     def _click_visible_new_chat(self) -> bool:
         """Click only an unambiguous visible New chat control; never submit text."""
@@ -383,11 +431,12 @@ class GeminiWebBrowser(FlowBrowser):
                         pass
             time.sleep(0.4)
 
+        probe = self._composer_diagnostics()
         raise GeminiWebComposerNotReady(
             "Gemini's fresh-chat composer did not expose a visible editable prompt box "
-            f"within {wait_seconds} seconds. Confirm the visible browser is signed in, dismiss any "
-            "consent/dialog overlay, and check whether Gemini's composer UI has changed before retrying. "
-            "No prompt was submitted."
+            f"within {wait_seconds} seconds. Gemini UI probe (visible/total counts only): {probe}. "
+            "If a dialog or consent screen is open, dismiss it manually; otherwise confirm the visible "
+            "browser is signed in and retry. No prompt was submitted."
         )
 
     @staticmethod

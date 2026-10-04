@@ -38,6 +38,50 @@ def test_pixabay_music_source_records_page_license_creator_and_hash(tmp_path, mo
     assert not (tmp_path / (result["path"].split("/")[-1] + ".source.json")).exists()
 
 
+def test_pixabay_search_failure_is_actionable_and_removes_temporary_artifacts(tmp_path, monkeypatch):
+    import engine.audio.music_provider as provider
+
+    def failed_search(command, **kwargs):
+        assert kwargs["timeout"] == 240
+        output_path = command[-1]
+        with open(output_path, "wb") as handle:
+            handle.write(b"partial audio")
+        with open(output_path + ".part", "wb") as handle:
+            handle.write(b"partial download")
+        with open(output_path + ".source.json", "w", encoding="utf-8") as handle:
+            handle.write('{"media_url":"https://cdn.pixabay.com/audio/track.mp3?token=private"}')
+        return SimpleNamespace(
+            returncode=2, stdout="",
+            stderr=("AUTOVIDEO_MEDIA_SEARCH=no_track_results\n"
+                    "https://cdn.pixabay.com/audio/track.mp3?token=private"),
+        )
+
+    monkeypatch.setattr(provider.subprocess, "run", failed_search)
+    result = provider.ensure_background_music("soft ambient instrumental", str(tmp_path), mode="pixabay")
+
+    assert result["path"] is None
+    assert "Try a concrete term" in result["error"]
+    assert "token=private" not in result["error"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_pixabay_search_timeout_is_actionable_and_cleans_partial_file(tmp_path, monkeypatch):
+    import engine.audio.music_provider as provider
+
+    def timed_out(command, **kwargs):
+        output_path = command[-1]
+        with open(output_path + ".part", "wb") as handle:
+            handle.write(b"partial download")
+        raise provider.subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(provider.subprocess, "run", timed_out)
+    result = provider.ensure_background_music("soft ambient instrumental", str(tmp_path), mode="pixabay")
+
+    assert result["path"] is None
+    assert "four-minute" in result["error"]
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_enabled_internet_music_is_fetched_before_source_processing(tmp_path, monkeypatch):
     import engine.clipping as clipping
     import engine.audio.music_provider as music_provider

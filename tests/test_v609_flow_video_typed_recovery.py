@@ -157,6 +157,53 @@ def test_flow_signature_classifier_recognizes_material_play_arrow_but_not_a_stil
     ) == "video"
 
 
+def test_gallery_video_tile_ignores_queue_text_from_a_separate_flow_chat_message():
+    queue_message = "Your video has been scheduled and is waiting in a high-demand queue."
+    raw_tile = {
+        "src": "https://media.google/generated-clip",
+        "alt": "",
+        "tag": "IMG",
+        "dom_index": 0,
+        "width": 320,
+        "height": 180,
+        "hint": queue_message,  # broad ancestor diagnostic includes the side-panel chat
+        "tile_hint": "play_arrow 360p",
+        "queue_context": False,  # not in this gallery tile's own card
+        "hasPlay": True,
+        "hasResolution": True,
+        "hasVideoNode": False,
+    }
+    browser = FlowBrowser.__new__(FlowBrowser)
+    browser._page = SimpleNamespace(evaluate=lambda _script: [raw_tile])
+
+    asset = browser.media_assets()[0]
+
+    assert asset["kind"] == "video"
+    assert "|video|" in asset["sig"]
+
+
+def test_queue_message_local_to_its_thumbnail_keeps_that_tile_pending():
+    queue_message = "Your video has been scheduled and is waiting in a high-demand queue."
+    raw_tile = {
+        "src": "https://media.google/queued-thumb",
+        "alt": "",
+        "tag": "IMG",
+        "dom_index": 0,
+        "width": 320,
+        "height": 180,
+        "hint": queue_message,
+        "tile_hint": queue_message + " play_arrow 360p",
+        "queue_context": True,
+        "hasPlay": True,
+        "hasResolution": True,
+        "hasVideoNode": False,
+    }
+    browser = FlowBrowser.__new__(FlowBrowser)
+    browser._page = SimpleNamespace(evaluate=lambda _script: [raw_tile])
+
+    assert browser.media_assets()[0]["kind"] == "pending"
+
+
 def test_resume_rejects_saved_image_signature_and_downloads_only_unique_fresh_video(tmp_path):
     project_url = "https://flow.google.com/project/saved-project"
     image_sig = "IMG|https://media.google/still|still|image|320|180"

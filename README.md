@@ -1,8 +1,10 @@
-# AutoVideoAI v6.0.16 — Flow video tile recovery
+# AutoVideoAI v6.0.17 — Flow gallery tile recovery
 
 This repository includes **editable application source**. Run commands from the folder containing `cli.py` and `app.py`. Older release archives are preserved as reference builds.
 
-**New in v6.0.16:** [Flow video tile recovery](V6_0_16_FLOW_VIDEO_TILE_RECOVERY.md). A fresh typed video tile is no longer blocked by stale page-wide status text; AutoVideo tries the exact asset sooner, validates the downloaded video, and reports recovery causes without silently submitting a duplicate. The release also includes v6.0.15's Storyboard Economy parallel still workers and prompt-only/frame-guided Flow input.
+**New in v6.0.17:** [Flow gallery tile recovery](V6_0_17_FLOW_GALLERY_CLASSIFICATION.md). Queue-status text in Flow's chat no longer demotes a separate generated gallery video tile; recovery classifies queue text locally to each card and still requires an exact, fresh video asset before download.
+
+**Previous in v6.0.16:** [Flow video tile recovery](V6_0_16_FLOW_VIDEO_TILE_RECOVERY.md). A fresh typed video tile is not blocked by stale page-wide status text; AutoVideo attempts the exact asset sooner, validates the downloaded video, and reports recovery causes without silently submitting a duplicate. Includes Storyboard Economy workers and prompt-only/frame-guided Flow input.
 
 **Previous in v6.0.15:** [Flow queue recovery and Storyboard Economy workers](V6_0_15_FLOW_QUEUE_STORYBOARD_WORKERS.md). Scheduled queue thumbnails remain pending; bounded waits and exact-request Resume avoid duplicate video generation. Storyboard Economy parallelizes independent Flow stills without breaking continuity-linked frames.
 
@@ -73,7 +75,7 @@ Requirements: Python 3.10+, FFmpeg/FFprobe, and Chrome/Chromium for browser prov
 
 ```bash
 cd AutoVideo                            # Git checkout
-# ZIP download: cd AutoVideoAI-v6.0.16
+# ZIP download: cd AutoVideoAI-v6.0.17
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

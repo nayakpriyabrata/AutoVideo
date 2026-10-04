@@ -1748,16 +1748,24 @@ class FlowBrowser:
 
     @staticmethod
     def _classify_media_kind(tag, src="", alt="", hints="", has_play=False,
-                            has_resolution=False, has_video_node=False) -> str:
-        """Classify a Flow tile from its own video controls/labels, not DOM order."""
+                            has_resolution=False, has_video_node=False,
+                            queue_context: bool | None = None) -> str:
+        """Classify a Flow tile from tile-local status and video evidence.
+
+        Flow's chat can retain a high-demand queue message after the generated
+        video appears in the project gallery. Callers that can scope DOM context
+        should pass ``queue_context`` from the tile's own card; broad page/chat
+        text must not demote an unrelated playable tile.
+        """
         text = " ".join(str(value or "") for value in (src, alt, hints)).lower()
         video_url = bool(re.search(r"\.(?:mp4|webm|mov|m4v)(?:$|[?#])", str(src or ""), re.I))
         tag_is_video = str(tag or "").lower() == "video"
-        # Flow's high-demand card contains an image thumbnail and the word
-        # "video". It is a queued request, not a completed media tile. Only a
-        # literal video element overrides that state; a URL or play/resolution
-        # badge alone is not enough while the card explicitly says it is queued.
-        if _is_flow_queue_status(text) and not tag_is_video:
+        # Direct callers without scoped DOM evidence retain the conservative
+        # behavior; media_assets() supplies queue_context based on nearby card
+        # ancestors and uses narrower text for video-label classification.
+        tile_is_queued = (_is_flow_queue_status(text) if queue_context is None
+                          else bool(queue_context))
+        if tile_is_queued and not tag_is_video:
             return "pending"
         video_hint = bool(re.search(
             r"\bvideo\b|video preview|generated video|smart[_\s-]?display|"
@@ -1785,9 +1793,11 @@ class FlowBrowser:
                 const src = el.currentSrc || el.src || el.poster || '';
                 const alt = el.getAttribute('alt') || el.getAttribute('aria-label') || '';
 
-                // Walk a few ancestors because Flow places the play icon and
-                // resolution badge next to the poster image rather than inside it.
-                let node = el, hints = '', depth = 0;
+                // Walk ancestors because Flow places play icons and resolution
+                // badges next to posters. Keep broad diagnostics, but scope queue
+                // status and text labels to the tile's nearby card ancestors.
+                const queuePattern = /(?:(?:video|image|generation|request).{0,100}(?:scheduled|queued|waiting\s+(?:in\s+)?the\s+queue)|(?:scheduled|queued).{0,100}(?:waiting\s+(?:in\s+)?the\s+queue|high\s+demand)|waiting\s+(?:in\s+)?the\s+queue|queued\s+due\s+to\s+high\s+demand|scheduled\s+and\s+waiting\s+in\s+queue|your\s+video\s+has\s+been\s+scheduled)/i;
+                let node = el, hints = '', tileHints = '', depth = 0, queueContext = false;
                 let hasPlay = false, hasVideoNode = el.tagName.toLowerCase() === 'video';
                 let hasResolution = false;
                 while (node && depth < 6) {
@@ -1797,6 +1807,8 @@ class FlowBrowser:
                         const txt = (node.innerText || '').trim();
                         const local = (aria + ' ' + title + ' ' + (txt.length < 900 ? txt : '')).trim();
                         hints += ' ' + local;
+                        if (depth <= 2) tileHints += ' ' + local;
+                        if (depth <= 4 && queuePattern.test(local)) queueContext = true;
                         if (/(?:^|[^a-z0-9])(?:play(?:[_\s-]?(?:arrow|circle|circle_filled))?|smart[_\s-]?display)(?:$|[^a-z0-9])|play video|video preview/i.test(local)) hasPlay = true;
                         if (/\b(?:360|480|720|1080|1440|2160)p\b/i.test(local)) hasResolution = true;
                         if (node.querySelector) {
@@ -1808,6 +1820,7 @@ class FlowBrowser:
                                            n.getAttribute('data-testid') || '', n.getAttribute('data-tooltip') || '',
                                            n.getAttribute('data-icon') || '', n.innerText || ''].join(' ');
                                 hints += ' ' + h;
+                                if (depth <= 2) tileHints += ' ' + h;
                                 if (/(?:^|[^a-z0-9])(?:play(?:[_\s-]?(?:arrow|circle|circle_filled))?|smart[_\s-]?display)(?:$|[^a-z0-9])|play video|video preview/i.test(h)) hasPlay = true;
                                 if (/\b(?:360|480|720|1080|1440|2160)p\b/i.test(h)) hasResolution = true;
                             }
@@ -1817,6 +1830,7 @@ class FlowBrowser:
                 }
                 return {src, alt, tag: el.tagName, dom_index: i, width: Math.round(r.width),
                         height: Math.round(r.height), x: r.x, y: r.y, hint: hints.slice(0,600),
+                        tile_hint: tileHints.slice(0,600), queue_context: queueContext,
                         hasPlay, hasResolution, hasVideoNode};
             }).filter(Boolean)""") or []
             assets = []
@@ -1824,8 +1838,10 @@ class FlowBrowser:
                 if not isinstance(asset, dict):
                     continue
                 kind = self._classify_media_kind(
-                    asset.get("tag"), asset.get("src"), asset.get("alt"), asset.get("hint"),
-                    asset.get("hasPlay"), asset.get("hasResolution"), asset.get("hasVideoNode"))
+                    asset.get("tag"), asset.get("src"), asset.get("alt"),
+                    asset.get("tile_hint", asset.get("hint")),
+                    asset.get("hasPlay"), asset.get("hasResolution"), asset.get("hasVideoNode"),
+                    asset.get("queue_context"))
                 asset["kind"] = kind
                 asset["sig"] = "|".join(str(value or "") for value in (
                     str(asset.get("tag") or "IMG").upper(), asset.get("src"), asset.get("alt"), kind,

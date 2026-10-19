@@ -1,0 +1,829 @@
+diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
+--- a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
++++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-19 14:47:18.614187223 +0000
+@@ -0,0 +1,52 @@
++# AutoVideoAI 7.0.68 · language editions now render as videos
++
++## What was wrong in 7.0.67
++
++- Create selected English, Hindi and Odia editions, but production rendered **only the primary-language video**. The extra editions stopped at reviewed narration and timed-card bundles. Nothing turned them into videos.
++- Language-specific channel profiles chosen in Create were saved in `language_editions.json` and then ignored.
++- In Finishing Studio, an edition with no reviewed narration kept the **source video's voice**. Reproduced with a 440 Hz English voice: the Hindi export still spoke English.
++
++## What 7.0.68 does
++
++- After the primary video is rendered, every additional edition selected in Create is rendered automatically from:
++  - the approved clean picture (no speech, captions, music or branding from the English render);
++  - that edition's **reviewed narration** and measured word timings;
++  - the edition's timed text cards and **word-timed captions in its own language**;
++  - the channel profile chosen for that language in Create (logo, channel name in that language, optional intro and outro);
++  - the primary production's background track, with its recorded licence, when one was used.
++- Output: `outputs/<job>/language_editions/<plan>/exports/<lang>-<plan>.mp4`, plus a `.provenance.json` for each export. Each export is a new file and is never overwritten.
++- `production/language_editions_render.json` records each language's status. Re-running reuses verified exports, so nothing is re-rendered needlessly.
++- **Refusal instead of English.** An edition without its own reviewed narration is refused with a clear message. Nothing falls back to the source voice.
++- **Length fit.** If a reviewed Hindi or Odia narration is longer than the approved picture, the picture is slowed by up to 25% so the whole narration is heard. Longer than that, the edition fails with a message asking for a shorter script. Cards and captions stay in narration time, so they remain in sync.
++- **Create page.**
++  - Extra editions require Voiceover and a reviewed, prepared language batch (step 4, "reuse this exact batch"). Otherwise submission is blocked, so no edition can silently have no voice.
++  - Step 3 lets you pick a saved channel profile per language, or create one there: channel name, logo, and optional intro and outro.
++  - Under the job, a "Language editions" panel shows each language's status and exports, with a button to render any pending editions. This also works for jobs created before this release.
++- **Finishing Studio.** The source video's narration language is now declared. Any other edition needs its own reviewed narration.
++
++## Using it
++
++1. Create → Reels & Long Videos → choose the master language and up to two additional editions.
++2. Approve the master script (step 2).
++3. Step 3: choose or create a channel profile for each language (logo and name).
++4. Step 4: approve each localized narration, click **Prepare all selected TTS → then all language text cards**, review every voice and card, and tick **reuse this exact batch**.
++5. Create the production. Each selected language is rendered when the primary video finishes. Check the "Language editions" panel.
++
++## Limits and review points
++
++- Hindi and Odia wording still needs a fluent reviewer before publishing.
++- Additional editions use the approved picture with that edition's narration, cards, captions and channel mark. Production-only extras (ambience, sound effects, graphics from the English timeline) are not carried over.
++- The primary edition keeps the production render. Its channel logo comes from the Create-page profile, but its intro and outro are not added, to avoid changing the primary video.
++- Live Gemini, TTS and browser flows were not exercised in this release. Automated tests use real FFmpeg media and synthetic narration.
++- If an edition fails, the primary video is still produced and the job shows a warning naming the failed language.
++
++## Verification
++
++- `tests/test_v768_language_editions_render.py`: 10 tests with real FFmpeg media. They check:
++  - each language gets its own narration (660 Hz Hindi and 880 Hz Odia voice fingerprints);
++  - the length fit and its 25% limit;
++  - refusal of a missing batch and of a voiceless edition;
++  - profile-less editions;
++  - re-run reuse;
++  - the Create and factory wiring.
++- Full suite: the same 24 pre-existing failures as v7.0.67 (fonts, browser and UI environment tests), with 10 new passing tests.
+diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
+--- a/README.md	2026-10-19 14:47:18.590187103 +0000
++++ b/README.md	2026-10-19 14:47:18.618187243 +0000
+@@ -1,3 +1,7 @@
++# Update 7.0.68
++
++Selected language editions now render as finished videos. Each additional English, Hindi or Odia edition uses the approved picture, its own reviewed narration, timed cards, captions and its chosen channel profile. A missing or voiceless edition is refused instead of exported with English audio. See [the 7.0.68 render guide](LANGUAGE_EDITIONS_RENDER_V7_0_68.md).
++
+ # Update 7.0.67
+ 
+ Guided Studio now separates the master script from its output language editions. Choose the master/primary language and any additional English, Hindi or Odia editions before drafting. Gemini drafts one story, selected editions are localized for review, and the exact approved scripts are used to prepare every TTS track before any timed-card request. See [the language-edition guide](LANGUAGE_EDITIONS_V7_0_67.md).
+diff -ruN -x .pytest_cache -x __pycache__ a/VERSION b/VERSION
+--- a/VERSION	2026-10-19 14:47:18.590187103 +0000
++++ b/VERSION	2026-10-19 14:47:18.618187243 +0000
+@@ -1 +1 @@
+-7.0.67
++7.0.68
+diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
+--- a/app.py	2026-10-19 14:47:18.590187103 +0000
++++ b/app.py	2026-10-19 14:47:18.618187243 +0000
+@@ -501,6 +501,39 @@
+         c.metric(name, "✓" if ok is True else ("·" if ok is False else ok))
+ 
+ 
++def language_edition_panel(job_id):
++    """Language editions of a job: status, exports and an explicit render action."""
++    from engine.language_editions import requested_languages, render_job_editions
++    from engine.production_lock import production_slot
++    from engine.languages import LANGUAGES as LANGUAGE_PACKS
++    job_dir = Path(F.pm.job_dir(job_id))
++    source, extra, state = requested_languages(job_dir)
++    if not extra:
++        return
++    record_path = job_dir / 'production' / 'language_editions_render.json'
++    record = json.loads(record_path.read_text(encoding='utf-8')) if record_path.is_file() else {'editions': {}}
++    st.subheader('Language editions')
++    st.caption('Each extra edition uses the approved picture, its reviewed narration, timed cards, captions and its own channel profile. The primary edition is the video above.')
++    for code in extra:
++        entry = record.get('editions', {}).get(code, {})
++        status = entry.get('status', 'not rendered yet')
++        st.write(f"**{LANGUAGE_PACKS[code].label}** · {status}")
++        if entry.get('status') == 'exported' and Path(entry.get('path', '')).is_file():
++            st.video(entry['path'], width=420)
++        elif entry.get('status') == 'failed':
++            st.error(entry.get('error', 'Render failed.'))
++    if st.button('Render pending language editions', key=f'render-language-editions-{job_id}'):
++        try:
++            with production_slot(job_dir):
++                report = render_job_editions(job_dir)
++            if report.get('status') == 'exported':
++                st.success('All language editions are exported.')
++            else:
++                st.warning('Language editions: ' + report.get('status', 'check details') + ('. ' + report['error'] if report.get('error') else ''))
++        except Exception as error:
++            st.error(str(error))
++
++
+ # ================= STUDIO =================
+ queued_resume = st.session_state.pop("pending_resume_job", None)
+ if queued_resume:
+@@ -593,22 +626,50 @@
+                     reviewed_path=save_reviewed_plan(edited_plan,True)
+                     approved_plan_path=reviewed_path
+                 except Exception as error:st.error(str(error))
+-    with st.expander('3 · Language editions and channel profiles', expanded=False):
+-        from engine.finishing_studio import profiles as saved_channel_profiles
++    with st.expander('3 · Language editions and channel profiles', expanded=bool(st.session_state.get('studio-profile-open'))):
++        from engine.finishing_studio import profiles as saved_channel_profiles, save_profile as save_channel_profile
++        from engine.finishing_ui import _upload as upload_channel_media
+         available_profiles = saved_channel_profiles()
+         channel_editions=batch_languages
++        if st.session_state.get('studio-profile-flash'):
++            st.success(st.session_state.pop('studio-profile-flash'))
+         st.write('Selected editions: '+', '.join(LANGUAGES[x].label for x in channel_editions))
+-        st.caption('Each selected edition can use its own channel profile. Its logo, name, intro and outro are applied when that language edition is finished.')
++        st.caption('Each language edition gets its own channel profile: logo, channel name in that language, and optional intro and outro. Pick a saved profile or create one for a language below. An edition without a profile is rendered with no channel mark.')
+         edition_profiles = {}
+         for edition in channel_editions:
++            edition_label = LANGUAGES[edition].label
+             if available_profiles:
+-                choice = st.selectbox(f'{edition.upper()} channel profile (logo, intro, outro and name)',
++                choice = st.selectbox(f'{edition_label} channel profile (logo, name, intro and outro)',
+                                       [''] + [str(p) for p in available_profiles],
+                                       format_func=lambda value: 'Select a profile' if not value else Path(value).parent.name,
+                                       key=f'studio-edition-profile-{edition}')
+-                if choice: edition_profiles[edition] = choice
++                if choice:
++                    edition_profiles[edition] = choice
++                    logo_path = (json.loads(Path(choice).read_text(encoding='utf-8')).get('assets') or {}).get('logo', {}).get('path')
++                    if logo_path and Path(logo_path).is_file():
++                        st.image(logo_path, width=90, caption=f'{edition_label} logo')
+             else:
+-                st.caption('Create language-specific profiles in Finishing Studio to attach each channel’s identity.')
++                st.caption('No channel profiles saved yet. Create one for this language below.')
++            with st.expander(f'Create a {edition_label} channel profile here · logo, name, intro, outro', expanded=not available_profiles):
++                new_name = st.text_input(f'Channel name for the {edition_label} edition', key=f'studio-new-profile-name-{edition}', placeholder='e.g. Hunar Setu')
++                new_logo = st.file_uploader(f'{edition_label} logo', type=['png','jpg','jpeg','webp'], key=f'studio-new-profile-logo-{edition}')
++                new_intro = st.file_uploader(f'Optional {edition_label} intro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-intro-{edition}')
++                new_outro = st.file_uploader(f'Optional {edition_label} outro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-outro-{edition}')
++                st.caption('Saving with the name of an existing channel updates that channel. Empty uploads keep its saved media.')
++                if st.button(f'Save {edition_label} channel profile', key=f'studio-save-profile-{edition}'):
++                    saved_profile = False
++                    try:
++                        if not new_name.strip():
++                            raise ValueError('Enter the channel name for this edition')
++                        save_channel_profile(new_name, names={edition: new_name.strip()}, logo=upload_channel_media(new_logo,'logo'),
++                                             intro=upload_channel_media(new_intro,'intro'), outro=upload_channel_media(new_outro,'outro'))
++                        saved_profile = True
++                    except Exception as error:
++                        st.error(str(error))
++                    if saved_profile:
++                        st.session_state['studio-profile-flash'] = f'Saved “{new_name.strip()}”. Select it for the {edition_label} edition above.'
++                        st.session_state['studio-profile-open'] = True
++                        st.rerun()
+     prepared_batch = None
+     use_prepared_batch = False
+     with st.expander('4 · Review language scripts → all TTS → timed cards', expanded=True):
+@@ -774,8 +835,8 @@
+     if submitted:
+         if review and st.session_state.get("studio-use-review") and not reviewed_path:
+             st.warning("Approve a valid reviewed script before creating this production.")
+-        elif studio_voice_on and prepare_language_audio and len(batch_languages)>1 and not use_prepared_batch:
+-            st.warning('Review and prepare the selected language batch in step 4 before automatic multilingual audio. This prevents unreviewed localization from reaching TTS.')
++        elif len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch):
++            st.warning('Additional language editions need Voiceover and an approved language batch. In step 4, approve each localized narration, click “Prepare all selected TTS”, then tick “reuse this exact batch”. Without it, no extra edition can be made, so nothing falls back to English.')
+         elif studio_flow_music_on and studio_audio_mode != 'Silent' and not studio_flow_music_path:
+             st.warning('Choose and download your Flow Music track before creating the production.')
+         elif studio_audio_mode == 'Music only' and background_music == 'off' and not studio_flow_music_path:
+@@ -857,6 +918,7 @@
+     if st.session_state.job_id:
+         st.divider()
+         pipeline_view(st.session_state.job_id)
++        language_edition_panel(st.session_state.job_id)
+ 
+ # ================= MUSIC VIDEO =================
+ elif page == 'MUSIC VIDEO':
+diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-19 14:47:18.594187123 +0000
++++ b/engine/factory.py	2026-10-19 14:47:18.626187283 +0000
+@@ -4265,7 +4265,19 @@
+             for fs in fallback_shots:
+                 gf.write(f"- {fs.shot_id}: {fs.provider} -> {fs.actual_provider or fs.provider}: {fs.fallback_reason}\n")
+ 
++        # v7.0.68: the primary edition is complete here. Every additional language
++        # edition selected in Create is rendered from the approved clean picture and
++        # its reviewed narration. A failure is reported, never replaced by English audio.
++        edition_report = {"status": "not_requested", "editions": {}}
++        try:
++            from .language_editions import render_job_editions
++            edition_report = render_job_editions(
++                D["root"], progress=lambda label, pct, detail="": prog(label, 96 + 3 * float(pct) / 100, detail))
++        except Exception as edition_error:
++            edition_report = {"status": "failed", "editions": {}, "error": str(edition_error)[:800]}
+         final_warnings = list(tl["warnings"])
++        if edition_report.get("status") in ("failed", "partial"):
++            final_warnings.append("Language editions need attention: " + str(edition_report.get("error") or "see production/language_editions_render.json"))
+         if image_fallbacks:
+             final_warnings.append(f'{len(image_fallbacks)} storyboard/master image(s) used substitute media; character and scene fidelity need review')
+         if fallback_shots:
+@@ -4360,6 +4372,7 @@
+                        accepted_shots=m.accepted_count())
+         prog(f"Render complete — {publish_readiness['status']}; providers={actual_counts} fallbacks={total_fallbacks} (storyboard={len(image_fallbacks)})", 100)
+         return {"job_id": job_id, "status": "done", "video": out, "renderer": renderer,
++                "language_editions": edition_report,
+                 "captions": cap, "generation_summary": generation_summary,
+                 "visual_diversity": diversity, "publish_readiness": publish_readiness,
+                 "graphics": overlays if "overlays" in locals() else [],
+diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/finishing_studio.py
+--- a/engine/finishing_studio.py	2026-10-19 14:47:18.594187123 +0000
++++ b/engine/finishing_studio.py	2026-10-19 14:47:18.626187283 +0000
+@@ -63,6 +63,21 @@
+     return {'path': str(dest.resolve()), 'sha256': sha, 'duration': duration}
+ 
+ 
++def _json_snapshot(path, folder, kind):
++    """Immutable copy of reviewed word timings; verified like every other asset."""
++    path = Path(path).expanduser().resolve(strict=True)
++    if not path.is_file() or path.is_symlink():
++        raise ValueError('Invalid ' + kind + ' file')
++    sha = _hash(path)
++    folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
++    dest = folder / (kind + '-' + sha[:20] + '.json')
++    if not dest.exists():
++        tmp = dest.with_name('.' + dest.name + '-' + uuid.uuid4().hex)
++        shutil.copyfile(path, tmp)
++        os.replace(tmp, dest)
++    return {'path': str(dest.resolve()), 'sha256': sha, 'duration': 0}
++
++
+ def save_profile(name, *, names=None, logo='', intro='', outro='', music='', music_license='', root=None):
+     """Create a shared channel profile; optional media becomes immutable snapshots."""
+     root = Path(root or shared_root() / 'channel_profiles').resolve()
+@@ -105,15 +120,25 @@
+ 
+ 
+ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+-                source_rights='own_content', shared_music=None, shared_music_license=''):
+-    """A profile may be a single path or a language->profile path mapping."""
++                source_rights='own_content', shared_music=None, shared_music_license='',
++                source_language=None, require_profiles=True, fit_narration=False, captions=False):
++    """A profile may be a single path or a language->profile path mapping.
++
++    ``source_language`` names the language spoken in the source picture's own
++    narration. Any other edition must carry its own reviewed narration; render()
++    refuses to export it with the source voice. ``fit_narration`` lets a longer
++    reviewed narration stretch the approved picture (bounded, see render()).
++    ``captions`` burns word-timed captions from each edition's reviewed narration.
++    """
+     if source_rights not in ('own_content', 'licensed', 'creative_commons'):
+         raise ValueError('Review and declare source rights')
+     languages = list(dict.fromkeys(languages))
+     if not languages or any(lang not in LANGUAGES for lang in languages):
+         raise ValueError('Choose English, Hindi or Odia editions')
++    if source_language is not None and source_language not in LANGUAGES:
++        raise ValueError('Source language must be English, Hindi or Odia')
+     selection = profile_path if isinstance(profile_path, dict) else {lang: profile_path for lang in languages}
+-    if any(lang not in selection or not selection[lang] for lang in languages):
++    if require_profiles and any(lang not in selection or not selection[lang] for lang in languages):
+         raise ValueError('Choose an actual channel profile for each language edition')
+     original_source = Path(source).resolve()
+     job_root = original_source.parent.parent if original_source.parent.name == 'render' else original_source.parent
+@@ -133,9 +158,13 @@
+         shared = _snapshot(shared_music, asset_dir, 'shared-music')
+     editions = {}
+     for lang in languages:
+-        profile = json.loads(Path(selection[lang]).read_text(encoding='utf8'))
+-        if profile.get('schema_version') != 1 or not profile.get('name'):
+-            raise ValueError('Unsupported channel profile for '+lang)
++        if selection.get(lang):
++            profile = json.loads(Path(selection[lang]).read_text(encoding='utf8'))
++            if profile.get('schema_version') != 1 or not profile.get('name'):
++                raise ValueError('Unsupported channel profile for '+lang)
++        else:
++            # Optional in automatic editions: no logo, name, intro or outro is invented.
++            profile = {'schema_version': 1, 'name': '', 'names': {}, 'assets': {}}
+         assets = {}
+         for kind, entry in profile.get('assets', {}).items():
+             if kind in ('logo', 'intro', 'outro', 'music'):
+@@ -143,7 +172,7 @@
+                 assets[kind] = _snapshot(entry['path'], asset_dir, kind+'-'+lang)
+         editions[lang] = {'channel': {'name': profile['name'], 'display_name': profile.get('names', {}).get(lang) or profile['name']},
+                           'assets': assets, 'profile_music_license': profile.get('music_license',''),
+-                          'cards': [], 'narration': None, 'music': None,
++                          'cards': [], 'narration': None, 'music': None, 'words': None,
+                           'intro': bool(assets.get('intro')), 'outro': bool(assets.get('outro')), 'reviewed': False}
+     edition_file = job_root / 'production' / 'language_editions.json'
+     if edition_file.is_file():
+@@ -157,10 +186,14 @@
+                 edition['cards'] = bundle['cards']
+                 edition['script'] = bundle['script']
+                 edition['timing_source'] = bundle.get('timing_source','unverified')
++                if bundle.get('words') and Path(bundle['words']).is_file():
++                    edition['words'] = _json_snapshot(bundle['words'], asset_dir, 'words-'+lang)
+                 edition['reviewed'] = False
+     plan = {'schema_version': 2, 'state': 'draft', 'source_rights': source_rights,
+             'source': source_asset, 'shared_music': shared,
+             'shared_music_license': str(shared_music_license).strip()[:500],
++            'source_language': source_language, 'fit_narration': bool(fit_narration),
++            'captions': bool(captions),
+             'editions': editions, 'music_volume': 0.12,
+             'branding_motion': True, 'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+     _atomic_json(folder / 'plan.json', plan)
+@@ -271,31 +304,63 @@
+ 
+ 
+ def render(plan_path, language, *, progress=None):
+-    """Render one edition to a new output. Exact snapshots and reviewed plan required."""
++    """Render one edition to a new output. Exact snapshots and reviewed plan required.
++
++    Language editions (``plan['source_language']`` set) never fall back to the
++    source video's voice: the edition must carry its own reviewed narration.
++    When ``plan['fit_narration']`` is set, a longer reviewed narration slows the
++    approved picture by at most 25% so the whole narration is heard; cards and
++    captions are anchored to narration time, so they stay in sync.
++    """
+     plan_path = Path(plan_path).resolve(); plan = json.loads(plan_path.read_text(encoding='utf8'))
+     if plan['state'] != 'reviewed': raise ValueError('Review the plan and approve its cards/assets before render')
+     if language not in plan['editions']: raise ValueError('Edition unavailable')
+     if not plan['editions'][language].get('reviewed'): raise ValueError('This language edition needs review')
+     src = _verified(plan['source']); edition = plan['editions'][language]
++    source_language = plan.get('source_language')
++    if source_language and language != source_language and not edition.get('narration'):
++        raise ValueError(LANGUAGES[language] + ' edition has no reviewed narration. It is not exported with the '
++                         + LANGUAGES[source_language] + ' source voice; prepare and approve its narration first.')
+     edition_assets = edition.get('assets', plan.get('assets', {}))
+     assets = {k:_verified(v) for k,v in edition_assets.items()}
+     for key in ('narration','music'):
+         if edition.get(key): _verified(edition[key])
++    voice = edition.get('narration')
++    words_path = _verified(edition['words']) if edition.get('words') and plan.get('captions') else None
+     info, duration = _probe(src)
+     vstream = next(s for s in info['streams'] if s['codec_type']=='video')
+     width, height = int(vstream['width']), int(vstream['height'])
+     width -= width%2; height -= height%2
+     if width < 320 or height < 240: raise ValueError('Source resolution too small')
++    picture_seconds = float(plan['source']['duration'])
++    fit = False
++    if voice and float(voice['duration']) > picture_seconds + 0.25:
++        if not plan.get('fit_narration'):
++            raise ValueError('Narration exceeds source footage; edit timing or source')
++        if float(voice['duration']) > picture_seconds * 1.25:
++            raise ValueError(LANGUAGES[language]+' narration is more than 25% longer than the approved picture. '
++                             'Shorten that language script, review it, and prepare it again.')
++        fit = True
+     folder = plan_path.parent / 'exports'; folder.mkdir(exist_ok=True)
+     dest = folder / (language+'-'+plan_path.parent.name+'.mp4')
+     if dest.exists(): raise FileExistsError('Export exists; it will never be overwritten: '+str(dest))
+     tmp_dir = Path(tempfile.mkdtemp(dir=plan_path.parent, prefix='.render-'))
+     try:
++        picture = src
++        if fit:
++            # Stretch only the picture timeline; the reviewed narration keeps its natural pace.
++            voice_seconds = float(voice['duration'])
++            scale = voice_seconds / picture_seconds
++            picture = tmp_dir/'picture-fit.mp4'
++            _run(['ffmpeg','-y','-hide_banner','-loglevel','error','-i',str(src),'-an',
++                  '-vf',f'setpts={scale:.6f}*PTS','-t',f'{voice_seconds:.3f}',
++                  '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
++            picture_seconds = voice_seconds
+         # Normalization yields identical codec/timebase for concat, and handles odd source dimensions.
+         clips=[]
+         for index, kind in enumerate(['intro','source','outro']):
+             if kind != 'source' and (not edition.get(kind) or kind not in assets): continue
+-            source = src if kind=='source' else assets[kind]
++            source = picture if kind=='source' else assets[kind]
+             i, d = _probe(source)
+             has_audio = any(s.get('codec_type')=='audio' for s in i['streams'])
+             segment=tmp_dir / f'{index}.mp4'
+@@ -334,12 +399,29 @@
+             cmd += ['-loop','1','-framerate','30','-i',str(art)]
+             start=offset+float(card['start']);end=offset+float(card['end'])
+             filters += [f'[{current}][{inp}:v]overlay=0:0:enable=\'between(t,{start:.3f},{end:.3f})\':shortest=1[v{inp}]'];current=f'v{inp}';inp+=1
+-        voice=edition.get('narration')
++        caption_ass=None
++        if words_path:
++            # Captions use this edition's own reviewed word timings, shifted past any intro.
++            from engine.render.captions_ass import build_captions
++            from engine.render.ffmpeg_renderer import has_subtitles_filter, _esc_filter_path, _fontsdir
++            if not has_subtitles_filter():
++                raise RuntimeError('Captions need FFmpeg with libass subtitles. This edition was not exported without its captions.')
++            words=json.loads(words_path.read_text(encoding='utf8'))
++            shifted=[{'word':w['word'],'start':float(w['start'])+offset,'end':float(w['end'])+offset} for w in words]
++            vertical=height>width
++            cap=build_captions(shifted,str(tmp_dir/'captions'),template='OPUS' if vertical else 'HORMOZI',
++                               aspect='9:16' if vertical else '16:9',W=width,H=height,duration=full_duration)
++            caption_ass=cap.get('ass')
++            if caption_ass:
++                fontsdir=_fontsdir()
++                sub=f"subtitles='{_esc_filter_path(caption_ass)}'"+(f":fontsdir='{_esc_filter_path(fontsdir)}'" if fontsdir else '')
++                filters += [f'[{current}]{sub}[vcap]']; current='vcap'
++        voice_path=None
+         if voice:
+-            # Narration must fit the source timeline; no implicit speed-up or dialogue replacement of intro/outro.
+-            if voice['duration'] > plan['source']['duration']+0.25: raise ValueError('Narration exceeds source footage; edit timing or source')
+-            cmd += ['-i',str(_verified(voice))]
+-            source_end = offset + plan['source']['duration']
++            # Narration sits on the approved timeline; intro/outro audio is kept and the picture's audio is muted.
++            voice_path=_verified(voice)
++            cmd += ['-i',str(voice_path)]
++            source_end = offset + picture_seconds
+             filters += [f'[{inp}:a]adelay={int(offset*1000)}|{int(offset*1000)},apad,atrim=0:{full_duration:.3f}[voice]',
+                         f"[0:a]volume='if(between(t,{offset:.3f},{source_end:.3f}),0,1)':eval=frame[bookends]",
+                         '[bookends][voice]amix=inputs=2:duration=first:dropout_transition=0[speech]']
+@@ -370,7 +452,9 @@
+         os.replace(result,dest)
+         _atomic_json(dest.with_suffix('.provenance.json'), {'plan':str(plan_path),'language':language,'source_sha256':plan['source']['sha256'],
+                      'output_sha256':_hash(dest),'music_license':edition.get('music_license') or plan.get('shared_music_license') or edition.get('profile_music_license') or plan.get('profile_music_license'),
+-                     'channel':edition.get('channel',plan.get('channel')), 'duration':final_duration})
++                     'channel':edition.get('channel',plan.get('channel')), 'duration':final_duration,
++                     'narration_sha256': voice['sha256'] if voice else None,
++                     'narration_fitted_picture': fit, 'captions_burned': bool(caption_ass)})
+         if progress:progress(1.0)
+         return dest
+     finally:shutil.rmtree(tmp_dir,ignore_errors=True)
+diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/finishing_ui.py
+--- a/engine/finishing_ui.py	2026-10-19 14:47:18.594187123 +0000
++++ b/engine/finishing_ui.py	2026-10-19 14:47:18.626187283 +0000
+@@ -48,6 +48,8 @@
+     source=st.selectbox('Saved source', ['Enter local MP4 path']+[r['path'] for r in choices],
+                        format_func=lambda p:next((r['label'] for r in choices if r['path']==p),p))
+     if source=='Enter local MP4 path':source=st.text_input('Local video path',key='finish-source-path')
++    source_language=st.selectbox('Language spoken in this source video', ['en','hi','or'], format_func=lambda x:finish.LANGUAGES[x], key='finish-source-language',
++        help='Any other edition must have its own reviewed narration. Without it, that edition is refused rather than exported with this voice.')
+     languages=st.multiselect('Language editions',['en','hi','or'],default=['en'],format_func=lambda x:finish.LANGUAGES[x])
+     st.subheader('Choose the actual channel for each edition')
+     channel_choices={}
+@@ -65,6 +67,7 @@
+             if row and hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()!=row['sha256']:
+                 raise ValueError('Music changed after import; import it again')
+             path=finish.create_plan(source,channel_choices,languages=languages,source_rights=rights,
++                  source_language=source_language,
+                   shared_music=row['path'] if row else None,
+                   shared_music_license=(row['source_url']+' · '+row['license']) if row else '')
+             st.session_state['finish-plan']=str(path);st.success('Draft plan saved: '+str(path))
+diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine/language_editions.py
+--- a/engine/language_editions.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/language_editions.py	2026-10-19 14:47:18.626187283 +0000
+@@ -0,0 +1,156 @@
++"""Render the reviewed language editions of a finished production.
++
++The production's own final render stays the primary-language edition. Each
++additional edition is built from the same clean visual master (picture only),
++its exact reviewed narration, its timed cards and word-timed captions, and the
++channel profile chosen in Create. Nothing here calls Gemini, Flow or any visual
++generator, and nothing is overwritten: each export is a new file.
++
++State lives in the job:
++  production/language_editions.json       selections saved by Create (inputs)
++  production/language_editions_render.json per-language render record (outputs)
++"""
++from __future__ import annotations
++
++import json
++import time
++from pathlib import Path
++
++from . import finishing_studio as finish
++
++STATE_NAME = 'language_editions.json'
++RECORD_NAME = 'language_editions_render.json'
++
++
++def _read(path, default=None):
++    path = Path(path)
++    if not path.is_file():
++        return default
++    return json.loads(path.read_text(encoding='utf8'))
++
++
++def _label(code):
++    return finish.LANGUAGES.get(code, code)
++
++
++def _production_music(job_root):
++    """Reuse the primary production's background track, with its recorded licence."""
++    sound = _read(Path(job_root) / 'audio' / 'sound_plan.json', {}) or {}
++    music = sound.get('music')
++    if isinstance(music, str):
++        music = {'path': music}
++    if not isinstance(music, dict) or not music.get('path'):
++        return None, ''
++    path = Path(music['path'])
++    if not path.is_file():
++        return None, ''
++    licence = ' · '.join(str(x) for x in (music.get('source'), music.get('license')) if x) or \
++        'Production background track; licence recorded in the job provenance'
++    return str(path), licence
++
++
++def _record_path(job_root):
++    return Path(job_root) / 'production' / RECORD_NAME
++
++
++def _save_record(job_root, record):
++    record['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
++    finish._atomic_json(_record_path(job_root), record)
++
++
++def requested_languages(job_root):
++    """(source_language, additional_languages, state) for a job; empty when single-language."""
++    state = _read(Path(job_root) / 'production' / STATE_NAME)
++    if not state:
++        return None, [], None
++    source = str(state.get('source_language') or 'en')
++    editions = list(dict.fromkeys(state.get('editions') or [source]))
++    return source, [code for code in editions if code != source], state
++
++
++def render_job_editions(job_root, *, progress=None):
++    """Render every pending additional edition. Returns a status report; never silently English.
++
++    Status values: ``not_requested`` (no language state), ``single_language``,
++    ``exported`` (all editions current), ``partial`` or ``failed`` (see ``editions``).
++    Raises ValueError only for preconditions the user must fix first.
++    """
++    job_root = Path(job_root).resolve()
++    emit = progress or (lambda label, pct, detail='': None)
++    source, extra, state = requested_languages(job_root)
++    if state is None:
++        return {'status': 'not_requested', 'editions': {}}
++    if not extra:
++        return {'status': 'single_language', 'editions': {}}
++
++    bundles = state.get('bundles') or {}
++    not_ready = [code for code in extra if code not in bundles]
++    if not_ready:
++        raise ValueError('Approve and prepare the narration for ' + ', '.join(_label(c) for c in not_ready) +
++                         ' in Create step 4 before rendering language editions. No English voice is used as a fallback.')
++    visual_record = _read(job_root / 'production' / 'visual_master.json')
++    if not visual_record:
++        raise ValueError('The clean visual master is missing. Render this production again so the language '
++                         'editions use the approved picture.')
++    visual = Path(visual_record['path'])
++    if not visual.is_file() or finish._hash(visual) != visual_record.get('sha256'):
++        raise ValueError('The clean visual master changed or is missing. Render this production again.')
++
++    record = _read(_record_path(job_root), {'schema_version': 1, 'editions': {}})
++    previous = record.get('editions', {})
++    pending = []
++    for code in extra:
++        bundle_sha = bundles[code].get('audio_sha256')
++        entry = previous.get(code, {})
++        export = Path(entry.get('path', '')) if entry.get('path') else None
++        current = (entry.get('status') == 'exported' and entry.get('audio_sha256') == bundle_sha
++                   and export is not None and export.is_file() and finish._hash(export) == entry.get('sha256'))
++        if not current:
++            pending.append(code)
++    if not pending:
++        return {'status': 'exported', 'editions': previous, 'record': str(_record_path(job_root))}
++
++    profiles = state.get('profiles') or {}
++    music_path, music_licence = _production_music(job_root)
++    plan_path = finish.create_plan(
++        visual, {code: profiles.get(code) for code in pending}, languages=pending,
++        output_root=job_root / 'language_editions', source_rights='own_content',
++        shared_music=music_path, shared_music_license=music_licence,
++        source_language=source, require_profiles=False, fit_narration=True, captions=True)
++    plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
++    for code in pending:
++        finish.set_edition(plan_path, code, reviewed=True)
++
++    record.update({'schema_version': 1, 'source_language': source, 'plan': str(plan_path)})
++    failures = []
++    for index, code in enumerate(pending):
++        label = _label(code)
++        entry = {'status': 'rendering', 'plan': str(plan_path), 'audio_sha256': bundles[code].get('audio_sha256'),
++                 'channel': plan['editions'][code].get('channel', {})}
++        record.setdefault('editions', {})[code] = entry
++        _save_record(job_root, record)
++        emit('Rendering ' + label + ' edition', 100 * index / len(pending), label)
++
++        def edition_progress(value, _index=index, _label=label):
++            emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / len(pending), _label)
++        try:
++            exported = finish.render(plan_path, code, progress=edition_progress)
++            entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
++        except Exception as error:  # keep the primary edition and every finished edition
++            entry.update(status='failed', error=str(error)[:800])
++            failures.append(label + ': ' + str(error)[:300])
++        entry['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
++        _save_record(job_root, record)
++    emit('Language editions finished', 100)
++
++    statuses = {code: record['editions'][code].get('status') for code in extra}
++    if all(status == 'exported' for status in statuses.values()):
++        overall = 'exported'
++    elif any(status == 'exported' for status in statuses.values()):
++        overall = 'partial'
++    else:
++        overall = 'failed'
++    record['status'] = overall
++    _save_record(job_root, record)
++    return {'status': overall, 'editions': record['editions'], 'record': str(_record_path(job_root)),
++            'error': '; '.join(failures)}
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
+--- a/tests/test_v768_language_editions_render.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-19 14:47:18.630187303 +0000
+@@ -0,0 +1,215 @@
++"""v7.0.68: every selected language edition is rendered from its own reviewed narration.
++
++Real FFmpeg media, no Gemini/TTS/Flow calls. Narration tones are used as voice
++fingerprints: 660 Hz for Hindi and 880 Hz for Odia. An English 440 Hz voice must
++never appear in a non-English edition.
++"""
++import array
++import hashlib
++import importlib.util
++import json
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++SPEC = importlib.util.spec_from_file_location('finish_v768', ROOT / 'engine' / 'finishing_studio.py')
++finish = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(finish)
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')), reason='FFmpeg required')
++
++
++def _tone(path, frequency, seconds):
++    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', f'sine=frequency={frequency}:sample_rate=44100',
++           '-t', str(seconds), '-c:a', 'libmp3lame', '-b:a', '128k', str(path)]
++    subprocess.run(cmd, check=True)
++    return path
++
++
++def _picture(path, seconds):
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=24',
++                    '-t', str(seconds), '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)], check=True)
++    return path
++
++
++def _sha(path):
++    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
++
++
++def _zero_crossings_per_second(path, seconds=1.0, start=0.0):
++    raw = subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', str(start), '-i', str(path), '-vn', '-ac', '1', '-ar', '8000',
++                          '-f', 's16le', '-t', str(seconds), '-'], capture_output=True, check=True).stdout
++    samples = array.array('h', raw)
++    crossings = sum(1 for a, b in zip(samples, samples[1:]) if (a < 0) != (b < 0))
++    return crossings / seconds
++
++
++def _duration(path):
++    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', str(path)],
++                         capture_output=True, text=True, check=True).stdout
++    return float(out.strip())
++
++
++def _job(tmp_path, *, picture_seconds=3.0, hindi_seconds=3.0, odia_seconds=3.0, odia_profile=None):
++    """A finished production: clean visual master plus reviewed Hindi/Odia bundles."""
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    (job / 'audio').mkdir()
++    visual = _picture(job / 'render' / 'visual-master.mp4', picture_seconds)
++    finish._atomic_json(job / 'production' / 'visual_master.json',
++                        {'path': str(visual.resolve()), 'sha256': _sha(visual), 'duration': picture_seconds,
++                         'contains': 'picture and approved B-roll only; no speech, captions, music or branding'})
++    bundles = {}
++    for code, freq, seconds in (('hi', 660, hindi_seconds), ('or', 880, odia_seconds)):
++        folder = job / 'speech-editions' / code / ('key-' + code)
++        folder.mkdir(parents=True)
++        audio = _tone(folder / 'voice.mp3', freq, seconds)
++        words = [{'word': 'शब्द', 'start': 0.1, 'end': 0.9}, {'word': 'दो', 'start': 1.0, 'end': 1.8},
++                 {'word': 'तीन', 'start': 2.0, 'end': 2.8}]
++        words_path = folder / 'words.json'
++        words_path.write_text(json.dumps(words, ensure_ascii=False), encoding='utf-8')
++        bundles[code] = {'audio': str(audio), 'audio_sha256': _sha(audio), 'duration': seconds,
++                         'words': str(words_path), 'script': 'स्वीकृत वर्णन', 'language': code,
++                         'timing_source': 'test-measured',
++                         'cards': [{'text': 'नमस्ते', 'start': 0.5, 'end': 2.5, 'start_word': 0, 'end_word': 1,
++                                    'spoken_anchor': 'शब्द दो'}]}
++    profiles = {'hi': None, 'or': odia_profile}
++    finish._atomic_json(job / 'production' / 'language_editions.json',
++                        {'source_language': 'en', 'editions': ['en', 'hi', 'or'], 'profiles': profiles,
++                         'prepare_audio': True, 'bundles': bundles, 'status': 'prepared batch attached'})
++    return job
++
++
++@needs_ffmpeg
++def test_each_selected_language_is_rendered_with_its_own_narration(tmp_path):
++    from engine.language_editions import render_job_editions
++    profile_root = tmp_path / 'profiles'
++    logo = tmp_path / 'odia-logo.png'
++    from PIL import Image
++    Image.new('RGB', (120, 120), 'orange').save(logo)
++    odia_profile = finish.save_profile('Odia Pragati', names={'or': 'ଓଡ଼ିଆ ପ୍ରଗତି'}, logo=logo, root=profile_root)
++    job = _job(tmp_path, odia_profile=str(odia_profile))
++
++    report = render_job_editions(job)
++
++    assert report['status'] == 'exported', report
++    hindi = Path(report['editions']['hi']['path'])
++    odia = Path(report['editions']['or']['path'])
++    assert hindi.is_file() and odia.is_file()
++    assert hindi.name.startswith('hi-') and odia.name.startswith('or-')
++    # Each edition speaks its own reviewed narration, never the primary/English voice.
++    assert 1250 < _zero_crossings_per_second(hindi) < 1400          # 660 Hz Hindi voice
++    assert 1700 < _zero_crossings_per_second(odia) < 1850           # 880 Hz Odia voice
++    assert abs(_duration(hindi) - 3.0) < 0.3 and abs(_duration(odia) - 3.0) < 0.3
++    hindi_provenance = json.loads(hindi.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert hindi_provenance['captions_burned'] is True and hindi_provenance['narration_fitted_picture'] is False
++    assert json.loads(odia.with_suffix('.provenance.json').read_text(encoding='utf-8'))['channel']['name'] == 'Odia Pragati'
++    record = json.loads((job / 'production' / 'language_editions_render.json').read_text(encoding='utf-8'))
++    assert record['status'] == 'exported' and set(record['editions']) == {'hi', 'or'}
++
++    # Re-running reuses the verified exports; nothing is re-rendered or overwritten.
++    again = render_job_editions(job)
++    assert again['status'] == 'exported'
++    assert again['editions']['hi']['path'] == report['editions']['hi']['path']
++
++
++@needs_ffmpeg
++def test_longer_localized_narration_stretches_the_picture_within_the_limit(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, picture_seconds=3.0, hindi_seconds=3.3, odia_seconds=3.0)
++    report = render_job_editions(job)
++    assert report['status'] == 'exported', report
++    export = Path(report['editions']['hi']['path'])
++    assert abs(_duration(export) - 3.3) < 0.2          # the whole Hindi narration is kept
++    assert 1250 < _zero_crossings_per_second(export, seconds=1.0, start=0.5) < 1400   # Hindi voice intact
++    provenance = json.loads(export.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['narration_fitted_picture'] is True
++
++
++@needs_ffmpeg
++def test_narration_more_than_quarter_longer_fails_visibly_not_with_english(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, picture_seconds=3.0, hindi_seconds=4.2, odia_seconds=3.0)
++    report = render_job_editions(job)
++    assert report['status'] == 'partial'
++    assert report['editions']['hi']['status'] == 'failed'
++    assert '25%' in report['editions']['hi']['error']
++    assert report['editions']['or']['status'] == 'exported'
++
++
++@needs_ffmpeg
++def test_missing_reviewed_narration_is_refused_before_any_render(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    state_path = job / 'production' / 'language_editions.json'
++    state = json.loads(state_path.read_text(encoding='utf-8'))
++    del state['bundles']['or']
++    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
++    with pytest.raises(ValueError, match='Odia'):
++        render_job_editions(job)
++    assert not (job / 'language_editions').exists()
++
++
++@needs_ffmpeg
++def test_single_language_job_keeps_the_normal_single_render(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    finish._atomic_json(job / 'production' / 'language_editions.json',
++                        {'source_language': 'en', 'editions': ['en'], 'profiles': {}, 'bundles': {}})
++    assert render_job_editions(job)['status'] == 'single_language'
++    assert render_job_editions(tmp_path / 'no-selection')['status'] == 'not_requested'
++
++
++@needs_ffmpeg
++def test_manual_edition_never_borrows_the_source_voice(tmp_path):
++    """Finishing Studio: a Hindi edition without its own narration is refused, not exported in English."""
++    source = _picture(tmp_path / 'source.mp4', 2.0)
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(source), '-f', 'lavfi', '-i', 'sine=frequency=440',
++                    '-t', '2', '-c:v', 'copy', '-c:a', 'aac', '-shortest', str(tmp_path / 'with-voice.mp4')], check=True)
++    profile = finish.save_profile('Guard', root=tmp_path / 'profiles')
++    plan = finish.create_plan(tmp_path / 'with-voice.mp4', profile, languages=['en', 'hi'],
++                              output_root=tmp_path / 'out', source_language='en')
++    finish.set_edition(plan, 'hi', cards=[], reviewed=True)
++    with pytest.raises(ValueError, match='no reviewed narration'):
++        finish.render(plan, 'hi')
++    finish.set_edition(plan, 'en', cards=[], reviewed=True)
++    assert finish.render(plan, 'en').is_file()        # the source-language edition keeps its own audio
++
++
++@needs_ffmpeg
++def test_edition_without_a_channel_profile_renders_without_a_mark(tmp_path):
++    source = _picture(tmp_path / 'source.mp4', 2.0)
++    plan = finish.create_plan(source, {'hi': None}, languages=['hi'], output_root=tmp_path / 'out', require_profiles=False)
++    data = json.loads(Path(plan).read_text(encoding='utf-8'))
++    assert data['editions']['hi']['channel']['name'] == '' and data['editions']['hi']['assets'] == {}
++    with pytest.raises(ValueError, match='channel profile'):
++        finish.create_plan(source, {'hi': None}, languages=['hi'], output_root=tmp_path / 'out2')
++
++
++def test_primary_render_hooks_language_editions_and_surfaces_failures():
++    factory = (ROOT / 'engine' / 'factory.py').read_text(encoding='utf-8')
++    assert 'render_job_editions(' in factory
++    assert 'Language editions need attention' in factory
++    assert factory.index('render_job_editions(') < factory.index('m.status = "done"')
++    assert '"language_editions": edition_report' in factory
++
++
++def test_create_page_blocks_extra_editions_without_approved_batch_and_offers_profiles():
++    app = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert 'Additional language editions need Voiceover and an approved language batch' in app
++    assert 'len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch)' in app
++    assert 'Create a {edition_label} channel profile here' in app
++    assert 'def language_edition_panel' in app and 'render_job_editions' in app
++    assert app.index('Additional language editions · optional') < app.index('2 · Review script and cast · optional')
++    assert 'Prepare selected language scripts for review · no TTS' in app
++
++
++def test_finishing_ui_declares_source_language_before_planning():
++    ui = (ROOT / 'engine' / 'finishing_ui.py').read_text(encoding='utf-8')
++    assert "'Language spoken in this source video'" in ui
++    assert 'source_language=source_language' in ui

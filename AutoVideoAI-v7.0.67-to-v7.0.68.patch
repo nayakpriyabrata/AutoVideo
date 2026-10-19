@@ -1,7 +1,7 @@
 diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
 --- a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
-+++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-19 14:47:18.614187223 +0000
-@@ -0,0 +1,52 @@
++++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-19 16:08:53.020211901 +0000
+@@ -0,0 +1,63 @@
 +# AutoVideoAI 7.0.68 · language editions now render as videos
 +
 +## What was wrong in 7.0.67
@@ -54,9 +54,20 @@ diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md 
 +  - re-run reuse;
 +  - the Create and factory wiring.
 +- Full suite: the same 24 pre-existing failures as v7.0.67 (fonts, browser and UI environment tests), with 10 new passing tests.
++
++## Upgrading an installed 7.0.67 folder
++
++Stop the dashboard first. Extract the 7.0.68 zip beside your installation folder, then run from the installation folder:
++
++```
++python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py .            # dry run: shows the plan
++python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py . --apply    # installs the code
++```
++
++The updater replaces only the code and documentation files listed in its plan. Outputs, jobs, profiles, music, characters and channel data are never copied, moved or deleted. It refuses to run if a listed file was edited locally, if the installed version is not 7.0.67 (or an already-updated 7.0.68), or if the 7.0.68 zip is incomplete. Before replacing files it saves the previous code under `code-update-backups/v7.0.68-<timestamp>`, and it restores those files if an install step fails. Re-running after success reports "Already up to date" and changes nothing. Restart the dashboard afterwards.
 diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
---- a/README.md	2026-10-19 14:47:18.590187103 +0000
-+++ b/README.md	2026-10-19 14:47:18.618187243 +0000
+--- a/README.md	2026-10-19 16:08:53.004211775 +0000
++++ b/README.md	2026-10-19 16:08:53.024211932 +0000
 @@ -1,3 +1,7 @@
 +# Update 7.0.68
 +
@@ -65,15 +76,119 @@ diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
  # Update 7.0.67
  
  Guided Studio now separates the master script from its output language editions. Choose the master/primary language and any additional English, Hindi or Odia editions before drafting. Gemini drafts one story, selected editions are localized for review, and the exact approved scripts are used to prepare every TTS track before any timed-card request. See [the language-edition guide](LANGUAGE_EDITIONS_V7_0_67.md).
+diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-19 16:08:53.004211775 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-19 16:08:53.036212027 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.67",
+-  "built_at": "2026-10-19T03:37:42+00:00",
++  "version": "7.0.68",
++  "built_at": "2026-10-19T14:47:03+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -223,6 +223,11 @@
+       "sha256": "eb0faec571a67515a621de7af2f90f8cd388bb5aa6daa10c44fbdfa6985d3947"
+     },
+     {
++      "path": "LANGUAGE_EDITIONS_RENDER_V7_0_68.md",
++      "bytes": 4456,
++      "sha256": "7cab80dc9759f4143558ae219cc96584756d8a55d795ba3166c95ed18f23ad1c"
++    },
++    {
+       "path": "LANGUAGE_EDITIONS_V7_0_67.md",
+       "bytes": 3810,
+       "sha256": "a76ad31f1f49d617eed2433ba0230e0000b2474b0374d9b768602ad7f7dd4f03"
+@@ -299,8 +304,8 @@
+     },
+     {
+       "path": "README.md",
+-      "bytes": 6168,
+-      "sha256": "c715996256015f9b2ce5a97bf943f8884037fb4ef18aa48c70e335e78b65366b"
++      "bytes": 6550,
++      "sha256": "786227a43d8bfaa5e97aa33a587be0e3c745476eff75ed6553bdec0a01477122"
+     },
+     {
+       "path": "README_V742.md",
+@@ -805,7 +810,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "6448baf7e1324e84ccefd1993bab81c1f3e7f3f6a948e3014839f1698ccd1146"
++      "sha256": "d4019fe552d665f3c34e1313a6e5e872e63f4adcc798cef146f3d49d3b7db39d"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -844,8 +849,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 210281,
+-      "sha256": "3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75"
++      "bytes": 214927,
++      "sha256": "ee0e97ff9e25f865b454a64a2fa4356d584957667ce9833cecad419ccc6541ad"
+     },
+     {
+       "path": "architecture.md",
+@@ -1209,18 +1214,18 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 274332,
+-      "sha256": "34fa4a483bb18aeb472208c6408f25ebdb737c1c9c581770709874c7fbd5e22a"
++      "bytes": 275319,
++      "sha256": "fda39eb38f6725fb6a8b7766052b2468cfdb7f3c2e73fb4990e8de58eff5dcce"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+-      "bytes": 21676,
+-      "sha256": "fd75959b452f8cfe5ea24afd92119aa018f255babfdef0b4ca0160c2f5cf6026"
++      "bytes": 26909,
++      "sha256": "7b53d24e7ba337df1fd291191723cc5ad52dcad40a19841d04e832732bb32ad8"
+     },
+     {
+       "path": "engine/finishing_ui.py",
+-      "bytes": 11501,
+-      "sha256": "f52a733c16b7828dc30a084492b34a622a56bc94ba1bf4a5d96ee2927eb7f383"
++      "bytes": 11861,
++      "sha256": "d0519ca0d3d8b483af6b09377f7ed9623cf8f83d9de1779e602bb16a6f007e78"
+     },
+     {
+       "path": "engine/flow_approval.py",
+@@ -1343,6 +1348,11 @@
+       "sha256": "f9b1844cf109e00da91a1b88d00d0943127926b6891fba4f44f8fbbf0cf61dc0"
+     },
+     {
++      "path": "engine/language_editions.py",
++      "bytes": 7143,
++      "sha256": "10fdefa8205edb01aec847c0719b457cfb9a0812b841a11c987e9a94f7dd585d"
++    },
++    {
+       "path": "engine/languages.py",
+       "bytes": 2269,
+       "sha256": "a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c"
+@@ -2598,6 +2608,11 @@
+       "sha256": "4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa"
+     },
+     {
++      "path": "tests/test_v768_language_editions_render.py",
++      "bytes": 11436,
++      "sha256": "ff9bae7bf525bff97b1b00f0ab915d404e075da2343f80857796e26fa3099e77"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
 diff -ruN -x .pytest_cache -x __pycache__ a/VERSION b/VERSION
---- a/VERSION	2026-10-19 14:47:18.590187103 +0000
-+++ b/VERSION	2026-10-19 14:47:18.618187243 +0000
+--- a/VERSION	2026-10-19 16:08:53.008211806 +0000
++++ b/VERSION	2026-10-19 16:08:53.024211932 +0000
 @@ -1 +1 @@
 -7.0.67
 +7.0.68
 diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
---- a/app.py	2026-10-19 14:47:18.590187103 +0000
-+++ b/app.py	2026-10-19 14:47:18.618187243 +0000
+--- a/app.py	2026-10-19 16:08:53.008211806 +0000
++++ b/app.py	2026-10-19 16:08:53.024211932 +0000
 @@ -501,6 +501,39 @@
          c.metric(name, "✓" if ok is True else ("·" if ok is False else ok))
  
@@ -191,8 +306,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
  # ================= MUSIC VIDEO =================
  elif page == 'MUSIC VIDEO':
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.py
---- a/engine/factory.py	2026-10-19 14:47:18.594187123 +0000
-+++ b/engine/factory.py	2026-10-19 14:47:18.626187283 +0000
+--- a/engine/factory.py	2026-10-19 16:08:53.008211806 +0000
++++ b/engine/factory.py	2026-10-19 16:08:53.028211964 +0000
 @@ -4265,7 +4265,19 @@
              for fs in fallback_shots:
                  gf.write(f"- {fs.shot_id}: {fs.provider} -> {fs.actual_provider or fs.provider}: {fs.fallback_reason}\n")
@@ -222,8 +337,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.p
                  "visual_diversity": diversity, "publish_readiness": publish_readiness,
                  "graphics": overlays if "overlays" in locals() else [],
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/finishing_studio.py
---- a/engine/finishing_studio.py	2026-10-19 14:47:18.594187123 +0000
-+++ b/engine/finishing_studio.py	2026-10-19 14:47:18.626187283 +0000
+--- a/engine/finishing_studio.py	2026-10-19 16:08:53.008211806 +0000
++++ b/engine/finishing_studio.py	2026-10-19 16:08:53.028211964 +0000
 @@ -63,6 +63,21 @@
      return {'path': str(dest.resolve()), 'sha256': sha, 'duration': duration}
  
@@ -429,8 +544,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/
          return dest
      finally:shutil.rmtree(tmp_dir,ignore_errors=True)
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/finishing_ui.py
---- a/engine/finishing_ui.py	2026-10-19 14:47:18.594187123 +0000
-+++ b/engine/finishing_ui.py	2026-10-19 14:47:18.626187283 +0000
+--- a/engine/finishing_ui.py	2026-10-19 16:08:53.008211806 +0000
++++ b/engine/finishing_ui.py	2026-10-19 16:08:53.028211964 +0000
 @@ -48,6 +48,8 @@
      source=st.selectbox('Saved source', ['Enter local MP4 path']+[r['path'] for r in choices],
                         format_func=lambda p:next((r['label'] for r in choices if r['path']==p),p))
@@ -450,7 +565,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/fini
              st.session_state['finish-plan']=str(path);st.success('Draft plan saved: '+str(path))
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine/language_editions.py
 --- a/engine/language_editions.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/engine/language_editions.py	2026-10-19 14:47:18.626187283 +0000
++++ b/engine/language_editions.py	2026-10-19 16:08:53.028211964 +0000
 @@ -0,0 +1,156 @@
 +"""Render the reviewed language editions of a finished production.
 +
@@ -610,7 +725,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine
 +            'error': '; '.join(failures)}
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
 --- a/tests/test_v768_language_editions_render.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_language_editions_render.py	2026-10-19 14:47:18.630187303 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-19 16:08:53.036212027 +0000
 @@ -0,0 +1,215 @@
 +"""v7.0.68: every selected language edition is rendered from its own reviewed narration.
 +
@@ -827,3 +942,135 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_re
 +    ui = (ROOT / 'engine' / 'finishing_ui.py').read_text(encoding='utf-8')
 +    assert "'Language spoken in this source video'" in ui
 +    assert 'source_language=source_language' in ui
+diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools/update_v767_to_v768.py
+--- a/tools/update_v767_to_v768.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v767_to_v768.py	2026-10-19 16:08:53.036212027 +0000
+@@ -0,0 +1,128 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.68 language-edition render update to a v7.0.67 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.68 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'LANGUAGE_EDITIONS_RENDER_V7_0_68.md', 'README.md', 'VERSION', 'app.py', 'engine/factory.py',
++    'engine/finishing_studio.py', 'engine/finishing_ui.py', 'engine/language_editions.py',
++    'tests/test_v768_language_editions_render.py', 'tools/update_v767_to_v768.py',
++]
++# Files that already exist in 7.0.67: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'README.md': ['c715996256015f9b2ce5a97bf943f8884037fb4ef18aa48c70e335e78b65366b'],
++    'VERSION': ['6448baf7e1324e84ccefd1993bab81c1f3e7f3f6a948e3014839f1698ccd1146'],
++    'app.py': ['3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75'],
++    'engine/factory.py': ['34fa4a483bb18aeb472208c6408f25ebdb737c1c9c581770709874c7fbd5e22a'],
++    'engine/finishing_studio.py': ['fd75959b452f8cfe5ea24afd92119aa018f255babfdef0b4ca0160c2f5cf6026'],
++    'engine/finishing_ui.py': ['f52a733c16b7828dc30a084492b34a622a56bc94ba1bf4a5d96ee2927eb7f383'],
++}
++ACCEPTED_INSTALLS = ('7.0.67', '7.0.68')  # 7.0.68 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.67 (found ' + current + '). '
++                         'For 7.0.66 run tools/update_v766_to_v767.py from the 7.0.67 folder first.')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.68 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.68 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.68-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.68. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

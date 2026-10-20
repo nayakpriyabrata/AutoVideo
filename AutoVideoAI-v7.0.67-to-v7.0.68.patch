@@ -1,7 +1,7 @@
 diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
 --- a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
-+++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-19 16:08:53.020211901 +0000
-@@ -0,0 +1,63 @@
++++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-20 03:45:57.762420657 +0000
+@@ -0,0 +1,71 @@
 +# AutoVideoAI 7.0.68 · language editions now render as videos
 +
 +## What was wrong in 7.0.67
@@ -65,9 +65,17 @@ diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md 
 +```
 +
 +The updater replaces only the code and documentation files listed in its plan. Outputs, jobs, profiles, music, characters and channel data are never copied, moved or deleted. It refuses to run if a listed file was edited locally, if the installed version is not 7.0.67 (or an already-updated 7.0.68), or if the 7.0.68 zip is incomplete. Before replacing files it saves the previous code under `code-update-backups/v7.0.68-<timestamp>`, and it restores those files if an install step fails. Re-running after success reports "Already up to date" and changes nothing. Restart the dashboard afterwards.
++
++## Flow downloads wait for the media to load
++
++Flow shows a placeholder or 360p preview first and prepares the real file in the background, which can take 15-20 seconds. Earlier builds could open a tile's Download menu, or click Download in the viewer, before that happened. The download then saved partial media, or the browser page closed.
++
++Now every Flow image and video download waits until the element is visible, decoded, not busy, and unchanged for 2 seconds. Video tiles keep their 15-second settle. After 90 seconds the request is retained for exact recovery and nothing is downloaded. Before this change, a slow media load could still start a download early.
++
++Known limit: the readiness rules are checked against Flow's page structure only in unit tests with fake page objects. Run one live generation and confirm the log shows "finished loading; starting download" before the download.
 diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
---- a/README.md	2026-10-19 16:08:53.004211775 +0000
-+++ b/README.md	2026-10-19 16:08:53.024211932 +0000
+--- a/README.md	2026-10-20 03:45:57.746420411 +0000
++++ b/README.md	2026-10-20 03:45:57.762420657 +0000
 @@ -1,3 +1,7 @@
 +# Update 7.0.68
 +
@@ -77,14 +85,14 @@ diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
  
  Guided Studio now separates the master script from its output language editions. Choose the master/primary language and any additional English, Hindi or Odia editions before drafting. Gemini drafts one story, selected editions are localized for review, and the exact approved scripts are used to prepare every TTS track before any timed-card request. See [the language-edition guide](LANGUAGE_EDITIONS_V7_0_67.md).
 diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
---- a/RELEASE_MANIFEST.json	2026-10-19 16:08:53.004211775 +0000
-+++ b/RELEASE_MANIFEST.json	2026-10-19 16:08:53.036212027 +0000
+--- a/RELEASE_MANIFEST.json	2026-10-20 03:45:57.742420349 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-20 03:45:57.778420903 +0000
 @@ -1,6 +1,6 @@
  {
 -  "version": "7.0.67",
 -  "built_at": "2026-10-19T03:37:42+00:00",
 +  "version": "7.0.68",
-+  "built_at": "2026-10-19T14:47:03+00:00",
++  "built_at": "2026-10-20T03:45:38+00:00",
    "files": [
      {
        "path": ".env.example",
@@ -93,8 +101,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
 +      "path": "LANGUAGE_EDITIONS_RENDER_V7_0_68.md",
-+      "bytes": 4456,
-+      "sha256": "7cab80dc9759f4143558ae219cc96584756d8a55d795ba3166c95ed18f23ad1c"
++      "bytes": 6317,
++      "sha256": "d9f427e06f2c8447f2ee79caee14cbdb0b448e6349bdc76034044a81366df872"
 +    },
 +    {
        "path": "LANGUAGE_EDITIONS_V7_0_67.md",
@@ -168,7 +176,51 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "engine/languages.py",
        "bytes": 2269,
        "sha256": "a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c"
-@@ -2598,6 +2608,11 @@
+@@ -1479,8 +1489,8 @@
+     },
+     {
+       "path": "engine/providers/flow_browser.py",
+-      "bytes": 301711,
+-      "sha256": "f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9"
++      "bytes": 306531,
++      "sha256": "8d91e90f83121550dc20d980810b1117b20406562fa25991aca8c47aa831b869"
+     },
+     {
+       "path": "engine/providers/flow_extension.py",
+@@ -2154,8 +2164,8 @@
+     },
+     {
+       "path": "tests/test_v571_flow_recovery_ux.py",
+-      "bytes": 14476,
+-      "sha256": "85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4"
++      "bytes": 14812,
++      "sha256": "aeb39e0d08a5a3bec0ab49ff426a1022e5d46c2121af263759d0552f5c547e6d"
+     },
+     {
+       "path": "tests/test_v572_clipping.py",
+@@ -2259,8 +2269,8 @@
+     },
+     {
+       "path": "tests/test_v609_flow_video_typed_recovery.py",
+-      "bytes": 27052,
+-      "sha256": "12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae"
++      "bytes": 27232,
++      "sha256": "2ac3d53b586d7c35cc545f1c1e7108e52503ef3f0248599e002ac63644440d3d"
+     },
+     {
+       "path": "tests/test_v619_flow_download_hardening.py",
+@@ -2274,8 +2284,8 @@
+     },
+     {
+       "path": "tests/test_v702_flow_recovery.py",
+-      "bytes": 6485,
+-      "sha256": "28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9"
++      "bytes": 6540,
++      "sha256": "2cad018b0cb3e90fa36bde1cbeca5297c5a356b7ea415b5acfa23c701d6525f1"
+     },
+     {
+       "path": "tests/test_v703_workflow.py",
+@@ -2598,6 +2608,16 @@
        "sha256": "4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa"
      },
      {
@@ -177,18 +229,35 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
 +      "sha256": "ff9bae7bf525bff97b1b00f0ab915d404e075da2343f80857796e26fa3099e77"
 +    },
 +    {
++      "path": "tests/test_v768_media_load_before_download.py",
++      "bytes": 4595,
++      "sha256": "6c1ac2414392d8d048ef1a3cd80b1e622525e2a45875c18f6851cffefa8f4bf1"
++    },
++    {
        "path": "tests/test_web_media_helper.py",
        "bytes": 4375,
        "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2838,6 +2858,11 @@
+       "sha256": "a07e02af1df9f50970150098c2e9905b5d70066f4b7dbf318f7e92853525a35b"
+     },
+     {
++      "path": "tools/update_v767_to_v768.py",
++      "bytes": 6976,
++      "sha256": "5bb5c35739fa09cf96cba30d7569cd26cd032770db00b7b1ae0ba9f47a8129bd"
++    },
++    {
+       "path": "topics.csv",
+       "bytes": 467,
+       "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
 diff -ruN -x .pytest_cache -x __pycache__ a/VERSION b/VERSION
---- a/VERSION	2026-10-19 16:08:53.008211806 +0000
-+++ b/VERSION	2026-10-19 16:08:53.024211932 +0000
+--- a/VERSION	2026-10-20 03:45:57.746420411 +0000
++++ b/VERSION	2026-10-20 03:45:57.766420718 +0000
 @@ -1 +1 @@
 -7.0.67
 +7.0.68
 diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
---- a/app.py	2026-10-19 16:08:53.008211806 +0000
-+++ b/app.py	2026-10-19 16:08:53.024211932 +0000
+--- a/app.py	2026-10-20 03:45:57.746420411 +0000
++++ b/app.py	2026-10-20 03:45:57.766420718 +0000
 @@ -501,6 +501,39 @@
          c.metric(name, "✓" if ok is True else ("·" if ok is False else ok))
  
@@ -306,8 +375,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
  # ================= MUSIC VIDEO =================
  elif page == 'MUSIC VIDEO':
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.py
---- a/engine/factory.py	2026-10-19 16:08:53.008211806 +0000
-+++ b/engine/factory.py	2026-10-19 16:08:53.028211964 +0000
+--- a/engine/factory.py	2026-10-20 03:45:57.750420472 +0000
++++ b/engine/factory.py	2026-10-20 03:45:57.770420780 +0000
 @@ -4265,7 +4265,19 @@
              for fs in fallback_shots:
                  gf.write(f"- {fs.shot_id}: {fs.provider} -> {fs.actual_provider or fs.provider}: {fs.fallback_reason}\n")
@@ -337,8 +406,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.p
                  "visual_diversity": diversity, "publish_readiness": publish_readiness,
                  "graphics": overlays if "overlays" in locals() else [],
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/finishing_studio.py
---- a/engine/finishing_studio.py	2026-10-19 16:08:53.008211806 +0000
-+++ b/engine/finishing_studio.py	2026-10-19 16:08:53.028211964 +0000
+--- a/engine/finishing_studio.py	2026-10-20 03:45:57.750420472 +0000
++++ b/engine/finishing_studio.py	2026-10-20 03:45:57.770420780 +0000
 @@ -63,6 +63,21 @@
      return {'path': str(dest.resolve()), 'sha256': sha, 'duration': duration}
  
@@ -544,8 +613,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/
          return dest
      finally:shutil.rmtree(tmp_dir,ignore_errors=True)
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/finishing_ui.py
---- a/engine/finishing_ui.py	2026-10-19 16:08:53.008211806 +0000
-+++ b/engine/finishing_ui.py	2026-10-19 16:08:53.028211964 +0000
+--- a/engine/finishing_ui.py	2026-10-20 03:45:57.750420472 +0000
++++ b/engine/finishing_ui.py	2026-10-20 03:45:57.770420780 +0000
 @@ -48,6 +48,8 @@
      source=st.selectbox('Saved source', ['Enter local MP4 path']+[r['path'] for r in choices],
                         format_func=lambda p:next((r['label'] for r in choices if r['path']==p),p))
@@ -565,7 +634,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/fini
              st.session_state['finish-plan']=str(path);st.success('Draft plan saved: '+str(path))
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine/language_editions.py
 --- a/engine/language_editions.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/engine/language_editions.py	2026-10-19 16:08:53.028211964 +0000
++++ b/engine/language_editions.py	2026-10-20 03:45:57.770420780 +0000
 @@ -0,0 +1,156 @@
 +"""Render the reviewed language editions of a finished production.
 +
@@ -723,9 +792,186 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine
 +    _save_record(job_root, record)
 +    return {'status': overall, 'editions': record['editions'], 'record': str(_record_path(job_root)),
 +            'error': '; '.join(failures)}
+diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-20 03:45:57.754420534 +0000
++++ b/engine/providers/flow_browser.py	2026-10-20 03:45:57.770420780 +0000
+@@ -478,6 +478,33 @@
+     pass
+ 
+ 
++# Flow paints a placeholder or 360p preview first and prepares the real file in
++# the background. These checks let the downloader wait for the loaded element.
++_MEDIA_READY_JS = r"""el => {
++    const r = el.getBoundingClientRect(), s = getComputedStyle(el);
++    const visible = r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
++    const loaded = el.tagName === 'VIDEO'
++        ? (el.readyState >= 2 && el.videoWidth > 0)
++        : (el.complete && el.naturalWidth > 0);
++    const scope = el.parentElement;
++    const busy = !!el.closest('[aria-busy="true"]') || !!(scope && scope.querySelector(
++        ':scope > [role="progressbar"], :scope > mat-spinner, :scope > mat-progress-spinner, :scope > .spinner'));
++    return {ready: visible && loaded && !busy && !el.error, src: el.currentSrc || el.src || el.poster || ''};
++}"""
++
++_MEDIA_PICK_JS = r"""() => {
++    let best = -1, area = 0;
++    document.querySelectorAll('video,img').forEach((el, i) => {
++        const r = el.getBoundingClientRect(), s = getComputedStyle(el);
++        if (r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && r.width * r.height > area) {
++            area = r.width * r.height;
++            best = i;
++        }
++    });
++    return best;
++}"""
++
++
+ class FlowUIChanged(Exception):
+     """A selector failed -> caller should switch to Assisted Flow Mode."""
+     pass
+@@ -2764,6 +2791,7 @@
+         if current.hostname != u.hostname or current.path != u.path:
+             raise FlowUIChanged('Flow did not open the reviewed video editor; download was not attempted')
+         self._page.keyboard.press('Escape')
++        self._wait_for_largest_media_ready()
+         # The global menu's Download project is a different operation. Only
+         # the asset toolbar's download control is eligible here.
+         selectors = ["button[aria-label*='download' i]:not([aria-label*='project' i])",
+@@ -3365,6 +3393,64 @@
+                 raise FlowBrowserClosedError(str(exc))
+             raise FlowUIChanged('The recorded video tile detached before download; request retained for exact recovery') from exc
+ 
++    def _wait_for_media_ready(self, locator, kind: str, timeout_s: float = 90.0) -> None:
++        """Return only after one Flow image/video element has fully loaded.
++
++        The element must be visible, decoded, not busy, and unchanged for 2 s
++        (so a placeholder swapped for the real file restarts the wait). Starting
++        a download earlier saved partial media or closed the page. After the
++        timeout the request is retained for exact recovery rather than downloaded.
++        """
++        print(f"[Flow] Waiting for the {kind} to finish loading before download.")
++        deadline = time.monotonic() + max(1.0, float(timeout_s))
++        stable_src = None
++        stable_since = None
++        while True:
++            try:
++                state = locator.evaluate(_MEDIA_READY_JS, timeout=2000)
++            except Exception as exc:
++                if self._looks_like_browser_closed_error(exc):
++                    raise FlowBrowserClosedError(str(exc))
++                state = {"ready": False, "src": ""}
++            now = time.monotonic()
++            if state.get("ready"):
++                src = str(state.get("src") or "")
++                if stable_since is None or src != stable_src:
++                    stable_src, stable_since = src, now
++                if now - stable_since >= 2.0:
++                    print(f"[Flow] The {kind} finished loading; starting download.")
++                    return
++            else:
++                stable_since = None
++            if now >= deadline:
++                raise FlowUIChanged(f"The {kind} was still loading after {int(timeout_s)}s; download not started, request retained for exact recovery")
++            try:
++                self._page.wait_for_timeout(500)
++            except Exception as exc:
++                if self._looks_like_browser_closed_error(exc):
++                    raise FlowBrowserClosedError(str(exc))
++                raise
++
++    def _wait_for_largest_media_ready(self, timeout_s: float = 90.0) -> None:
++        """Wait for the dominant visible image/video on an open viewer or card."""
++        deadline = time.monotonic() + max(1.0, float(timeout_s))
++        while True:
++            try:
++                index = int(self._page.evaluate(_MEDIA_PICK_JS))
++            except Exception as exc:
++                if self._looks_like_browser_closed_error(exc):
++                    raise FlowBrowserClosedError(str(exc))
++                index = -1
++            if index >= 0:
++                break
++            # The viewer may still be rendering its media; poll until the deadline.
++            if time.monotonic() >= deadline:
++                raise FlowUIChanged("No visible image or video is loaded to download; download not started")
++            self._page.wait_for_timeout(500)
++        locator = self._page.locator("video, img").nth(index)
++        kind = "video" if str(locator.evaluate("el => el.tagName")).upper() == "VIDEO" else "image"
++        self._wait_for_media_ready(locator, kind, max(1.0, deadline - time.monotonic()))
++
+     def _wait_for_media_signature(self, signature: str, timeout_ms: int = 15000):
+         """Poll a loaded project gallery for one exact asset identity."""
+         deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+@@ -3475,6 +3561,12 @@
+             settled, element = self._settle_exact_video_tile(preferred_signature)
+             chosen = (chosen[0], chosen[1], str(settled['sig']), element, 'video')
+ 
++        # Images load in the grid too. Never open a tile's download menu while
++        # the tile is still a placeholder: that download was saved partially or
++        # closed the page.
++        if chosen is not None:
++            self._wait_for_media_ready(chosen[3], chosen[4])
++
+         # Stay on the canonical project page.  This avoids the Flow media viewer
+         # target-closing race that made Download.save_as fail repeatedly on WSL.
+         direct_tile_menu = False
+@@ -4304,6 +4396,9 @@
+         cards = self.collect_generation_cards()
+         if cards and card_index < len(cards):
+             cards[card_index].click()
++            # The card opens a viewer whose media loads after the click. Wait for
++            # the loaded element before Download, otherwise the download starts early.
++            self._wait_for_largest_media_ready()
+         with self._page.expect_download(timeout=self.ui["timeouts"]["download"] * 1000) as dl:
+             self._resolve("download_button").click()
+         d = dl.value
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v571_flow_recovery_ux.py b/tests/test_v571_flow_recovery_ux.py
+--- a/tests/test_v571_flow_recovery_ux.py	2026-10-20 03:45:57.758420595 +0000
++++ b/tests/test_v571_flow_recovery_ux.py	2026-10-20 03:45:57.774420841 +0000
+@@ -98,6 +98,8 @@
+     b._resolve = lambda action, timeout_ms=0: _Element("download", b._page)
+     b._try_resolve = lambda action, timeout_ms=0: None
+     b._ensure_project_guard_page = lambda *a, **k: None
++    b._wait_for_media_ready = lambda *a, **k: None  # fake tiles have no DOM; readiness is tested separately
++    b._wait_for_largest_media_ready = lambda *a, **k: None
+     b.return_to_project = lambda timeout_ms=0: True
+     b.network_issue_detected = lambda err=None: False
+ 
+@@ -126,6 +128,8 @@
+     b._resolve = lambda action, timeout_ms=0: menu
+     b._try_resolve = lambda action, timeout_ms=0: option if action == "download_video_original_option" else None
+     b._ensure_project_guard_page = lambda *a, **k: None
++    b._wait_for_media_ready = lambda *a, **k: None  # fake tiles have no DOM; readiness is tested separately
++    b._wait_for_largest_media_ready = lambda *a, **k: None
+     b.return_to_project = lambda timeout_ms=0: True
+     b.network_issue_detected = lambda err=None: False
+ 
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v609_flow_video_typed_recovery.py b/tests/test_v609_flow_video_typed_recovery.py
+--- a/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 03:45:57.758420595 +0000
++++ b/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 03:45:57.774420841 +0000
+@@ -479,6 +479,8 @@
+     browser._resolve = lambda action, timeout_ms=0: _Element()
+     browser._try_resolve = lambda action, timeout_ms=0: None
+     browser._ensure_project_guard_page = lambda *args, **kwargs: None
++    browser._wait_for_media_ready = lambda *a, **k: None  # fake tiles have no DOM; readiness is tested separately
++    browser._wait_for_largest_media_ready = lambda *a, **k: None
+     browser.return_to_project = lambda timeout_ms=0: True
+     browser.network_issue_detected = lambda _error=None: False
+ 
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v702_flow_recovery.py b/tests/test_v702_flow_recovery.py
+--- a/tests/test_v702_flow_recovery.py	2026-10-20 03:45:57.758420595 +0000
++++ b/tests/test_v702_flow_recovery.py	2026-10-20 03:45:57.774420841 +0000
+@@ -105,6 +105,7 @@
+     page=NS(url=url,goto=lambda target,**kw:calls.append(target),wait_for_timeout=lambda ms:None,
+             keyboard=keyboard,get_by_role=lambda role,**kw:Controls([toolbar]),locator=lambda selector:Controls([]))
+     b=FlowBrowser.__new__(FlowBrowser);b._page=page;b._ensure_project_guard_page=lambda project:None
++    b._wait_for_largest_media_ready=lambda *a,**k:None
+     b._download_from_tile_button=lambda control,out:calls.append('asset download') or out
+     assert b.download_reviewed_editor_video(url,str(tmp_path/'video.mp4'),'https://flow.google.com/project/saved').endswith('video.mp4')
+     assert calls==[url,'Escape','asset download']
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
 --- a/tests/test_v768_language_editions_render.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_language_editions_render.py	2026-10-19 16:08:53.036212027 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-20 03:45:57.778420903 +0000
 @@ -0,0 +1,215 @@
 +"""v7.0.68: every selected language edition is rendered from its own reviewed narration.
 +
@@ -942,10 +1188,138 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_re
 +    ui = (ROOT / 'engine' / 'finishing_ui.py').read_text(encoding='utf-8')
 +    assert "'Language spoken in this source video'" in ui
 +    assert 'source_language=source_language' in ui
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_media_load_before_download.py b/tests/test_v768_media_load_before_download.py
+--- a/tests/test_v768_media_load_before_download.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_media_load_before_download.py	2026-10-20 03:45:57.778420903 +0000
+@@ -0,0 +1,124 @@
++"""v7.0.68: Flow downloads wait until the image or video has fully loaded.
++
++Regression: the downloader opened a tile's Download menu while Flow was still
++painting a placeholder, so the download started early and the page closed.
++These tests drive the real wait loop with a fake clock, so they never sleep.
++"""
++from types import SimpleNamespace as NS
++
++import pytest
++
++from engine.providers import flow_browser as fb
++from engine.providers.flow_browser import FlowBrowser, FlowBrowserClosedError, FlowUIChanged
++
++TAG_SCRIPT = "el => el.tagName"
++
++
++class FakeClock:
++    """Advances only when the page waits, so the loop's time checks are exact (seconds)."""
++
++    def __init__(self):
++        self.now = 0.0
++
++    def monotonic(self):
++        return self.now
++
++    def time(self):
++        return self.now
++
++    def advance(self, ms):
++        self.now += ms / 1000.0
++
++
++@pytest.fixture
++def clock(monkeypatch):
++    fake = FakeClock()
++    monkeypatch.setattr(fb, "time", fake)
++    return fake
++
++
++def _browser(clock, state_for_poll, *, error=None):
++    """A browser whose tile answers poll N with state_for_poll(N) (or raises error)."""
++    polls = []
++
++    def evaluate(script, timeout=None):
++        polls.append(clock.now)
++        if error is not None:
++            raise error
++        return state_for_poll(len(polls) - 1)
++
++    tile = NS(evaluate=evaluate)
++    page = NS(wait_for_timeout=lambda ms: clock.advance(ms))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    browser._looks_like_browser_closed_error = lambda exc: "has been closed" in str(exc)
++    return browser, tile, polls
++
++
++LOADING = {"ready": False, "src": "placeholder"}
++
++
++def test_download_waits_for_placeholder_to_become_the_loaded_file(clock):
++    def state(n):
++        if n < 3:
++            return LOADING                                  # placeholder
++        if n == 3:
++            return {"ready": True, "src": "360p-thumb"}     # thumbnail is decoded
++        return {"ready": True, "src": "full-res"}           # real file swaps in
++    browser, tile, polls = _browser(clock, state)
++    browser._wait_for_media_ready(tile, "image", timeout_s=60)
++    # Polls are 0.5 s apart. The full-res source first appears at t=2.0 s and must
++    # stay stable for 2 s, so the download may start at t=4.0 s, never earlier.
++    assert clock.now == 4.0
++    assert polls[-1] == 4.0
++
++
++def test_download_never_starts_while_media_is_still_loading(clock):
++    browser, tile, _ = _browser(clock, lambda n: LOADING)
++    with pytest.raises(FlowUIChanged, match="still loading after 20s"):
++        browser._wait_for_media_ready(tile, "video", timeout_s=20)
++    assert clock.now >= 20
++
++
++def test_a_changing_source_restarts_the_stability_window(clock):
++    browser, tile, _ = _browser(clock, lambda n: {"ready": True, "src": "a" if n % 2 else "b"})
++    with pytest.raises(FlowUIChanged, match="still loading"):
++        browser._wait_for_media_ready(tile, "image", timeout_s=5)
++
++
++def test_closed_page_during_load_wait_is_reported_as_closed(clock):
++    browser, tile, _ = _browser(clock, lambda n: LOADING,
++                                error=RuntimeError("Target page, context or browser has been closed"))
++    with pytest.raises(FlowBrowserClosedError):
++        browser._wait_for_media_ready(tile, "video", timeout_s=20)
++
++
++def test_viewer_wait_polls_until_media_appears_then_waits_for_it(clock):
++    picks = [-1, -1, 0]        # the viewer has no media for two polls, then a video
++    checked = []
++
++    def element_evaluate(script, timeout=None):
++        if script == TAG_SCRIPT:
++            return "VIDEO"
++        checked.append(script)
++        return {"ready": True, "src": "viewer"}
++
++    video = NS(evaluate=element_evaluate)
++    page = NS(evaluate=lambda script: picks.pop(0),
++              locator=lambda selector: NS(nth=lambda index: video),
++              wait_for_timeout=lambda ms: clock.advance(ms))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    browser._looks_like_browser_closed_error = lambda exc: False
++    browser._wait_for_largest_media_ready(timeout_s=30)
++    assert picks == []
++    assert checked, "the selected viewer video must be checked for readiness"
++
++
++def test_viewer_without_any_media_refuses_instead_of_downloading(clock):
++    page = NS(evaluate=lambda script: -1, wait_for_timeout=lambda ms: clock.advance(ms))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    browser._looks_like_browser_closed_error = lambda exc: False
++    with pytest.raises(FlowUIChanged, match="No visible image or video"):
++        browser._wait_for_largest_media_ready(timeout_s=3)
 diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools/update_v767_to_v768.py
 --- a/tools/update_v767_to_v768.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tools/update_v767_to_v768.py	2026-10-19 16:08:53.036212027 +0000
-@@ -0,0 +1,128 @@
++++ b/tools/update_v767_to_v768.py	2026-10-20 03:45:57.778420903 +0000
+@@ -0,0 +1,135 @@
 +#!/usr/bin/env python3
 +"""Apply the v7.0.68 language-edition render update to a v7.0.67 installation.
 +
@@ -972,6 +1346,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools
 +    'LANGUAGE_EDITIONS_RENDER_V7_0_68.md', 'README.md', 'VERSION', 'app.py', 'engine/factory.py',
 +    'engine/finishing_studio.py', 'engine/finishing_ui.py', 'engine/language_editions.py',
 +    'tests/test_v768_language_editions_render.py', 'tools/update_v767_to_v768.py',
++    'engine/providers/flow_browser.py', 'tests/test_v571_flow_recovery_ux.py',
++    'tests/test_v609_flow_video_typed_recovery.py', 'tests/test_v702_flow_recovery.py',
++    'tests/test_v768_media_load_before_download.py',
 +]
 +# Files that already exist in 7.0.67: the only hashes this updater will replace.
 +# A hash outside this list means local edits; the file is preserved and nothing is applied.
@@ -982,6 +1359,10 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools
 +    'engine/factory.py': ['34fa4a483bb18aeb472208c6408f25ebdb737c1c9c581770709874c7fbd5e22a'],
 +    'engine/finishing_studio.py': ['fd75959b452f8cfe5ea24afd92119aa018f255babfdef0b4ca0160c2f5cf6026'],
 +    'engine/finishing_ui.py': ['f52a733c16b7828dc30a084492b34a622a56bc94ba1bf4a5d96ee2927eb7f383'],
++    'engine/providers/flow_browser.py': ['f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9'],
++    'tests/test_v571_flow_recovery_ux.py': ['85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4'],
++    'tests/test_v609_flow_video_typed_recovery.py': ['12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae'],
++    'tests/test_v702_flow_recovery.py': ['28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9'],
 +}
 +ACCEPTED_INSTALLS = ('7.0.67', '7.0.68')  # 7.0.68 allows a safe re-run after success
 +

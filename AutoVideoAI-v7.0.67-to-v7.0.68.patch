@@ -1,6 +1,74 @@
+diff -ruN -x .pytest_cache -x __pycache__ a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md
+--- a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
++++ b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	2026-10-20 04:46:23.253852746 +0000
+@@ -0,0 +1,64 @@
++# AutoVideoAI: scale review for large channel operations (v7.0.68)
++
++Reviewed 20 October 2026 against the v7.0.68 source. Target operations for this review:
++
++- one YouTube channel with about 100 million views, or the equivalent scale of audience;
++- one Instagram account with about 10 million followers;
++- one Facebook page with about 10 million followers.
++
++The question was not whether the tool can make attractive videos. It was: **what would break, or create platform risk, if an operator used it to run channels at that scale?**
++
++## Verdict
++
++AutoVideoAI is a supervised production workstation. It is not yet an operations platform for channels of that size. Three things block that use, in order of importance:
++
++1. **No native publishing or analytics.** The tool exports files and records a local schedule. It does not upload to YouTube, Instagram or Facebook, and it does not pull platform analytics. Channel Desk only imports a CSV you prepare. At 10 million followers, every publish decision needs platform-side evidence (watch time, retention, reach, comments and policy notices), and the tool cannot read any of it.
++2. **Browser-driven generation is a dependency, not a service.** Flow and Gemini Web are driven through a signed-in Chrome profile. Their UI changes without notice. The tool now has conservative recovery and resume rules, but no account-level monitor, no alerting, and no way to run unattended safely.
++3. **Single-owner local state.** Jobs, journals and ledgers are JSON files on one Windows/WSL machine, with a single production lock. There is no role-based approval, no audit log that survives tampering, and no backup or restore procedure beyond copying the folder.
++
++## Platform constraints that shape the design
++
++- **YouTube upload quota.** Google's quota page lists `videos.insert` at 100 calls per day per Google Cloud project, counted in its own bucket. A 100-million-view operation publishing across several channels therefore needs deliberate quota planning, such as separate projects or an approved quota extension. The tool has no quota ledger, so it cannot warn before a batch hits the limit. Source: [Google Developers, videos.insert quota](https://developers.google.com/youtube/v3/docs/videos/insert) and [quota calculator](https://developers.google.com/youtube/data/determine_quota_cost). Check the current quota page before relying on these numbers.
++- **Identical content across channels.** Reusing one rendered file on several channels, or near-identical files with a changed title, can trigger platform spam or duplicate-content review. I have not verified current platform thresholds. The tool records a SHA-256 for exports and review packs, but it does not compare those hashes across channels or destinations. This is a cheap, high-value check that is not yet implemented.
++- **Platform terms and disclosure.** Synthetic or altered content, paid promotion and music rights are platform-specific. Channel Desk records rights and disclosure as operator fields. It does not check them against current platform rules.
++
++## What is already useful (verified in code)
++
++| Area | Evidence | Assessment at scale |
++|---|---|---|
++| Flow and Gemini request journals | `engine/flow_project_cleanup.py`, `engine/providers/gemini_video.py` | Conservative. A request is not resubmitted after an uncertain click. Good for cost control. |
++| Final-file QC | v7.0.66 Channel Desk review (see `CHANNEL_MANAGER_AUDIT_V7_0_66.md`) | Good. Reviews the exact export and records the hash. |
++| Metrics import | `engine/channel_desk.py` (`parse_metrics`, `metrics_summary`) | Useful for a monthly CSV. Not a substitute for live analytics. |
++| Language editions | v7.0.67 and v7.0.68 | Works for English, Hindi and Odia. Needs one live Flow/Gemini test per language. |
++
++## Changes made in v7.0.68 for this review
++
++1. **Gemini Web video downloads wait for a loaded tile.** Gemini shows "I'm generating your video" before the file exists, and the tile can appear as a placeholder. The old check accepted metadata only (`readyState >= 1`). The download now starts only after the video is decoded (`readyState >= 3`), has a duration, and its source has not changed for 2 seconds. Covered by `tests/test_v768_gemini_video_settle.py`.
++2. **Flow project cleanup remains gated.** This review did not loosen deletion rules. See "Open decisions" below.
++
++## Ranked feature list (what I would build next, with acceptance tests)
++
++| Rank | Feature | Why it matters at scale | Acceptance test |
++|---|---|---|---|
++| P0 | **Cross-channel duplicate guard.** Before a delivery is recorded, compare its SHA-256 and near-duplicate fingerprint against every other delivery in the same workspace. | Prevents accidental reuse of one file across several channels. | Two channels given the same export are flagged; a re-export with changed content is not. |
++| P0 | **Per-project upload budget ledger.** Track uploads per Cloud project and day against the documented quota, and block a batch that would exceed it. | Stops a batch from failing halfway through. | A batch of 101 uploads on one project is refused before any upload starts. |
++| P0 | **Browser-session health check** for Flow and Gemini Web: sign-in state, profile age, and the last successful run. | Most failures at scale will come from an expired session or a UI change. | Check reports `signed-out`, `ui-changed` or `ok` without submitting a prompt. |
++| P1 | **Platform analytics connectors** (YouTube Analytics, Meta Graph) with explicit scopes and read-only use. | Needed for retention, reach and comment review at 10 million followers. | Read-only scope verified; no write permission requested. |
++| P1 | **Approval audit log** with append-only records and per-user identity. | Needed before more than one editor works on the same channel. | Every publish-approval change produces one record that cannot be edited in place. |
++| P2 | **Multi-channel brand isolation** (separate profiles, logos, languages and destinations per account) with a single view of schedules. | Reduces the risk of posting the wrong language or logo to the wrong account. | Posting a Hindi edition to the English account is refused. |
++
++## Open decisions for you
++
++1. **Flow project deletion.** The tool already has an exact-project delete path (`engine/flow_project_delete.py`). It is available only from the Dashboard panel "Clean downloaded Flow image projects · optional", and only for image-only projects that pass all of these checks:
++   - the project records an image request, with a verified local copy;
++   - the project has a complete captured gallery inventory;
++   - no earlier cleanup of that project is recorded as uncertain.
++   Projects that do not meet all three are listed with the reason. If your photo projects are not appearing as eligible, that reason is the first thing to check. I did not loosen these checks. The cleanup panel states that remote deletion removes the Flow copy; local media and resume records stay on disk. Flow's project menu also has a bin, but I have not verified how long deleted projects remain recoverable. Should a downloaded, locally verified image project be deletable without the captured inventory?
++2. **Which P0 feature to build first.** The duplicate guard is the smallest change. The quota ledger needs your Google Cloud project list.
++3. **Control Center deployment.** The hosted Control Center (`autovideoai-control…chatgpt.site`) is not in this repository, and I cannot deploy to it from this workspace. I updated the local documentation only. To update the hosted Site, I need its source or the deployment method you use.
++
++## Validation and limits
++
++- Code paths reviewed: `engine/flow_project_cleanup.py`, `engine/flow_project_delete.py`, `engine/providers/gemini_video.py`, `engine/channel_desk.py`, and the v7.0.66 audit.
++- New tests: `tests/test_v768_gemini_video_settle.py` (5 tests, fake clock; no live Gemini session).
++- Not tested live: Gemini Web upload and download, Flow project deletion, and any platform upload or analytics call. These need a signed-in browser on your machine.
 diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
 --- a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
-+++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-20 03:45:57.762420657 +0000
++++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-20 04:46:23.253852746 +0000
 @@ -0,0 +1,71 @@
 +# AutoVideoAI 7.0.68 · language editions now render as videos
 +
@@ -74,8 +142,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md 
 +
 +Known limit: the readiness rules are checked against Flow's page structure only in unit tests with fake page objects. Run one live generation and confirm the log shows "finished loading; starting download" before the download.
 diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
---- a/README.md	2026-10-20 03:45:57.746420411 +0000
-+++ b/README.md	2026-10-20 03:45:57.762420657 +0000
+--- a/README.md	2026-10-20 04:46:23.233852646 +0000
++++ b/README.md	2026-10-20 04:46:23.253852746 +0000
 @@ -1,3 +1,7 @@
 +# Update 7.0.68
 +
@@ -85,18 +153,30 @@ diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
  
  Guided Studio now separates the master script from its output language editions. Choose the master/primary language and any additional English, Hindi or Odia editions before drafting. Gemini drafts one story, selected editions are localized for review, and the exact approved scripts are used to prepare every TTS track before any timed-card request. See [the language-edition guide](LANGUAGE_EDITIONS_V7_0_67.md).
 diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
---- a/RELEASE_MANIFEST.json	2026-10-20 03:45:57.742420349 +0000
-+++ b/RELEASE_MANIFEST.json	2026-10-20 03:45:57.778420903 +0000
+--- a/RELEASE_MANIFEST.json	2026-10-20 04:46:23.233852646 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-20 04:46:23.285852906 +0000
 @@ -1,6 +1,6 @@
  {
 -  "version": "7.0.67",
 -  "built_at": "2026-10-19T03:37:42+00:00",
 +  "version": "7.0.68",
-+  "built_at": "2026-10-20T03:45:38+00:00",
++  "built_at": "2026-10-20T04:43:22+00:00",
    "files": [
      {
        "path": ".env.example",
-@@ -223,6 +223,11 @@
+@@ -78,6 +78,11 @@
+       "sha256": "0d5950187b0104460e75fa85d008c230c6a5359161c99056009fda1c30670e4f"
+     },
+     {
++      "path": "CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md",
++      "bytes": 8074,
++      "sha256": "5ae87fdc28c93566bbe44560d88a411626b6dfae7ddcba48d8cc9380ca1671f2"
++    },
++    {
+       "path": "CHANNEL_RENDER_SPEED_V7_0_63.md",
+       "bytes": 3461,
+       "sha256": "a76ff77ad57abbad14e66b950d2d9bd15481bbd050597b63e35a2de2c78a60f7"
+@@ -223,6 +228,11 @@
        "sha256": "eb0faec571a67515a621de7af2f90f8cd388bb5aa6daa10c44fbdfa6985d3947"
      },
      {
@@ -108,7 +188,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "LANGUAGE_EDITIONS_V7_0_67.md",
        "bytes": 3810,
        "sha256": "a76ad31f1f49d617eed2433ba0230e0000b2474b0374d9b768602ad7f7dd4f03"
-@@ -299,8 +304,8 @@
+@@ -299,8 +309,8 @@
      },
      {
        "path": "README.md",
@@ -119,7 +199,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "README_V742.md",
-@@ -805,7 +810,7 @@
+@@ -805,7 +815,7 @@
      {
        "path": "VERSION",
        "bytes": 7,
@@ -128,7 +208,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
-@@ -844,8 +849,8 @@
+@@ -844,8 +854,8 @@
      },
      {
        "path": "app.py",
@@ -139,7 +219,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "architecture.md",
-@@ -1209,18 +1214,18 @@
+@@ -1209,18 +1219,18 @@
      },
      {
        "path": "engine/factory.py",
@@ -164,7 +244,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "engine/flow_approval.py",
-@@ -1343,6 +1348,11 @@
+@@ -1343,6 +1353,11 @@
        "sha256": "f9b1844cf109e00da91a1b88d00d0943127926b6891fba4f44f8fbbf0cf61dc0"
      },
      {
@@ -176,7 +256,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "engine/languages.py",
        "bytes": 2269,
        "sha256": "a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c"
-@@ -1479,8 +1489,8 @@
+@@ -1479,8 +1494,8 @@
      },
      {
        "path": "engine/providers/flow_browser.py",
@@ -187,7 +267,18 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "engine/providers/flow_extension.py",
-@@ -2154,8 +2164,8 @@
+@@ -1494,8 +1509,8 @@
+     },
+     {
+       "path": "engine/providers/gemini_video.py",
+-      "bytes": 9192,
+-      "sha256": "d95343e99adebe1f21b66bda8a608b5b82782fe8e4f56f8c091a1c1e2b34e5bf"
++      "bytes": 10229,
++      "sha256": "26a9b6bf736af4a78c108f9b22850a97309bb6ebb8f2fb98059fa80e77785cfd"
+     },
+     {
+       "path": "engine/providers/gemini_web.py",
+@@ -2154,8 +2169,8 @@
      },
      {
        "path": "tests/test_v571_flow_recovery_ux.py",
@@ -198,7 +289,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v572_clipping.py",
-@@ -2259,8 +2269,8 @@
+@@ -2259,8 +2274,8 @@
      },
      {
        "path": "tests/test_v609_flow_video_typed_recovery.py",
@@ -209,7 +300,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v619_flow_download_hardening.py",
-@@ -2274,8 +2284,8 @@
+@@ -2274,8 +2289,8 @@
      },
      {
        "path": "tests/test_v702_flow_recovery.py",
@@ -220,10 +311,26 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v703_workflow.py",
-@@ -2598,6 +2608,16 @@
+@@ -2584,8 +2599,8 @@
+     },
+     {
+       "path": "tests/test_v765_speech_gemini.py",
+-      "bytes": 5689,
+-      "sha256": "826f47a7e7161ab81cf95384941ed8c559c098c13ae9c56f36461e3a84f9c5cb"
++      "bytes": 5832,
++      "sha256": "e69c8773665030202b06ade9907b25921151a201f068d285e68575ffa81101b7"
+     },
+     {
+       "path": "tests/test_v766_channel_desk.py",
+@@ -2598,6 +2613,21 @@
        "sha256": "4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa"
      },
      {
++      "path": "tests/test_v768_gemini_video_settle.py",
++      "bytes": 1747,
++      "sha256": "bb9e0054e746385050f14cd44b7041ee25fefb1981c68bb3656cd810b7b04991"
++    },
++    {
 +      "path": "tests/test_v768_language_editions_render.py",
 +      "bytes": 11436,
 +      "sha256": "ff9bae7bf525bff97b1b00f0ab915d404e075da2343f80857796e26fa3099e77"
@@ -237,27 +344,27 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "tests/test_web_media_helper.py",
        "bytes": 4375,
        "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
-@@ -2838,6 +2858,11 @@
+@@ -2838,6 +2868,11 @@
        "sha256": "a07e02af1df9f50970150098c2e9905b5d70066f4b7dbf318f7e92853525a35b"
      },
      {
 +      "path": "tools/update_v767_to_v768.py",
-+      "bytes": 6976,
-+      "sha256": "5bb5c35739fa09cf96cba30d7569cd26cd032770db00b7b1ae0ba9f47a8129bd"
++      "bytes": 7361,
++      "sha256": "024dfe02095f382b6d034b0706821429cacc10ff19281a932decf0fb8beac6c2"
 +    },
 +    {
        "path": "topics.csv",
        "bytes": 467,
        "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
 diff -ruN -x .pytest_cache -x __pycache__ a/VERSION b/VERSION
---- a/VERSION	2026-10-20 03:45:57.746420411 +0000
-+++ b/VERSION	2026-10-20 03:45:57.766420718 +0000
+--- a/VERSION	2026-10-20 04:46:23.237852666 +0000
++++ b/VERSION	2026-10-20 04:46:23.257852766 +0000
 @@ -1 +1 @@
 -7.0.67
 +7.0.68
 diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
---- a/app.py	2026-10-20 03:45:57.746420411 +0000
-+++ b/app.py	2026-10-20 03:45:57.766420718 +0000
+--- a/app.py	2026-10-20 04:46:23.237852666 +0000
++++ b/app.py	2026-10-20 04:46:23.257852766 +0000
 @@ -501,6 +501,39 @@
          c.metric(name, "✓" if ok is True else ("·" if ok is False else ok))
  
@@ -375,8 +482,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
  # ================= MUSIC VIDEO =================
  elif page == 'MUSIC VIDEO':
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.py
---- a/engine/factory.py	2026-10-20 03:45:57.750420472 +0000
-+++ b/engine/factory.py	2026-10-20 03:45:57.770420780 +0000
+--- a/engine/factory.py	2026-10-20 04:46:23.241852686 +0000
++++ b/engine/factory.py	2026-10-20 04:46:23.261852786 +0000
 @@ -4265,7 +4265,19 @@
              for fs in fallback_shots:
                  gf.write(f"- {fs.shot_id}: {fs.provider} -> {fs.actual_provider or fs.provider}: {fs.fallback_reason}\n")
@@ -406,8 +513,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.p
                  "visual_diversity": diversity, "publish_readiness": publish_readiness,
                  "graphics": overlays if "overlays" in locals() else [],
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/finishing_studio.py
---- a/engine/finishing_studio.py	2026-10-20 03:45:57.750420472 +0000
-+++ b/engine/finishing_studio.py	2026-10-20 03:45:57.770420780 +0000
+--- a/engine/finishing_studio.py	2026-10-20 04:46:23.241852686 +0000
++++ b/engine/finishing_studio.py	2026-10-20 04:46:23.261852786 +0000
 @@ -63,6 +63,21 @@
      return {'path': str(dest.resolve()), 'sha256': sha, 'duration': duration}
  
@@ -613,8 +720,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/
          return dest
      finally:shutil.rmtree(tmp_dir,ignore_errors=True)
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/finishing_ui.py
---- a/engine/finishing_ui.py	2026-10-20 03:45:57.750420472 +0000
-+++ b/engine/finishing_ui.py	2026-10-20 03:45:57.770420780 +0000
+--- a/engine/finishing_ui.py	2026-10-20 04:46:23.241852686 +0000
++++ b/engine/finishing_ui.py	2026-10-20 04:46:23.261852786 +0000
 @@ -48,6 +48,8 @@
      source=st.selectbox('Saved source', ['Enter local MP4 path']+[r['path'] for r in choices],
                         format_func=lambda p:next((r['label'] for r in choices if r['path']==p),p))
@@ -634,7 +741,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/fini
              st.session_state['finish-plan']=str(path);st.success('Draft plan saved: '+str(path))
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine/language_editions.py
 --- a/engine/language_editions.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/engine/language_editions.py	2026-10-20 03:45:57.770420780 +0000
++++ b/engine/language_editions.py	2026-10-20 04:46:23.261852786 +0000
 @@ -0,0 +1,156 @@
 +"""Render the reviewed language editions of a finished production.
 +
@@ -793,8 +900,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine
 +    return {'status': overall, 'editions': record['editions'], 'record': str(_record_path(job_root)),
 +            'error': '; '.join(failures)}
 diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
---- a/engine/providers/flow_browser.py	2026-10-20 03:45:57.754420534 +0000
-+++ b/engine/providers/flow_browser.py	2026-10-20 03:45:57.770420780 +0000
+--- a/engine/providers/flow_browser.py	2026-10-20 04:46:23.241852686 +0000
++++ b/engine/providers/flow_browser.py	2026-10-20 04:46:23.261852786 +0000
 @@ -478,6 +478,33 @@
      pass
  
@@ -925,9 +1032,63 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/flow_browser.py b/e
          with self._page.expect_download(timeout=self.ui["timeouts"]["download"] * 1000) as dl:
              self._resolve("download_button").click()
          d = dl.value
+diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/gemini_video.py b/engine/providers/gemini_video.py
+--- a/engine/providers/gemini_video.py	2026-10-20 04:46:23.241852686 +0000
++++ b/engine/providers/gemini_video.py	2026-10-20 04:46:23.261852786 +0000
+@@ -50,6 +50,32 @@
+     return {'duration':duration,'width':videos[0]['width'],'height':videos[0]['height']}
+ 
+ 
++# Gemini shows its chat text before the video exists. Start the download only
++# when the video element is decoded and its source has stopped changing.
++GEMINI_VIDEO_READY_JS = "(v) => ({ready: Boolean(v.currentSrc || v.src) && v.readyState >= 3 && Number.isFinite(v.duration) && v.duration > 0 && !v.error, src: v.currentSrc || v.src || ''})"
++VIDEO_STABLE_SECONDS = 2.0
++
++
++class VideoTileSettle:
++    """Reports True only after a loaded tile's source is unchanged for VIDEO_STABLE_SECONDS."""
++
++    def __init__(self, clock=time.monotonic, stable_seconds=VIDEO_STABLE_SECONDS):
++        self.clock = clock
++        self.stable_seconds = stable_seconds
++        self.src = None
++        self.since = None
++
++    def observe(self, state):
++        if not isinstance(state, dict) or not state.get('ready'):
++            self.src, self.since = None, None
++            return False
++        src = str(state.get('src') or '')
++        now = self.clock()
++        if self.since is None or src != self.src:
++            self.src, self.since = src, now
++        return now - self.since >= self.stable_seconds
++
++
+ def unique_visible(nodes):
+     rows=[nodes.nth(i) for i in range(min(nodes.count(),50)) if nodes.nth(i).is_visible()]
+     return rows[0] if len(rows)==1 else None
+@@ -100,7 +126,7 @@
+                 if send is None:raise GeminiVideoPending('Gemini Send is unavailable; no request submitted')
+                 row['status']='submitting';save(journal,row)
+                 send.click(timeout=5000)  # Never press Enter after an uncertain click.
+-            deadline=time.monotonic()+self.timeout;last_notice=0
++            deadline=time.monotonic()+self.timeout;last_notice=0;settle=VideoTileSettle()
+             while time.monotonic()<deadline:
+                 url=chat_url(page.url)
+                 if url and not row.get('chat_url'):
+@@ -111,7 +137,7 @@
+                     last_notice=time.monotonic()
+                 tile=unique_visible(page.locator('model-response video'))
+                 if tile is not None and row.get('chat_url'):
+-                    ready=tile.evaluate('(v) => Boolean(v.currentSrc || v.src) && v.readyState >= 1 && Number.isFinite(v.duration) && v.duration > 0')
++                    ready=settle.observe(tile.evaluate(GEMINI_VIDEO_READY_JS))
+                     if ready:
+                         self._download(session,tile,media)
+                         info=video_info(media);row.update(status='downloaded',sha256=digest(media),**info);save(journal,row)
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v571_flow_recovery_ux.py b/tests/test_v571_flow_recovery_ux.py
---- a/tests/test_v571_flow_recovery_ux.py	2026-10-20 03:45:57.758420595 +0000
-+++ b/tests/test_v571_flow_recovery_ux.py	2026-10-20 03:45:57.774420841 +0000
+--- a/tests/test_v571_flow_recovery_ux.py	2026-10-20 04:46:23.245852706 +0000
++++ b/tests/test_v571_flow_recovery_ux.py	2026-10-20 04:46:23.269852826 +0000
 @@ -98,6 +98,8 @@
      b._resolve = lambda action, timeout_ms=0: _Element("download", b._page)
      b._try_resolve = lambda action, timeout_ms=0: None
@@ -947,8 +1108,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v571_flow_recovery_ux.py 
      b.network_issue_detected = lambda err=None: False
  
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v609_flow_video_typed_recovery.py b/tests/test_v609_flow_video_typed_recovery.py
---- a/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 03:45:57.758420595 +0000
-+++ b/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 03:45:57.774420841 +0000
+--- a/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 04:46:23.245852706 +0000
++++ b/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 04:46:23.273852846 +0000
 @@ -479,6 +479,8 @@
      browser._resolve = lambda action, timeout_ms=0: _Element()
      browser._try_resolve = lambda action, timeout_ms=0: None
@@ -959,8 +1120,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v609_flow_video_typed_rec
      browser.network_issue_detected = lambda _error=None: False
  
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v702_flow_recovery.py b/tests/test_v702_flow_recovery.py
---- a/tests/test_v702_flow_recovery.py	2026-10-20 03:45:57.758420595 +0000
-+++ b/tests/test_v702_flow_recovery.py	2026-10-20 03:45:57.774420841 +0000
+--- a/tests/test_v702_flow_recovery.py	2026-10-20 04:46:23.245852706 +0000
++++ b/tests/test_v702_flow_recovery.py	2026-10-20 04:46:23.273852846 +0000
 @@ -105,6 +105,7 @@
      page=NS(url=url,goto=lambda target,**kw:calls.append(target),wait_for_timeout=lambda ms:None,
              keyboard=keyboard,get_by_role=lambda role,**kw:Controls([toolbar]),locator=lambda selector:Controls([]))
@@ -969,9 +1130,86 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v702_flow_recovery.py b/t
      b._download_from_tile_button=lambda control,out:calls.append('asset download') or out
      assert b.download_reviewed_editor_video(url,str(tmp_path/'video.mp4'),'https://flow.google.com/project/saved').endswith('video.mp4')
      assert calls==[url,'Escape','asset download']
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v765_speech_gemini.py b/tests/test_v765_speech_gemini.py
+--- a/tests/test_v765_speech_gemini.py	2026-10-20 04:46:23.249852726 +0000
++++ b/tests/test_v765_speech_gemini.py	2026-10-20 04:46:23.273852846 +0000
+@@ -54,7 +54,7 @@
+     root=tmp_path/'gemini-videos';root.mkdir();(root/'selection.json').write_text(json.dumps({'shots':['shot_001']}));calls=[]
+     class Tile:
+         def is_visible(self):return True
+-        def evaluate(self,expression):return True
++        def evaluate(self,expression):return {'ready':True,'src':'blob:fixture'}
+     class Nodes:
+         def count(self):return 1
+         def nth(self,n):return Tile()
+@@ -62,6 +62,7 @@
+         url='https://gemini.google.com/app'
+         def locator(self,selector):return Nodes()
+         def goto(self,url,**kw):calls.append(('goto',url));self.url=url
++        def wait_for_timeout(self,ms):import time;time.sleep(ms/1000)  # real time: the readiness window is 2 s
+     page=Page()
+     class Send:
+         def click(self,**kw):calls.append(('send',));page.url='https://gemini.google.com/app/exact123'
+diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_gemini_video_settle.py b/tests/test_v768_gemini_video_settle.py
+--- a/tests/test_v768_gemini_video_settle.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_gemini_video_settle.py	2026-10-20 04:46:23.273852846 +0000
+@@ -0,0 +1,53 @@
++"""v7.0.68: Gemini-web video downloads wait for a loaded, stable video tile."""
++from engine.providers.gemini_video import GEMINI_VIDEO_READY_JS, VideoTileSettle
++
++
++class Clock:
++    def __init__(self):
++        self.now = 0.0
++
++    def __call__(self):
++        return self.now
++
++
++def test_chat_text_without_a_loaded_video_never_settles():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    for _ in range(20):
++        assert settle.observe({'ready': False, 'src': ''}) is False
++        clock.now += 1.5
++
++
++def test_loaded_video_must_stay_unchanged_for_two_seconds():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is False
++    clock.now += 1.5
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is False
++    clock.now += 0.5
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is True
++
++
++def test_source_change_restarts_the_window():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    settle.observe({'ready': True, 'src': 'poster-thumb'})
++    clock.now += 1.9
++    assert settle.observe({'ready': True, 'src': 'blob:final'}) is False
++    clock.now += 2.0
++    assert settle.observe({'ready': True, 'src': 'blob:final'}) is True
++
++
++def test_not_ready_resets_the_window():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    settle.observe({'ready': True, 'src': 'blob:a'})
++    clock.now += 1.9
++    settle.observe({'ready': False, 'src': 'blob:a'})
++    clock.now += 0.2
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is False
++
++
++def test_readiness_script_requires_decoded_video_not_metadata_only():
++    assert 'readyState >= 3' in GEMINI_VIDEO_READY_JS
++    assert 'readyState >= 1' not in GEMINI_VIDEO_READY_JS
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
 --- a/tests/test_v768_language_editions_render.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_language_editions_render.py	2026-10-20 03:45:57.778420903 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-20 04:46:23.273852846 +0000
 @@ -0,0 +1,215 @@
 +"""v7.0.68: every selected language edition is rendered from its own reviewed narration.
 +
@@ -1190,7 +1428,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_re
 +    assert 'source_language=source_language' in ui
 diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_media_load_before_download.py b/tests/test_v768_media_load_before_download.py
 --- a/tests/test_v768_media_load_before_download.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_media_load_before_download.py	2026-10-20 03:45:57.778420903 +0000
++++ b/tests/test_v768_media_load_before_download.py	2026-10-20 04:46:23.273852846 +0000
 @@ -0,0 +1,124 @@
 +"""v7.0.68: Flow downloads wait until the image or video has fully loaded.
 +
@@ -1318,8 +1556,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_media_load_before_do
 +        browser._wait_for_largest_media_ready(timeout_s=3)
 diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools/update_v767_to_v768.py
 --- a/tools/update_v767_to_v768.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tools/update_v767_to_v768.py	2026-10-20 03:45:57.778420903 +0000
-@@ -0,0 +1,135 @@
++++ b/tools/update_v767_to_v768.py	2026-10-20 04:46:23.285852906 +0000
+@@ -0,0 +1,139 @@
 +#!/usr/bin/env python3
 +"""Apply the v7.0.68 language-edition render update to a v7.0.67 installation.
 +
@@ -1348,7 +1586,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools
 +    'tests/test_v768_language_editions_render.py', 'tools/update_v767_to_v768.py',
 +    'engine/providers/flow_browser.py', 'tests/test_v571_flow_recovery_ux.py',
 +    'tests/test_v609_flow_video_typed_recovery.py', 'tests/test_v702_flow_recovery.py',
-+    'tests/test_v768_media_load_before_download.py',
++    'tests/test_v768_media_load_before_download.py', 'engine/providers/gemini_video.py',
++    'tests/test_v768_gemini_video_settle.py', 'CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md',
++    'tests/test_v765_speech_gemini.py',
 +]
 +# Files that already exist in 7.0.67: the only hashes this updater will replace.
 +# A hash outside this list means local edits; the file is preserved and nothing is applied.
@@ -1363,6 +1603,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools
 +    'tests/test_v571_flow_recovery_ux.py': ['85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4'],
 +    'tests/test_v609_flow_video_typed_recovery.py': ['12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae'],
 +    'tests/test_v702_flow_recovery.py': ['28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9'],
++    'engine/providers/gemini_video.py': ['d95343e99adebe1f21b66bda8a608b5b82782fe8e4f56f8c091a1c1e2b34e5bf'],
++    'tests/test_v765_speech_gemini.py': ['826f47a7e7161ab81cf95384941ed8c559c098c13ae9c56f36461e3a84f9c5cb'],
 +}
 +ACCEPTED_INSTALLS = ('7.0.67', '7.0.68')  # 7.0.68 allows a safe re-run after success
 +

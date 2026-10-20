@@ -1,0 +1,939 @@
+diff -ruN a/CHATGPT_INDUS_DRAFTING_V7_0_70.md b/CHATGPT_INDUS_DRAFTING_V7_0_70.md
+--- a/CHATGPT_INDUS_DRAFTING_V7_0_70.md	1970-01-01 00:00:00.000000000 +0000
++++ b/CHATGPT_INDUS_DRAFTING_V7_0_70.md	2026-10-20 12:02:37.185363219 +0000
+@@ -0,0 +1,30 @@
++# AutoVideoAI v7.0.70 — ChatGPT Web and Indus AI drafting
++
++## What changed
++
++- **ChatGPT Web drafting (new).** Create → Drafting model → "ChatGPT Web (signed-in browser session)".
++  It works like Gemini Web: a visible browser window with a saved profile. Sign in to ChatGPT once in that
++  window; later drafts reuse the session. Each draft opens a fresh chat and returns when the reply stops changing.
++  - Default cleanup, `delete-after-read`, uses a ChatGPT **temporary chat**, so the draft is not kept in your history.
++  - Set "Draft chat cleanup" to `keep` to save the draft to your ChatGPT history.
++  - Optional environment variables: `CHATGPT_WEB_LOGIN_WAIT` (seconds to wait for sign-in, default 300),
++    `CHATGPT_WEB_RESPONSE_TIMEOUT` (default 300), `CHATGPT_WEB_BROWSER_MODE`, `CHATGPT_WEB_BROWSER_CHANNEL`,
++    `CHATGPT_WEB_BROWSER_EXE`, `CHATGPT_WEB_CDP_URL`.
++- **Indus AI drafting (new, optional).** Sarvam's Indus model through the Sarvam API. Create → Drafting model →
++  "Indus AI · Sarvam". Set `SARVAM_API_KEY`. Model defaults to `sarvam-105b`; override with `SARVAM_SCRIPT_MODEL`.
++  Reasoning is off so the output budget goes to the script; `SARVAM_MAX_TOKENS` (default 4096) caps the reply.
++  Indus is also available as a job-level script provider.
++- Cleanup control label is now "Draft chat cleanup" and applies to both Gemini Web and ChatGPT Web.
++
++## Not yet verified
++
++- The ChatGPT Web selectors were written for the current ChatGPT web app but have not been tested against a live
++  session. If ChatGPT changes its page, the selectors in `engine/providers/chatgpt_web.py` (`SELECTORS`) need adjusting.
++- Indus AI's Odia coverage is not confirmed by Sarvam's documentation. Check an Odia script draft before relying on it.
++  Gemini Web or ChatGPT Web remain the defaults for Odia.
++
++## Updating
++
++- From 7.0.69: run `python3 ../AutoVideoAI-v7.0.70/tools/update_v769_to_v770.py .` (dry run), then add `--apply`.
++- From 7.0.68: first run the 7.0.69 updater, then the 7.0.70 updater.
++- Only code and documentation are replaced. Outputs, jobs, browser profiles, music, characters and channel profiles are untouched.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-20 12:02:37.185363219 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-20 12:02:37.201363299 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.69",
+-  "built_at": "2026-10-20T11:21:48+00:00",
++  "version": "7.0.70",
++  "built_at": "2026-10-20T12:02:12+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -93,6 +93,11 @@
+       "sha256": "a76ff77ad57abbad14e66b950d2d9bd15481bbd050597b63e35a2de2c78a60f7"
+     },
+     {
++      "path": "CHATGPT_INDUS_DRAFTING_V7_0_70.md",
++      "bytes": 2140,
++      "sha256": "8bcc230aac8991312390982979848b1183650b59794df0fca7182fcc8902afc5"
++    },
++    {
+       "path": "CLIP_BATCH_BRANDING_V7_0_9.md",
+       "bytes": 3955,
+       "sha256": "0d8e7945e1fa90c82d2d8c44dcb444f34b096f468c5cc23823643315e7a083d5"
+@@ -820,7 +825,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "ba7c74e9c9e624af6641a610cb78ed5250d34547990ffbc073542e6503abfc8c"
++      "sha256": "dd57f8676b5a5946446dc72bde7dfd5e58d0a56501db54e3a8a06a87357fe8f3"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -859,8 +864,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 218549,
+-      "sha256": "b06515d8b85a675d6316d99c6b04f9cb0ceee752047929c33b2c81a3835959d0"
++      "bytes": 218796,
++      "sha256": "5ce6ff21129bf41569415fd68da1c9c61283e82c6326bb96f99ff8007f65e693"
+     },
+     {
+       "path": "architecture.md",
+@@ -983,6 +988,11 @@
+       "sha256": "cd59d53ec65165f74a61fba88bd7d7dae2062a0f62d1695378d0422c8a761fcf"
+     },
+     {
++      "path": "config/chatgpt_ui.yaml",
++      "bytes": 202,
++      "sha256": "79f360ce6ad5862f981bfa70e2c8107e112dd3dea8cc39184c2c3505af897a94"
++    },
++    {
+       "path": "config/examples/rain-dance-30s-music-only.json",
+       "bytes": 1870,
+       "sha256": "0e8efa447fa73c3972f7885ee13764d61fc8e6b3475cc40a42f128f56d29bc53"
+@@ -1449,8 +1459,8 @@
+     },
+     {
+       "path": "engine/planning/script_engine.py",
+-      "bytes": 49938,
+-      "sha256": "03a4e297961830dc8bb4eceac112d0cb6f6fc0163a07c7e18de37ff9f67dfec3"
++      "bytes": 51330,
++      "sha256": "3bf283bbcf6d6a90ad0c3e28098badd28669165635b803923b177690f22eb9c3"
+     },
+     {
+       "path": "engine/planning/story_bible.py",
+@@ -1508,6 +1518,11 @@
+       "sha256": "7b93ff52968adfb5fff80974b8d4302734e7d81cf21bb05e309e917fcef0d9d7"
+     },
+     {
++      "path": "engine/providers/chatgpt_web.py",
++      "bytes": 8641,
++      "sha256": "db0eba7dbf01efc70f0d183259442e970951f7c6d0e008bc750ed02ec49d700b"
++    },
++    {
+       "path": "engine/providers/comfy_provider.py",
+       "bytes": 5182,
+       "sha256": "247ade0ef0a8e50c3b6ca6138c345e19efe396f888225dea13d4f4d09124d2d8"
+@@ -1704,13 +1719,13 @@
+     },
+     {
+       "path": "engine/studio_config.py",
+-      "bytes": 11818,
+-      "sha256": "21a60988af3704998bbffc3dc5036090163ff694dd9bd1fcb874f9e1f673301d"
++      "bytes": 11827,
++      "sha256": "a3ccbb414072c9dd8c5e23fee308f91161c9cbb8c68530a70f1131bdac110246"
+     },
+     {
+       "path": "engine/studio_review.py",
+-      "bytes": 12729,
+-      "sha256": "37c0a78d85b732c9c92356680415073b5030d0b29bab6057bcb9ff83c1c2f88f"
++      "bytes": 13334,
++      "sha256": "f684dcb381ba1b94de90c8ec9a01ca142da2fd421a9964ea5cd5dbd585874603"
+     },
+     {
+       "path": "engine/studio_ui.py",
+@@ -2669,8 +2684,13 @@
+     },
+     {
+       "path": "tests/test_v769_drafting.py",
+-      "bytes": 3473,
+-      "sha256": "6dc03d532e234f1a9b3f3f26c942a7a22897c6fdfbd83c9b7a9ad4aa5424d8e6"
++      "bytes": 3497,
++      "sha256": "1f0f8b391edad788d1cda36d8c7210ff4376418216a3207c1634bc6efc8c64a0"
++    },
++    {
++      "path": "tests/test_v770_chatgpt_indus.py",
++      "bytes": 9462,
++      "sha256": "e07baa1067ee2f31bbb3f216acd347c6b9e2939b300372a84b80384c227191d4"
+     },
+     {
+       "path": "tests/test_web_media_helper.py",
+@@ -2923,6 +2943,11 @@
+       "sha256": "bbd011fb2d8cc7610427bf8992a49c679752827a08203deaa2a3811bd4fe81ea"
+     },
+     {
++      "path": "tools/update_v769_to_v770.py",
++      "bytes": 6516,
++      "sha256": "f2103e95daabbe2876b49ee140594d6fae9b56faf923dbb96dc0cc2a1e529551"
++    },
++    {
+       "path": "topics.csv",
+       "bytes": 467,
+       "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-20 12:02:37.173363159 +0000
++++ b/VERSION	2026-10-20 12:02:37.189363239 +0000
+@@ -1 +1 @@
+-7.0.69
++7.0.70
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-20 12:02:37.173363159 +0000
++++ b/app.py	2026-10-20 12:02:37.189363239 +0000
+@@ -600,10 +600,11 @@
+         draft_provider = st.selectbox('Drafting model', [key for key, _, _, _ in draft_options],
+             format_func=lambda key: next(f"{label}{'' if ok else ' — not configured'}" for k, label, ok, _ in draft_options if k == key),
+             key='studio-draft-provider',
+-            help='Gemini Web uses your signed-in browser session. ChatGPT/OpenAI, Gemini API, Groq, Grok and Ollama use the API keys set in the environment.')
++            help='Gemini Web and ChatGPT Web use your signed-in browser session. ChatGPT/OpenAI, Indus AI (Sarvam), Gemini API, Groq, Grok and Ollama use the API keys set in the environment.')
+         chosen_draft = next(item for item in draft_options if item[0] == draft_provider)
+         st.caption(chosen_draft[3])
+-        draft_cleanup = st.selectbox('Draft Gemini chat cleanup',['delete-after-read','keep'],key='studio-draft-cleanup', disabled=draft_provider != 'gemini-web')
++        draft_cleanup = st.selectbox('Draft chat cleanup',['delete-after-read','keep'],key='studio-draft-cleanup', disabled=draft_provider not in ('gemini-web', 'chatgpt-web'),
++            help='Applies to Gemini Web and ChatGPT Web. delete-after-read: Gemini deletes the chat; ChatGPT uses a temporary chat that is not saved. keep: the chat stays in your history.')
+         def clear_cast_draft():
+             st.session_state.pop('studio-review', None)
+             st.session_state['studio-review-approved'] = False
+@@ -783,7 +784,7 @@
+             studio_flow_music_path=flow_music_picker(st,'studio-flow-music','Create instrumental music for '+draft_topic+('. No vocals; leave room for narration.' if studio_voice_on else '. No vocals, singing, speech or narration.'))
+     with st.form("studio-create"):
+         e, f, g = st.columns(3)
+-        script_provider = e.selectbox("Script provider", ["auto", "gemini-web", "gemini", "groq", "openai", "planner"])
++        script_provider = e.selectbox("Script provider", ["auto", "gemini-web", "gemini", "groq", "openai", "indus", "planner"])
+         f.caption("TTS provider selected above: " + tts_provider)
+         render_quality = g.selectbox("Render quality", ["fast", "high", "standard", "preview"], help="Fast keeps 1080p but uses a faster CPU encoder and may produce a larger file. High keeps the slower quality preset.")
+         with st.expander("Advanced · Flow, visuals, audio and branding", expanded=False):
+diff -ruN a/config/chatgpt_ui.yaml b/config/chatgpt_ui.yaml
+--- a/config/chatgpt_ui.yaml	1970-01-01 00:00:00.000000000 +0000
++++ b/config/chatgpt_ui.yaml	2026-10-20 12:02:37.193363259 +0000
+@@ -0,0 +1,7 @@
++# ChatGPT web drafting. Element selectors live in engine/providers/chatgpt_web.py (SELECTORS).
++chatgpt_url: "https://chatgpt.com/"
++browser:
++  mode: auto
++  channel: chrome
++  executable: ""
++  cdp_url: ""
+diff -ruN a/engine/planning/script_engine.py b/engine/planning/script_engine.py
+--- a/engine/planning/script_engine.py	2026-10-20 12:02:37.177363179 +0000
++++ b/engine/planning/script_engine.py	2026-10-20 12:02:37.197363279 +0000
+@@ -112,6 +112,8 @@
+         return bool(os.getenv("GROQ_API_KEY"))
+     if p == "openai":
+         return bool(os.getenv("OPENAI_API_KEY"))
++    if p == "indus":
++        return bool(os.getenv("SARVAM_API_KEY"))
+     if p in ("grok", "xai"):
+         return bool(os.getenv("XAI_API_KEY"))
+     if p == "ollama":
+@@ -142,6 +144,8 @@
+         return os.getenv("GROQ_SCRIPT_MODEL", "openai/gpt-oss-120b")
+     if p == "openai":
+         return os.getenv("OPENAI_SCRIPT_MODEL", "gpt-6-luna")
++    if p == "indus":
++        return os.getenv("SARVAM_SCRIPT_MODEL", "sarvam-105b")
+     if p in ("grok", "xai"):
+         return os.getenv("XAI_SCRIPT_MODEL", "grok-4-fast")
+     if p == "ollama":
+@@ -268,6 +272,30 @@
+     return content
+ 
+ 
++def _indus(system: str, user: str, model: str) -> str:
++    """Indus AI: Sarvam's Indic chat model through the official API (SARVAM_API_KEY).
++
++    The consumer Indus app has no API; this calls the same model family directly.
++    Reasoning is switched off so the token budget goes to the script, not hidden reasoning.
++    """
++    key = os.environ["SARVAM_API_KEY"]
++    payload = {
++        "model": model,
++        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
++        "temperature": 0.4,
++        "max_tokens": int(os.getenv("SARVAM_MAX_TOKENS", "4096")),
++        "reasoning_effort": None,
++    }
++    r = requests.post("https://api.sarvam.ai/v1/chat/completions",
++                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
++                      json=payload, timeout=180)
++    if r.status_code >= 400:
++        # Never echo the response body or the key: only the status belongs in the error.
++        raise RuntimeError(f"Indus AI (Sarvam) request failed with HTTP {r.status_code}")
++    choice = (r.json().get("choices") or [{}])[0]
++    return (choice.get("message") or {}).get("content") or ""
++
++
+ def _ollama(system: str, user: str, model: str) -> str:
+     base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+     payload = {
+@@ -299,6 +327,8 @@
+             # instead of spending the quality-mode retry budget on the same
+             # unavailable composer/session.
+             raise ScriptProviderError(f"Gemini Web is not ready: {exc}") from exc
++    if p == "indus":
++        return _indus(system, user, model)
+     if p == "groq":
+         return _openai_compatible("https://api.groq.com/openai/v1",
+                                   os.environ["GROQ_API_KEY"], model, system, user, p)
+diff -ruN a/engine/providers/chatgpt_web.py b/engine/providers/chatgpt_web.py
+--- a/engine/providers/chatgpt_web.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/providers/chatgpt_web.py	2026-10-20 12:02:37.197363279 +0000
+@@ -0,0 +1,210 @@
++"""ChatGPT web drafting provider for AutoVideoAI (signed-in browser session).
++
++Works like the Gemini Web provider: a visible browser with a persistent profile,
++where you sign in to ChatGPT once. Each draft is one prompt in a fresh chat. The
++provider waits until the reply stops changing and returns its visible text.
++Publish-quality JSON validation stays in engine/planning/script_engine.py.
++
++Nothing here reads passwords, cookies or private endpoints, and no CAPTCHA or
++quota is bypassed. The default draft uses a ChatGPT temporary chat, so it is not
++saved to your history. Cleanup 'keep' saves it.
++
++The selectors are written for ChatGPT's current web app. They have not been
++verified against a live session in this environment. They are kept in one place
++(SELECTORS) so they can be adjusted quickly if the page changes.
++"""
++from __future__ import annotations
++
++import os
++import time
++from pathlib import Path
++
++from .flow_browser import FlowBrowser, FlowState, is_wsl
++
++CHATGPT_URL = "https://chatgpt.com/"
++COMPOSER_WAIT_SECONDS = 60
++TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true"
++_UI_CONFIG = str(Path(__file__).resolve().parents[2] / "config" / "chatgpt_ui.yaml")
++
++SELECTORS = {
++    "composer": ["#prompt-textarea", "div[contenteditable='true'][id='prompt-textarea']",
++                 "textarea[name='prompt-textarea']"],
++    "send": ["button[data-testid='send-button']", "button[aria-label*='Send' i]"],
++    "stop": ["button[data-testid='stop-button']", "button[aria-label*='Stop' i]"],
++    "assistant": "[data-message-author-role='assistant']",
++    "login": ["[data-testid='login-button']", "button:has-text('Log in')"],
++}
++
++
++class ChatGPTWebAuthNeeded(RuntimeError):
++    """The ChatGPT session needs a manual sign-in in the AutoVideo browser window."""
++
++
++class ChatGPTWebUIChanged(RuntimeError):
++    """A visible ChatGPT control or reply could not be identified safely."""
++
++
++def default_chatgpt_profile_dir() -> str:
++    if is_wsl():
++        return os.path.join(os.path.expanduser("~"), ".local", "share", "autovideoai", "chatgpt-profile")
++    return os.path.abspath(".chatgpt-profile")
++
++
++def _first_visible(page, selectors, timeout_ms: int = 1200):
++    for selector in selectors:
++        try:
++            locator = page.locator(selector).first
++            if locator.count() and locator.is_visible(timeout=timeout_ms):
++                return locator
++        except Exception:
++            continue
++    return None
++
++
++def reply_settled(samples, generating: bool, needed: int = 3) -> bool:
++    """True when the last ``needed`` readings of the reply are identical and not empty,
++    and ChatGPT is no longer showing its stop control."""
++    if generating or len(samples) < needed:
++        return False
++    tail = samples[-needed:]
++    return bool(tail[-1]) and len(set(tail)) == 1
++
++
++class ChatGPTWebBrowser(FlowBrowser):
++    """Headed, persistent ChatGPT browser session."""
++
++    def __init__(self, profile_dir: str | None = None, headless: bool = False):
++        super().__init__(
++            ui_cfg_path=_UI_CONFIG,
++            profile_dir=profile_dir or default_chatgpt_profile_dir(),
++            headless=headless,
++            state_cb=None,
++        )
++        for env, key in (("CHATGPT_WEB_BROWSER_MODE", "mode"),
++                         ("CHATGPT_WEB_BROWSER_CHANNEL", "channel"),
++                         ("CHATGPT_WEB_BROWSER_EXE", "executable"),
++                         ("CHATGPT_WEB_CDP_URL", "cdp_url")):
++            if os.getenv(env):
++                self.bcfg[key] = os.getenv(env)
++        self.log_dir = "logs/chatgpt"
++        os.makedirs(self.log_dir, exist_ok=True)
++
++    def _current_url(self) -> str:
++        try:
++            return str(getattr(self._page, "url", "") or "").lower()
++        except Exception:
++            return ""
++
++    def _post_connect(self, visible_login_seconds: int):
++        """Wait until the composer is usable; the user signs in here on first run."""
++        self._set(FlowState.WAITING_FOR_UI)
++        if "chatgpt.com" not in self._current_url():
++            self._page.goto(CHATGPT_URL, timeout=90000, wait_until="domcontentloaded")
++        deadline = time.time() + max(30, visible_login_seconds)
++        while time.time() < deadline:
++            url = self._current_url()
++            if "auth.openai.com" in url or "/auth/" in url or "login" in url:
++                time.sleep(2)
++                continue
++            if _first_visible(self._page, SELECTORS["composer"], 900):
++                self._set(FlowState.READY)
++                return True
++            time.sleep(1)
++        raise ChatGPTWebAuthNeeded(
++            "ChatGPT web was not ready. Sign in to ChatGPT in the AutoVideo browser window, "
++            "then retry the draft.")
++
++    # --- one prompt, one fresh chat -------------------------------------------------
++
++    def _assistant_count(self) -> int:
++        try:
++            return int(self._page.locator(SELECTORS["assistant"]).count())
++        except Exception:
++            return 0
++
++    def _latest_reply(self) -> str:
++        try:
++            return str(self._page.locator(SELECTORS["assistant"]).last.inner_text(timeout=2000) or "").strip()
++        except Exception:
++            return ""
++
++    def _generating(self) -> bool:
++        return _first_visible(self._page, SELECTORS["stop"], 150) is not None
++
++    def _fill(self, box, prompt: str):
++        try:
++            box.click(timeout=3000)
++        except Exception:
++            pass
++        try:
++            box.fill(prompt, timeout=10000)
++        except Exception:
++            try:
++                self._page.keyboard.press("Control+A")
++                self._page.keyboard.insert_text(prompt)
++            except Exception as error:
++                raise ChatGPTWebUIChanged(f"Could not enter the ChatGPT prompt: {error}") from error
++
++    def _submit(self, box):
++        send = _first_visible(self._page, SELECTORS["send"], 1800)
++        if send is not None:
++            try:
++                send.click(timeout=3000)
++                return
++            except Exception:
++                pass
++        try:
++            box.press("Enter")
++        except Exception as error:
++            raise ChatGPTWebUIChanged(f"Could not submit the ChatGPT prompt: {error}") from error
++
++    def ask(self, prompt: str, timeout_seconds: int = 240, *, temporary: bool = True) -> str:
++        self._page.goto(TEMPORARY_CHAT_URL if temporary else CHATGPT_URL,
++                        timeout=90000, wait_until="domcontentloaded")
++        # is_visible() does not wait, so poll until the composer renders or 60 s pass.
++        composer_deadline = time.time() + COMPOSER_WAIT_SECONDS
++        while True:
++            box = _first_visible(self._page, SELECTORS["composer"], 500)
++            if box is not None or time.time() >= composer_deadline:
++                break
++            time.sleep(1)
++        if box is None:
++            if _first_visible(self._page, SELECTORS["login"], 800):
++                raise ChatGPTWebAuthNeeded("ChatGPT is signed out. Sign in in the AutoVideo browser window, then retry.")
++            raise ChatGPTWebUIChanged("ChatGPT prompt box was not found.")
++        before = self._assistant_count()
++        self._fill(box, prompt)
++        self._submit(box)
++        deadline = time.time() + timeout_seconds
++        samples: list[str] = []
++        while time.time() < deadline:
++            time.sleep(1.5)
++            if self._assistant_count() <= before:
++                continue
++            samples.append(self._latest_reply())
++            if reply_settled(samples, self._generating()):
++                return samples[-1]
++        raise ChatGPTWebUIChanged(f"ChatGPT did not finish its reply within {timeout_seconds}s.")
++
++
++def chatgpt_web_generate(system: str, user: str, model: str = "chatgpt-web", *, cleanup=None) -> str:
++    """Draft adapter used by the Create page. ``model`` is provenance only: ChatGPT's model
++    is chosen in your ChatGPT account."""
++    prompt = (
++        "SYSTEM INSTRUCTIONS:\n" + system.strip() +
++        "\n\nUSER TASK:\n" + user.strip() +
++        "\n\nReturn ONLY the requested JSON object. Do not wrap it in commentary."
++    )
++    if cleanup not in (None, "keep", "delete-after-read"):
++        raise ValueError("Invalid ChatGPT chat cleanup policy")
++    timeout = int(os.getenv("CHATGPT_WEB_RESPONSE_TIMEOUT", "300"))
++    temporary = cleanup != "keep"
++    browser = ChatGPTWebBrowser()
++    try:
++        browser.ensure_session(visible_login_seconds=int(os.getenv("CHATGPT_WEB_LOGIN_WAIT", "300")))
++        return browser.ask(prompt, timeout_seconds=timeout, temporary=temporary)
++    finally:
++        try:
++            browser.close()
++        except Exception:
++            pass
+diff -ruN a/engine/studio_config.py b/engine/studio_config.py
+--- a/engine/studio_config.py	2026-10-20 12:02:37.177363179 +0000
++++ b/engine/studio_config.py	2026-10-20 12:02:37.197363279 +0000
+@@ -111,7 +111,7 @@
+     "production_mode": {"legacy", "youtube_pro", "reels_pro"},
+     "video_type": {"shorts", "faceless_youtube", "explainer", "marketing"},
+     "profile": {"FLOW_CINEMATIC", "FLOW_BALANCED", "FLOW_ECONOMY", "STORYBOARD_ECONOMY", "LOCAL_FREE", "FREE_HYBRID", "MANUAL_DIRECTOR"},
+-    "script_provider": {"auto", "gemini", "gemini-web", "groq", "openai", "grok", "ollama", "planner"},
++    "script_provider": {"auto", "gemini", "gemini-web", "groq", "openai", "indus", "grok", "ollama", "planner"},
+     "script_quality": {"standard", "high", "publish"},
+     "tts_provider": {"auto", "gemini", "gemini-lite", "groq", "elevenlabs", "kokoro", "edge", "gtts", "mock"},
+     "caption_display": {"auto", "full", "none"},
+diff -ruN a/engine/studio_review.py b/engine/studio_review.py
+--- a/engine/studio_review.py	2026-10-20 12:02:37.177363179 +0000
++++ b/engine/studio_review.py	2026-10-20 12:02:37.197363279 +0000
+@@ -58,7 +58,9 @@
+ # script provider). Order is the order shown in the UI.
+ DRAFT_PROVIDERS = (
+     ('gemini-web', 'Gemini Web (signed-in browser session)'),
++    ('chatgpt-web', 'ChatGPT Web (signed-in browser session)'),
+     ('openai', 'ChatGPT / OpenAI API (OPENAI_API_KEY)'),
++    ('indus', 'Indus AI · Sarvam, Indic languages (SARVAM_API_KEY)'),
+     ('gemini', 'Gemini API (GEMINI_API_KEY)'),
+     ('groq', 'Groq (GROQ_API_KEY)'),
+     ('grok', 'xAI Grok (XAI_API_KEY)'),
+@@ -73,12 +75,16 @@
+     for key, label in DRAFT_PROVIDERS:
+         if key == 'gemini-web':
+             ok, note = True, 'Uses the Gemini Web session you signed in to; no API key.'
++        elif key == 'chatgpt-web':
++            ok, note = True, ('Uses a ChatGPT session in the AutoVideo browser. Sign in once in that window. '
++                              'Default drafts use a temporary chat; "keep" saves them to ChatGPT history.')
+         elif key == 'ollama':
+             # Ollama is local: availability needs a live probe, so it is always offered.
+             ok, note = True, 'Needs Ollama running on this computer.'
+         else:
+             ok = bool(_provider_available(key))
+-            env_name = {'openai': 'OPENAI_API_KEY', 'gemini': 'GEMINI_API_KEY', 'groq': 'GROQ_API_KEY', 'grok': 'XAI_API_KEY'}[key]
++            env_name = {'openai': 'OPENAI_API_KEY', 'gemini': 'GEMINI_API_KEY', 'groq': 'GROQ_API_KEY', 'grok': 'XAI_API_KEY',
++                        'indus': 'SARVAM_API_KEY'}[key]
+             note = f'Model: {_default_model(key)}' if ok else f'Set {env_name} in the environment to enable this provider.'
+         out.append((key, label, ok, note))
+     return out
+@@ -90,6 +96,9 @@
+     if provider == 'gemini-web':
+         from .providers.gemini_web import gemini_web_generate
+         return gemini_web_generate(system, user, cleanup=cleanup)
++    if provider == 'chatgpt-web':
++        from .providers.chatgpt_web import chatgpt_web_generate
++        return chatgpt_web_generate(system, user, cleanup=cleanup)
+     if provider not in {k for k, _ in DRAFT_PROVIDERS}:
+         raise ValueError(f'Unsupported drafting provider: {provider}')
+     from .planning.script_engine import _call_provider, _default_model, _provider_available
+diff -ruN a/tests/test_v769_drafting.py b/tests/test_v769_drafting.py
+--- a/tests/test_v769_drafting.py	2026-10-20 12:02:37.181363199 +0000
++++ b/tests/test_v769_drafting.py	2026-10-20 12:02:37.201363299 +0000
+@@ -9,7 +9,7 @@
+ def test_provider_list_shows_gemini_web_and_marks_api_keys(monkeypatch):
+     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+     options = {key: (ok, note) for key, _label, ok, note in sr.draft_provider_options()}
+-    assert set(options) == {'gemini-web', 'openai', 'gemini', 'groq', 'grok', 'ollama'}
++    assert set(options) == {'gemini-web', 'chatgpt-web', 'openai', 'indus', 'gemini', 'groq', 'grok', 'ollama'}
+     assert options['gemini-web'][0] is True and 'no API key' in options['gemini-web'][1]
+     assert options['openai'][0] is False and 'OPENAI_API_KEY' in options['openai'][1]
+     assert options['ollama'][0] is True  # local; availability is not probed on each render
+diff -ruN a/tests/test_v770_chatgpt_indus.py b/tests/test_v770_chatgpt_indus.py
+--- a/tests/test_v770_chatgpt_indus.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v770_chatgpt_indus.py	2026-10-20 12:02:37.201363299 +0000
+@@ -0,0 +1,252 @@
++"""v7.0.70 drafting: ChatGPT Web (signed-in browser) and Indus AI (Sarvam API).
++
++No live browser or network access: ChatGPT is driven through a fake page, and
++the Sarvam HTTP call is replaced with a fake response.
++"""
++import pytest
++
++from engine import studio_review as sr
++from engine.planning import script_engine as se
++from engine.providers import chatgpt_web as cw
++from engine.providers import flow_browser
++
++
++FINAL = '{"narration": "Hello there.", "scenes": []}'
++
++
++class FakeLocator:
++    def __init__(self, page, selector):
++        self.page = page
++        self.selector = selector
++
++    @property
++    def first(self):
++        return self
++
++    @property
++    def last(self):
++        return self
++
++    def count(self):
++        if self.selector == cw.SELECTORS["assistant"]:
++            return len(self.page.replies)
++        return 1 if self.selector in self.page.visible else 0
++
++    def is_visible(self, timeout=None):
++        if self.selector in cw.SELECTORS["stop"]:
++            if self.page.stop_checks > 0:
++                self.page.stop_checks -= 1
++                return True
++            return False
++        return self.selector in self.page.visible
++
++    def click(self, timeout=None):
++        self.page.clicks.append(self.selector)
++        if self.selector in cw.SELECTORS["send"]:
++            self.page.replies.append("")  # a new assistant turn starts
++
++    def fill(self, text, timeout=None):
++        self.page.filled = text
++
++    def press(self, key):
++        self.page.pressed.append(key)
++
++    def inner_text(self, timeout=None):
++        script = self.page.reply_script
++        value = script.pop(0) if len(script) > 1 else script[0]
++        self.page.replies[-1] = value
++        return value
++
++
++class FakePage:
++    def __init__(self, reply_script, visible=None, stop_checks=0):
++        self.url = "https://chatgpt.com/"
++        self.visible = set(visible if visible is not None else cw.SELECTORS["composer"][:1] + cw.SELECTORS["send"][:1])
++        self.reply_script = list(reply_script)
++        self.replies = []
++        self.stop_checks = stop_checks
++        self.gotos = []
++        self.filled = None
++        self.clicks = []
++        self.pressed = []
++
++    def goto(self, url, timeout=None, wait_until=None):
++        self.gotos.append(url)
++        self.url = url
++
++    def locator(self, selector):
++        return FakeLocator(self, selector)
++
++
++def _browser(page):
++    browser = cw.ChatGPTWebBrowser.__new__(cw.ChatGPTWebBrowser)  # skip Playwright setup
++    browser._page = page
++    return browser
++
++
++@pytest.fixture(autouse=True)
++def _no_sleep(monkeypatch):
++    monkeypatch.setattr(cw.time, "sleep", lambda seconds: None)
++    monkeypatch.setattr(cw, "COMPOSER_WAIT_SECONDS", 0)
++
++
++# --- ChatGPT Web ---------------------------------------------------------------
++
++def test_reply_settles_only_after_three_identical_nonempty_readings():
++    assert cw.reply_settled(['a', 'a', 'a'], generating=False) is True
++    assert cw.reply_settled(['a', 'a', 'a'], generating=True) is False  # still streaming
++    assert cw.reply_settled(['a', 'a'], generating=False) is False
++    assert cw.reply_settled(['a', 'ab', 'ab'], generating=False) is False
++    assert cw.reply_settled(['', '', ''], generating=False) is False
++
++
++def test_ask_returns_the_settled_reply_in_a_temporary_chat():
++    page = FakePage(['{"na', '{"narration": "Hel', FINAL, FINAL, FINAL], stop_checks=2)
++    text = _browser(page).ask("draft", timeout_seconds=30, temporary=True)
++    assert text == FINAL
++    assert page.gotos == [cw.TEMPORARY_CHAT_URL]
++    assert "draft" in page.filled
++    assert "Enter" in page.pressed or cw.SELECTORS["send"][0] in page.clicks
++
++
++def test_ask_without_temporary_uses_the_normal_chat_url():
++    page = FakePage([FINAL])
++    _browser(page).ask("draft", timeout_seconds=30, temporary=False)
++    assert page.gotos == [cw.CHATGPT_URL]
++
++
++def test_ask_reports_sign_in_when_signed_out():
++    page = FakePage([FINAL], visible=set(cw.SELECTORS["login"][:1]))
++    with pytest.raises(cw.ChatGPTWebAuthNeeded):
++        _browser(page).ask("draft", timeout_seconds=5)
++
++
++def test_ask_reports_ui_change_when_no_composer_and_no_login():
++    page = FakePage([FINAL], visible=set())
++    with pytest.raises(cw.ChatGPTWebUIChanged):
++        _browser(page).ask("draft", timeout_seconds=5)
++
++
++def test_ask_times_out_instead_of_waiting_forever():
++    page = FakePage([FINAL])
++    with pytest.raises(cw.ChatGPTWebUIChanged, match="did not finish"):
++        _browser(page).ask("draft", timeout_seconds=0)
++
++
++def test_generate_passes_cleanup_as_temporary_flag(monkeypatch):
++    seen = {}
++
++    class FakeBrowser:
++        def __init__(self, *a, **k):
++            pass
++
++        def ensure_session(self, visible_login_seconds=0):
++            seen["login"] = visible_login_seconds
++
++        def ask(self, prompt, timeout_seconds=0, *, temporary=True):
++            seen["prompt"] = prompt
++            seen["temporary"] = temporary
++            return FINAL
++
++        def close(self):
++            seen["closed"] = True
++
++    monkeypatch.setattr(cw, "ChatGPTWebBrowser", FakeBrowser)
++    assert cw.chatgpt_web_generate("sys", "usr", cleanup="delete-after-read") == FINAL
++    assert seen["temporary"] is True and seen["closed"] is True
++    assert "SYSTEM INSTRUCTIONS" in seen["prompt"] and "USER TASK" in seen["prompt"]
++    cw.chatgpt_web_generate("sys", "usr", cleanup="keep")
++    assert seen["temporary"] is False
++    cw.chatgpt_web_generate("sys", "usr")  # default: temporary
++    assert seen["temporary"] is True
++    with pytest.raises(ValueError):
++        cw.chatgpt_web_generate("sys", "usr", cleanup="shred")
++
++
++def test_browser_builds_from_its_own_config(monkeypatch, tmp_path):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(flow_browser, "maybe_migrate_profile", lambda: None)
++    browser = cw.ChatGPTWebBrowser(profile_dir=str(tmp_path / "profile"))
++    assert browser.ui["chatgpt_url"] == "https://chatgpt.com/"
++    assert browser.profile_dir == str(tmp_path / "profile")
++    assert (tmp_path / "logs" / "chatgpt").is_dir()
++
++
++def test_studio_routes_chatgpt_web_to_its_adapter(monkeypatch):
++    seen = {}
++    monkeypatch.setattr(cw, "chatgpt_web_generate",
++                        lambda system, user, cleanup=None: seen.update(cleanup=cleanup) or "ok")
++    assert sr._draft_generate("chatgpt-web", "s", "u", cleanup="keep") == "ok"
++    assert seen["cleanup"] == "keep"
++
++
++def test_provider_list_describes_chatgpt_web_session(monkeypatch):
++    options = {key: (ok, note) for key, _l, ok, note in sr.draft_provider_options()}
++    assert options["chatgpt-web"][0] is True
++    assert "temporary chat" in options["chatgpt-web"][1]
++
++
++# --- Indus AI (Sarvam API) -----------------------------------------------------
++
++class FakeResponse:
++    def __init__(self, status_code=200, payload=None):
++        self.status_code = status_code
++        self._payload = payload or {"choices": [{"message": {"content": FINAL}}]}
++
++    def json(self):
++        return self._payload
++
++
++def test_indus_is_unavailable_without_its_key(monkeypatch):
++    monkeypatch.delenv("SARVAM_API_KEY", raising=False)
++    options = {key: (ok, note) for key, _l, ok, note in sr.draft_provider_options()}
++    assert options["indus"][0] is False
++    assert "SARVAM_API_KEY" in options["indus"][1]
++
++
++def test_indus_default_model_and_override(monkeypatch):
++    monkeypatch.delenv("SARVAM_SCRIPT_MODEL", raising=False)
++    assert se._default_model("indus") == "sarvam-105b"
++    monkeypatch.setenv("SARVAM_SCRIPT_MODEL", "sarvam-105b-conversations")
++    assert se._default_model("indus") == "sarvam-105b-conversations"
++
++
++def test_indus_request_uses_bearer_auth_and_no_hidden_reasoning(monkeypatch):
++    monkeypatch.setenv("SARVAM_API_KEY", "sk-test-secret")
++    monkeypatch.delenv("SARVAM_MAX_TOKENS", raising=False)
++    captured = {}
++
++    def fake_post(url, headers=None, json=None, timeout=None):
++        captured.update(url=url, headers=headers, json=json)
++        return FakeResponse()
++
++    monkeypatch.setattr(se.requests, "post", fake_post)
++    assert se._call_provider("indus", "sarvam-105b", "sys", "usr") == FINAL
++    assert captured["url"] == "https://api.sarvam.ai/v1/chat/completions"
++    assert captured["headers"]["Authorization"] == "Bearer sk-test-secret"
++    assert captured["json"]["model"] == "sarvam-105b"
++    assert captured["json"]["reasoning_effort"] is None
++    assert captured["json"]["max_tokens"] == 4096
++    assert captured["json"]["messages"][0] == {"role": "system", "content": "sys"}
++
++
++def test_indus_error_names_the_status_but_never_the_key(monkeypatch):
++    monkeypatch.setenv("SARVAM_API_KEY", "sk-test-secret")
++    monkeypatch.setattr(se.requests, "post", lambda *a, **k: FakeResponse(status_code=401, payload={}))
++    with pytest.raises(RuntimeError) as info:
++        se._call_provider("indus", "sarvam-105b", "sys", "usr")
++    assert "401" in str(info.value)
++    assert "sk-test-secret" not in str(info.value)
++
++
++def test_indus_empty_content_returns_empty_string_for_the_json_check(monkeypatch):
++    monkeypatch.setenv("SARVAM_API_KEY", "sk-test")
++    monkeypatch.setattr(se.requests, "post",
++                        lambda *a, **k: FakeResponse(payload={"choices": [{"message": {"content": None}}]}))
++    assert se._call_provider("indus", "sarvam-105b", "sys", "usr") == ""
++
++
++def test_indus_is_available_when_its_key_is_set(monkeypatch):
++    monkeypatch.setenv("SARVAM_API_KEY", "sk-test")
++    options = {key: ok for key, _l, ok, _n in sr.draft_provider_options()}
++    assert options["indus"] is True
+diff -ruN a/tools/update_v769_to_v770.py b/tools/update_v769_to_v770.py
+--- a/tools/update_v769_to_v770.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v769_to_v770.py	2026-10-20 12:02:37.201363299 +0000
+@@ -0,0 +1,137 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.70 update (ChatGPT Web and Indus AI drafting) to a v7.0.69 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.70 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.70/tools/update_v769_to_v770.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.70/tools/update_v769_to_v770.py . --apply    # installs the code
++
++An installation still on 7.0.68 must first run tools/update_v768_to_v769.py from the 7.0.69 folder.
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'CHATGPT_INDUS_DRAFTING_V7_0_70.md',
++    'VERSION',
++    'app.py',
++    'config/chatgpt_ui.yaml',
++    'engine/planning/script_engine.py',
++    'engine/providers/chatgpt_web.py',
++    'engine/studio_config.py',
++    'engine/studio_review.py',
++    'tests/test_v769_drafting.py',
++    'tests/test_v770_chatgpt_indus.py',
++    'tools/update_v769_to_v770.py',
++]
++# Files that exist in 7.0.69: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['ba7c74e9c9e624af6641a610cb78ed5250d34547990ffbc073542e6503abfc8c'],
++    'app.py': ['b06515d8b85a675d6316d99c6b04f9cb0ceee752047929c33b2c81a3835959d0'],
++    'engine/planning/script_engine.py': ['03a4e297961830dc8bb4eceac112d0cb6f6fc0163a07c7e18de37ff9f67dfec3'],
++    'engine/studio_config.py': ['21a60988af3704998bbffc3dc5036090163ff694dd9bd1fcb874f9e1f673301d'],
++    'engine/studio_review.py': ['37c0a78d85b732c9c92356680415073b5030d0b29bab6057bcb9ff83c1c2f88f'],
++    'tests/test_v769_drafting.py': ['6dc03d532e234f1a9b3f3f26c942a7a22897c6fdfbd83c9b7a9ad4aa5424d8e6'],
++}
++ACCEPTED_INSTALLS = ('7.0.69', '7.0.70')  # 7.0.70 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.69 (found ' + current + '). '
++                         'For 7.0.68 run ../AutoVideoAI-v7.0.69/tools/update_v768_to_v769.py first.')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.70 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.70 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.70-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.70. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

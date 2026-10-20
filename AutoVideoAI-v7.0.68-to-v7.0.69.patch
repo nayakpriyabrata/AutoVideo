@@ -1,0 +1,1520 @@
+diff -ruN a/.env.example b/.env.example
+--- a/.env.example	2026-10-20 05:27:24.000000000 +0000
++++ b/.env.example	1970-01-01 00:00:00.000000000 +0000
+@@ -1,68 +0,0 @@
+-# AutoVideoAI v5 - every API integration is optional.
+-# Copy this file to .env and add only the services you want.
+-
+-# ---------- Free-first script + Gemini TTS ----------
+-# Google AI Studio API key. Separate from Gemini browser subscriptions.
+-GEMINI_API_KEY=
+-# GOOGLE_API_KEY=                 # accepted alias for GEMINI_API_KEY
+-# Select actual available IDs: python3 -m engine.providers.gemini_models
+-GEMINI_SCRIPT_MODEL=
+-GEMINI_CLIP_MODEL=
+-GEMINI_TTS_VOICE=Kore
+-
+-# ---------- Groq: script fallback + excellent caption timing ----------
+-GROQ_API_KEY=
+-GROQ_SCRIPT_MODEL=openai/gpt-oss-120b
+-GROQ_TTS_MODEL=canopylabs/orpheus-v1-english
+-GROQ_TTS_VOICE=troy
+-
+-# ---------- Optional premium script providers ----------
+-OPENAI_API_KEY=
+-OPENAI_SCRIPT_MODEL=gpt-6-luna
+-XAI_API_KEY=
+-XAI_SCRIPT_MODEL=grok-4-fast
+-
+-# ---------- Optional ElevenLabs narration ----------
+-ELEVENLABS_API_KEY=
+-# ELEVENLABS_KEY=                 # accepted alias
+-ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
+-ELEVENLABS_TTS_MODEL=eleven_multilingual_v2
+-
+-# ---------- Local/free script + narration ----------
+-OLLAMA_BASE_URL=http://localhost:11434
+-OLLAMA_SCRIPT_MODEL=llama3.2
+-KOKORO_VOICE=af_heart
+-KOKORO_SPEED=1.0
+-
+-# ---------- AI video / stock (existing) ----------
+-VEO_MODEL=veo-3.1-fast-generate-preview
+-FAL_KEY=
+-FAL_ENDPOINT=
+-PEXELS_API_KEY=
+-PIXABAY_API_KEY=
+-COMFY_URL=http://127.0.0.1:8188
+-COMFY_WORKFLOW=assets/comfy_workflow.json
+-
+-# ---------- v5.1 storage safety ----------
+-# Auto mode does NOT load Kokoro/Torch unless explicitly enabled. This avoids
+-# multi-GB CUDA/model downloads on storage-constrained laptops.
+-AUTOVIDEO_ENABLE_LOCAL_TTS=0
+-AUTOVIDEO_MIN_FREE_GB=1.5
+-AUTOVIDEO_WARN_FREE_GB=5.0
+-
+-# MovieFlow Studio browser automation (optional cartoon provider)
+-# By default MovieFlow reuses the normal browser/CDP setup. Set these only if
+-# you want a different debug Chrome/session for MovieFlow.
+-MOVIEFLOW_BROWSER_MODE=
+-MOVIEFLOW_CDP_URL=
+-MOVIEFLOW_BROWSER_CHANNEL=
+-MOVIEFLOW_BROWSER_EXE=
+-
+-# v5.5 Gemini Web writer (no API key required; manual Google sign-in once)
+-# Explicit --script-provider gemini-web always enables it.
+-AUTOVIDEO_ENABLE_GEMINI_WEB=0
+-GEMINI_WEB_RESPONSE_TIMEOUT=300
+-GEMINI_WEB_LOGIN_WAIT=300
+-# Optional independent browser transport overrides:
+-GEMINI_WEB_BROWSER_MODE=auto
+-GEMINI_WEB_CDP_URL=
+diff -ruN a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+--- a/.github/workflows/tests.yml	2026-10-20 05:27:24.000000000 +0000
++++ b/.github/workflows/tests.yml	1970-01-01 00:00:00.000000000 +0000
+@@ -1,39 +0,0 @@
+-name: Offline regression tests
+-
+-on:
+-  push:
+-  pull_request:
+-  workflow_dispatch:
+-
+-permissions:
+-  contents: read
+-
+-jobs:
+-  tests:
+-    runs-on: ubuntu-24.04
+-    timeout-minutes: 15
+-    strategy:
+-      fail-fast: false
+-      matrix:
+-        python-version: ["3.10", "3.12"]
+-    steps:
+-      - uses: actions/checkout@v4
+-      - uses: actions/setup-python@v5
+-        with:
+-          python-version: ${{ matrix.python-version }}
+-          cache: pip
+-          cache-dependency-path: requirements-test.txt
+-      - name: Install FFmpeg and caption fonts
+-        run: |
+-          sudo apt-get update
+-          sudo apt-get install -y ffmpeg fonts-dejavu-core
+-      - name: Install test dependencies
+-        run: |
+-          python -m pip install --upgrade pip
+-          python -m pip install -r requirements-test.txt
+-      - name: Run offline tests (includes real FFmpeg and libass checks)
+-        env:
+-          PYTHONUTF8: "1"
+-        run: python -m pytest -q -rs
+-      - name: Check Python syntax
+-        run: python -m compileall -q engine tools app.py cli.py
+diff -ruN a/.gitignore b/.gitignore
+--- a/.gitignore	2026-10-20 05:27:24.000000000 +0000
++++ b/.gitignore	1970-01-01 00:00:00.000000000 +0000
+@@ -1,19 +0,0 @@
+-.venv/
+-venv/
+-releases/
+-.flow-profile/
+-.flow-workers/
+-.gemini-profile/
+-.movieflow-profile/
+-.env
+-.env.*
+-!.env.example
+-config/user_settings.yaml
+-cookies/
+-credentials/
+-outputs/
+-data/
+-__pycache__/
+-*.pyc
+-.pytest_cache/
+-.flow_session.json
+diff -ruN a/AUTO_RESUME_AND_DRAFTING_V7_0_69.md b/AUTO_RESUME_AND_DRAFTING_V7_0_69.md
+--- a/AUTO_RESUME_AND_DRAFTING_V7_0_69.md	1970-01-01 00:00:00.000000000 +0000
++++ b/AUTO_RESUME_AND_DRAFTING_V7_0_69.md	2026-10-20 11:21:38.000000000 +0000
+@@ -0,0 +1,74 @@
++# AutoVideo v7.0.69: automatic resume, channel setup and drafting models
++
++## What changed
++
++**1. Unattended automatic resume.** A production that stops on a recoverable Flow
++interruption (browser page closed while downloading, temporary network loss,
++Flow Agent at high demand) no longer waits for a manual Resume.
++
++- Recoverable browser and network failures in strict Flow frame generation go back
++  through the existing bounded recovery loop instead of ending the job as failed.
++- When that loop runs out of retries, the job is recorded in `auto_resume.json`
++  and a background supervisor in the Studio process resumes it after a growing
++  delay: 2, 5, 10, 20, 30, then 60 minutes between attempts, up to 8 automatic
++  resumes. The count restarts when saved media advances.
++- Never retried automatically: sign-in or quota problems, approval or changed-media
++  stops, a Flow request that was submitted but whose result is unknown (it may
++  already have used credits), and any run where you turned automatic recovery off
++  or chose to pause.
++- The job monitor shows the minutes until the next attempt and the attempt number.
++
++Limits: the supervisor runs only while Studio is open and the computer is awake.
++If the laptop sleeps or the dashboard closes, nothing runs until it is back. Keep
++the computer plugged in and set it not to sleep, and start the dashboard when you
++leave the house.
++
++**2. Channel name and logo in Create.**
++
++- The channel name and logo prompts at the end of Create follow the language
++  profiles chosen in Language editions and channel profiles (step 3).
++- When every selected edition has a profile, those prompts are hidden. The form
++  says the name and logo come from the profiles.
++- For any edition without a profile, Create asks for its channel name and logo in
++  that language, with an optional logo upload. Each entry is saved as that
++  edition's channel profile when you create the production. A blank name means
++  that edition has no channel mark.
++- With a single language and no profile, the original channel name and logo fields
++  are shown.
++
++**3. Script drafting with more models.** The "Draft script + suggest saved cast"
++button has a Drafting model selector:
++
++- Gemini Web (signed-in browser session, unchanged, default)
++- ChatGPT / OpenAI API (`OPENAI_API_KEY`)
++- Gemini API (`GEMINI_API_KEY`)
++- Groq (`GROQ_API_KEY`)
++- xAI Grok (`XAI_API_KEY`)
++- Ollama on this computer (`OLLAMA_BASE_URL`)
++
++A provider without its key is shown as not configured and is disabled. Each
++draft records the model that wrote it (`drafted_by`). The model name for each
++provider comes from its existing environment setting (for example
++`OPENAI_SCRIPT_MODEL`). ChatGPT in a signed-in browser session, like Gemini Web,
++is not part of this release.
++
++## Install
++
++Apply to an installed 7.0.68 folder:
++
++    python3 ../AutoVideoAI-v7.0.69/tools/update_v768_to_v769.py .            # dry run
++    python3 ../AutoVideoAI-v7.0.69/tools/update_v768_to_v769.py . --apply
++
++An install still on 7.0.67 must first run the 7.0.68 updater.
++Stop the dashboard before applying, then restart it.
++Outputs, jobs, browser profiles, music, characters and channel profiles are not touched.
++
++## Verification
++
++- 24 new tests (`tests/test_v769_*`): recovery classification and backoff, budget
++  reset on progress, supervisor scheduling, job-thread state, Create channel
++  branding on the real page, and drafting providers.
++- Full suite: 1242 passed, 24 failed. The same 24 fail on the untouched 7.0.68 tree
++  (environment-dependent card typography, upload picker and dashboard tests).
++- Not tested live: Flow browser behaviour, the ChatGPT/OpenAI API call itself
++  (needs your key), and a real overnight unattended run.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-20 05:27:30.000000000 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-20 11:21:48.000000000 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.68",
+-  "built_at": "2026-10-20T05:27:31+00:00",
++  "version": "7.0.69",
++  "built_at": "2026-10-20T11:21:48+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -28,6 +28,11 @@
+       "sha256": "c01e9266b2ac1441d9bf9276d1435aff81f130e794a7bae825302e0d54a71286"
+     },
+     {
++      "path": "AUTO_RESUME_AND_DRAFTING_V7_0_69.md",
++      "bytes": 3701,
++      "sha256": "760296eb7d5a021f0443a0b031e8c2580e514017745b7fb4f4648dc2f19cf072"
++    },
++    {
+       "path": "BOUNDED_CLIP_BROLL_RENDER_V7_0_48.md",
+       "bytes": 1312,
+       "sha256": "dfade35836d3f42b0f4d17907d026c6e1c8591b5b59fd68368f527ce524ddc4a"
+@@ -815,7 +820,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "d4019fe552d665f3c34e1313a6e5e872e63f4adcc798cef146f3d49d3b7db39d"
++      "sha256": "ba7c74e9c9e624af6641a610cb78ed5250d34547990ffbc073542e6503abfc8c"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -854,8 +859,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 215443,
+-      "sha256": "c9775a4979231c1e967aad09ab533b2f07eb2ee43fa267c9fe3b75a4b0c4201c"
++      "bytes": 218549,
++      "sha256": "b06515d8b85a675d6316d99c6b04f9cb0ceee752047929c33b2c81a3835959d0"
+     },
+     {
+       "path": "architecture.md",
+@@ -1118,9 +1123,14 @@
+       "sha256": "290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2"
+     },
+     {
++      "path": "engine/auto_resume.py",
++      "bytes": 6557,
++      "sha256": "e25b9eb2e5fd4225434f2603406cbadb9cbf2e1d83a6df0aca0fe99b1697e3e3"
++    },
++    {
+       "path": "engine/automatic_recovery.py",
+-      "bytes": 5768,
+-      "sha256": "63fd47c746fdf5b896ca2301ae2c66827fd4d2fc220c0c9a7fa97a33bd50bc9c"
++      "bytes": 6280,
++      "sha256": "c1198c7466b7c7f175613fd052693e4339729c25d83c64eb9eaa9e1c5d693832"
+     },
+     {
+       "path": "engine/automation.py",
+@@ -1158,6 +1168,11 @@
+       "sha256": "bb6c5dcf0981f4b06a8d11343cf2ad5916239553a1e45db3df75daf09ff162d8"
+     },
+     {
++      "path": "engine/channel_branding.py",
++      "bytes": 1447,
++      "sha256": "62536373092d9116028bcd8f1bf83ffd0f8b0f240a085cd7e2adcf6361cbba0b"
++    },
++    {
+       "path": "engine/channel_desk.py",
+       "bytes": 17727,
+       "sha256": "eb7f9308dfbfc338443350214f7d3f7b54efc98d8b6b39596f50ea5467a905fc"
+@@ -1224,8 +1239,8 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 275319,
+-      "sha256": "fda39eb38f6725fb6a8b7766052b2468cfdb7f3c2e73fb4990e8de58eff5dcce"
++      "bytes": 276479,
++      "sha256": "6c70724da25eddb55bda5540037d643e8a674a844e6f995d6ecc860d810e3f98"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+@@ -1349,8 +1364,8 @@
+     },
+     {
+       "path": "engine/job_monitor.py",
+-      "bytes": 2178,
+-      "sha256": "7ccb012f3f13c151c3e652623f9f5ed44b545c249dac52a119496d4f8b38d0db"
++      "bytes": 2503,
++      "sha256": "545b2fca7ffa93161ad083901496e5bcf38fd00fe534b17d9ffd411d37478ed6"
+     },
+     {
+       "path": "engine/key_settings.py",
+@@ -1694,8 +1709,8 @@
+     },
+     {
+       "path": "engine/studio_review.py",
+-      "bytes": 10184,
+-      "sha256": "4c61eab86151a686c109c5c8d01107d4dddf8898c18e63ea9d2250d3148e346a"
++      "bytes": 12729,
++      "sha256": "37c0a78d85b732c9c92356680415073b5030d0b29bab6057bcb9ff83c1c2f88f"
+     },
+     {
+       "path": "engine/studio_ui.py",
+@@ -2643,6 +2658,21 @@
+       "sha256": "6c1ac2414392d8d048ef1a3cd80b1e622525e2a45875c18f6851cffefa8f4bf1"
+     },
+     {
++      "path": "tests/test_v769_auto_resume.py",
++      "bytes": 8112,
++      "sha256": "1a28f07ad5843ad5fd350ee1dcb1e26e6c134c5cef83aad360644db22a589efd"
++    },
++    {
++      "path": "tests/test_v769_channel_branding.py",
++      "bytes": 4867,
++      "sha256": "f1f7bd051960af6ae3ab3ffac883f715448b9395bfa382adb8e89f43f8f02679"
++    },
++    {
++      "path": "tests/test_v769_drafting.py",
++      "bytes": 3473,
++      "sha256": "6dc03d532e234f1a9b3f3f26c942a7a22897c6fdfbd83c9b7a9ad4aa5424d8e6"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2888,6 +2918,11 @@
+       "sha256": "9f4e2774296a13dfd3707fa28042b220d86e3c9d954cf3f91ce55cde892b49c0"
+     },
+     {
++      "path": "tools/update_v768_to_v769.py",
++      "bytes": 6571,
++      "sha256": "bbd011fb2d8cc7610427bf8992a49c679752827a08203deaa2a3811bd4fe81ea"
++    },
++    {
+       "path": "topics.csv",
+       "bytes": 467,
+       "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-20 05:27:24.000000000 +0000
++++ b/VERSION	2026-10-20 11:20:02.000000000 +0000
+@@ -1 +1 @@
+-7.0.68
++7.0.69
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-20 05:27:24.000000000 +0000
++++ b/app.py	2026-10-20 11:13:06.000000000 +0000
+@@ -64,6 +64,8 @@
+ from engine.studio_config import DEFAULTS, THEMES, config_to_factory_kwargs
+ 
+ F = Factory()
++from engine.auto_resume import ensure_supervisor as _ensure_auto_resume
++_ensure_auto_resume(F)
+ DB = JobDB()
+ 
+ 
+@@ -341,6 +343,13 @@
+         st.write(event.get('stage', ''), event.get('info', ''), '· elapsed', event.get('elapsed', ''))
+     if view['error']:
+         st.error(view['error'])
++    from engine.auto_resume import load as load_auto_resume, describe as describe_auto_resume
++    auto_status = describe_auto_resume(load_auto_resume(F.pm.job_dir(job_id)))
++    if auto_status:
++        if 'stopped' in auto_status.lower():
++            st.error(auto_status)
++        else:
++            st.info(auto_status)
+     if view['result']:
+         result = view['result']
+         message = str(result.get('message') or result.get('video') or result.get('status'))
+@@ -586,7 +595,15 @@
+         st.caption(f'Master script target: {draft_seconds} seconds · {LANGUAGES[language_code].label}')
+         st.caption('This action drafts one master script only. Selected additional editions are prepared after this master is approved.')
+         draft_style = st.selectbox('Script treatment',['education','cartoon story','documentary','cinematic story'],key='studio-draft-style', index=0 if studio_voice_on else 3)
+-        draft_cleanup = st.selectbox('Draft Gemini chat cleanup',['delete-after-read','keep'],key='studio-draft-cleanup')
++        from engine.studio_review import draft_provider_options
++        draft_options = draft_provider_options()
++        draft_provider = st.selectbox('Drafting model', [key for key, _, _, _ in draft_options],
++            format_func=lambda key: next(f"{label}{'' if ok else ' — not configured'}" for k, label, ok, _ in draft_options if k == key),
++            key='studio-draft-provider',
++            help='Gemini Web uses your signed-in browser session. ChatGPT/OpenAI, Gemini API, Groq, Grok and Ollama use the API keys set in the environment.')
++        chosen_draft = next(item for item in draft_options if item[0] == draft_provider)
++        st.caption(chosen_draft[3])
++        draft_cleanup = st.selectbox('Draft Gemini chat cleanup',['delete-after-read','keep'],key='studio-draft-cleanup', disabled=draft_provider != 'gemini-web')
+         def clear_cast_draft():
+             st.session_state.pop('studio-review', None)
+             st.session_state['studio-review-approved'] = False
+@@ -594,13 +611,13 @@
+         draft_cast_ids = st.multiselect('Saved characters available to this draft · optional',
+             [c['id'] for c in studio_characters], format_func=lambda identifier:next(c['name'] for c in studio_characters if c['id']==identifier),
+             default=[], max_selections=3, key='studio-draft-cast', on_change=clear_cast_draft,
+-            help='Empty creates a topic-first script without choosing a saved presenter. Only selected characters are sent to Gemini; suggestions do not select the final cast.')
++            help='Empty creates a topic-first script without choosing a saved presenter. Only selected characters are sent to the drafting model; suggestions do not select the final cast.')
+         draft_characters = [c for c in studio_characters if c['id'] in draft_cast_ids]
+-        if st.button('Draft script + suggest saved cast — no visuals or TTS'):
++        if st.button('Draft script + suggest saved cast — no visuals or TTS', disabled=not chosen_draft[2]):
+             try:
+                 from engine.studio_review import draft_script_cast
+-                with st.spinner('Asking your Gemini Web session for a script and cast proposal…'):
+-                    review=draft_script_cast(draft_topic,int(draft_seconds),language_code,draft_characters,draft_style,cleanup=draft_cleanup,audio_mode=studio_audio_mode)
++                with st.spinner(f'Asking {chosen_draft[1].split(" (")[0]} for a script and cast proposal…'):
++                    review=draft_script_cast(draft_topic,int(draft_seconds),language_code,draft_characters,draft_style,cleanup=draft_cleanup,audio_mode=studio_audio_mode,provider=draft_provider)
+                 st.session_state['studio-review']=review
+                 st.session_state['studio-reviewed-json']=json.dumps(review['plan'],indent=2,ensure_ascii=False)
+                 invalidate_script_review()
+@@ -817,10 +834,25 @@
+             music_volume = pc3.slider("Music gain", 0.0, 1.0, .10 if studio_voice_on else .55, .01)
+             o, p, q = st.columns(3)
+             caption_display = o.selectbox("Speech captions", ["auto", "full", "none"], disabled=not studio_voice_on)
+-            channel_name = p.text_input("Channel name")
+-            from engine.brand_logo import logo_controls
+-            channel_logo, channel_logo_fraction = logo_controls(st, 'studio-brand')
+-            channel_logo_size = { .12:'Small', .18:'Medium', .25:'Large' }[channel_logo_fraction]
++            from engine.channel_branding import branding_plan
++            branding = branding_plan(channel_editions, edition_profiles, language_code)
++            channel_name, channel_logo, channel_logo_size = '', '', 'Medium'
++            inline_branding = {}
++            if branding['complete']:
++                p.caption('Channel name and logo come from the language profiles chosen in step 3 (one per edition).')
++            else:
++                if branding['primary_missing']:
++                    channel_name = p.text_input("Channel name")
++                    from engine.brand_logo import logo_controls
++                    channel_logo, channel_logo_fraction = logo_controls(st, 'studio-brand')
++                    channel_logo_size = { .12:'Small', .18:'Medium', .25:'Large' }[channel_logo_fraction]
++                if branding['inline']:
++                    st.caption('Editions without a profile in step 3. Enter their channel name and logo here; each entry is saved as that edition\'s profile when you create the production. A blank name means no channel mark for that edition.')
++                    for edition in branding['inline']:
++                        edition_label = LANGUAGES[edition].label
++                        inline_name = st.text_input(f'Channel name in {edition_label}', key=f'studio-inline-name-{edition}', placeholder='Channel name in this language')
++                        inline_logo = st.file_uploader(f'{edition_label} channel logo (optional)', type=['png','jpg','jpeg','webp'], key=f'studio-inline-logo-{edition}')
++                        inline_branding[edition] = (inline_name, inline_logo)
+             watermark_on = st.checkbox("Show animated channel watermark", value=True, help="Needs a channel name. Playful cards use a colourful opening/closing badge; other styles use subtle type.")
+             caption_template = st.selectbox("Speech caption style", ["auto", "OPUS", "HORMOZI", "MINIMAL", "KIDS"], help="OPUS matches Clip Studio. Auto uses OPUS for vertical videos.")
+             r1, r2, r3 = st.columns(3)
+@@ -846,6 +878,15 @@
+         elif not topic.strip():
+             st.warning("Enter a topic first.")
+         else:
++            if inline_branding:
++                from engine.finishing_studio import save_profile as save_channel_profile
++                from engine.finishing_ui import _upload as upload_channel_media
++                from engine.channel_branding import save_missing_profiles
++                try:
++                    edition_profiles.update(save_missing_profiles(inline_branding, save_channel_profile, upload_channel_media))
++                except Exception as error:
++                    st.error(f'Channel profile not saved: {error}')
++                    st.stop()
+             cfg = dict(DEFAULTS)
+             cfg.update({"topic": topic.strip(), "production_mode": production_mode,
+                         "production_mode_engine": "youtube_pro" if production_mode == "reels_pro" else production_mode,
+diff -ruN a/engine/auto_resume.py b/engine/auto_resume.py
+--- a/engine/auto_resume.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/auto_resume.py	2026-10-20 11:12:58.000000000 +0000
+@@ -0,0 +1,166 @@
++"""Unattended continuation after recoverable Flow interruptions.
++
++A job that stops on a recoverable browser, network, or busy-service error is
++retried by a background supervisor after a growing delay, without a manual
++Resume. The supervisor lives in the Studio process: it can only run while the
++computer is awake and Studio is open. Auth, quota, approval, missing-media and
++user-decision stops are never retried.
++"""
++import json
++import threading
++import time
++from pathlib import Path
++
++from .production import save
++
++STATE_FILE = 'auto_resume.json'
++BACKOFF_MINUTES = (2, 5, 10, 20, 30, 60)
++MAX_AUTOMATIC_RESUMES = 8
++SCAN_SECONDS = 30
++
++_supervisor = None
++_supervisor_lock = threading.Lock()
++
++
++def load(root):
++    try:
++        data = json.loads((Path(root) / STATE_FILE).read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return {}
++    return data if isinstance(data, dict) else {}
++
++
++def _write(root, data):
++    save(Path(root) / STATE_FILE, data)
++
++
++def strict_failure_action(settings, original, pause_requested):
++    """Decide what a strict Flow frame failure does: 'retry', 'pause' or 'fail'.
++
++    'retry' hands the job to run_with_recovery, which records a recoverable
++    failure for automatic resume if its own budget runs out. A pending Flow
++    request is never retried here: it may already have consumed credits, so it
++    keeps the existing manual path.
++    """
++    from .automatic_recovery import can_recover
++    from .providers.flow_browser import FlowRequestPending
++    if pause_requested:
++        return 'pause'
++    if settings.get('flow_auto_recovery', True) is not True:
++        return 'fail'
++    if original is None or isinstance(original, FlowRequestPending):
++        return 'fail'
++    return 'retry' if can_recover(original) else 'fail'
++
++
++def note_recoverable_failure(root, reason, *, progress=None, now=None):
++    """Record that the job stopped on a recoverable interruption."""
++    data = load(root)
++    data['pending_failure'] = {
++        'recoverable': True,
++        'reason': str(reason)[:500],
++        'progress': list(progress or []),
++        'at': time.time() if now is None else now,
++    }
++    _write(root, data)
++
++
++def after_run(factory, job_id, result, error=None, *, now=None):
++    """Update the automatic-resume state when a Studio production run ends."""
++    now = time.time() if now is None else now
++    root = factory.pm.job_dir(job_id)
++    data = load(root)
++    failure = data.pop('pending_failure', None) or {}
++    status = result.get('status') if isinstance(result, dict) else None
++    if status == 'done':
++        data = {'state': 'idle', 'attempts': 0, 'updated_at': now}
++    elif failure.get('recoverable'):
++        progress = list(failure.get('progress') or [])
++        if progress and progress > list(data.get('best_progress') or []):
++            # Saved media advanced since the last automatic resume: this is a
++            # new interruption, not a stagnant loop, so the budget restarts.
++            data['best_progress'] = progress
++            data['attempts'] = 0
++        attempts = int(data.get('attempts', 0) or 0)
++        if attempts >= MAX_AUTOMATIC_RESUMES:
++            data.update(state='exhausted', reason=failure.get('reason', ''), updated_at=now)
++        else:
++            delay = BACKOFF_MINUTES[min(attempts, len(BACKOFF_MINUTES) - 1)] * 60
++            data.update(state='waiting', attempts=attempts + 1, next_at=now + delay,
++                        reason=failure.get('reason', ''), updated_at=now)
++    else:
++        message = result.get('message') if isinstance(result, dict) else ''
++        reason = error or message or status or 'stopped'
++        data.update(state='stopped', reason=str(reason)[:500], updated_at=now)
++    _write(root, data)
++    return data
++
++
++def candidate_jobs(outputs_root):
++    root = Path(outputs_root)
++    if not root.is_dir():
++        return []
++    return sorted(child for child in root.iterdir() if child.is_dir() and (child / STATE_FILE).is_file())
++
++
++def scan_once(factory, *, now=None, start=None):
++    """Start every job whose automatic resume is due. Returns the started job ids."""
++    from . import job_monitor
++    start = start or job_monitor.start
++    now = time.time() if now is None else now
++    started = []
++    for folder in candidate_jobs(factory.pm.root):
++        data = load(folder)
++        state = data.get('state')
++        if state == 'waiting' and float(data.get('next_at', 0) or 0) > now:
++            continue
++        if state not in ('waiting', 'running'):
++            continue
++        job_id = folder.name
++        # Mark the attempt before starting, so a fast failure cannot be
++        # overwritten by a stale 'running' record. Restore it if nothing starts.
++        previous = dict(data)
++        data.update(state='running', started_at=now)
++        _write(folder, data)
++        if start(factory, job_id):
++            factory.pm.log(job_id, 'auto_resume_started', {'attempt': data.get('attempts', 0)})
++            started.append(job_id)
++        else:
++            _write(folder, previous)
++    return started
++
++
++def ensure_supervisor(factory, *, interval=SCAN_SECONDS):
++    """Start the background supervisor once per Studio process."""
++    global _supervisor
++    with _supervisor_lock:
++        if _supervisor is not None and _supervisor.is_alive():
++            return _supervisor
++
++        def loop():
++            while True:
++                try:
++                    scan_once(factory)
++                except Exception as error:  # keep supervising; log for the runtime record
++                    print(f'[auto-resume] scan failed: {type(error).__name__}: {error}')
++                time.sleep(interval)
++
++        _supervisor = threading.Thread(target=loop, name='autovideo-auto-resume', daemon=True)
++        _supervisor.start()
++        return _supervisor
++
++
++def describe(data, now=None):
++    """Short, user-facing status line for a job, or '' when nothing is pending."""
++    now = time.time() if now is None else now
++    state = data.get('state')
++    if state == 'waiting':
++        due = max(0, int(float(data.get('next_at', now)) - now))
++        minutes = (due + 59) // 60
++        return (f'Automatic resume in about {minutes} min (attempt {data.get("attempts", 1)} of {MAX_AUTOMATIC_RESUMES}). '
++                'Keep this computer awake with Studio open; saved media and requests are kept.')
++    if state == 'running':
++        return 'Automatic resume is running.'
++    if state == 'exhausted':
++        return f'Automatic resume stopped after {MAX_AUTOMATIC_RESUMES} attempts. Resume manually once the Flow problem is fixed.'
++    return ''
+diff -ruN a/engine/automatic_recovery.py b/engine/automatic_recovery.py
+--- a/engine/automatic_recovery.py	2026-10-20 05:27:24.000000000 +0000
++++ b/engine/automatic_recovery.py	2026-10-20 11:12:58.000000000 +0000
+@@ -78,6 +78,12 @@
+                     factory._write_pause_state(job_id, error.shot_id, str(error),
+                         kind='flow_recovery_exhausted', project_url=error.project_url)
+                     save(state_path, {'status': 'needs_attention', 'attempts': total, 'history': history})
++                    if enabled and can_recover(error.original):
++                        # Unattended continuation: the supervisor retries this job later.
++                        from .auto_resume import note_recoverable_failure
++                        frames, accepted = current if current is not None else checkpoint(factory, job_id)
++                        note_recoverable_failure(factory.pm.job_dir(job_id), str(error),
++                                                 progress=[len(frames), len(accepted)])
+                     raise
+                 delay = min(60, 10 * 2 ** min(stagnant, 3))
+                 save(state_path, {'status': 'waiting', 'attempts': total, 'history': history,
+diff -ruN a/engine/channel_branding.py b/engine/channel_branding.py
+--- a/engine/channel_branding.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/channel_branding.py	2026-10-20 11:11:46.000000000 +0000
+@@ -0,0 +1,37 @@
++"""Channel name and logo decisions for the Create form.
++
++Channel profiles chosen in Language editions are the source of truth. The
++Create form asks for a name or logo only for the editions that still have no
++profile, and saves those entries as profiles when the production is created.
++"""
++
++
++def branding_plan(editions, profiles, primary):
++    """Which editions still need a channel name and logo in the Create form.
++
++    ``editions`` lists every selected edition (primary included); ``profiles``
++    maps edition codes to chosen profile paths.
++    """
++    selected = list(editions) or [primary]
++    missing = [edition for edition in selected if edition not in profiles]
++    return {
++        'complete': not missing,
++        'primary_missing': primary in missing,
++        'inline': [edition for edition in missing if edition != primary],
++    }
++
++
++def save_missing_profiles(entries, save_profile, upload_media):
++    """Save one profile per edition that was given a name; return {edition: path}.
++
++    ``entries`` maps edition -> (name, uploaded_logo_or_None). An edition left
++    without a name gets no profile and renders with no channel mark.
++    """
++    saved = {}
++    for edition, (name, logo) in entries.items():
++        name = str(name or '').strip()
++        if not name:
++            continue
++        logo_path = upload_media(logo, 'logo')
++        saved[edition] = str(save_profile(name, names={edition: name}, logo=logo_path))
++    return saved
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-20 05:27:24.000000000 +0000
++++ b/engine/factory.py	2026-10-20 11:15:34.000000000 +0000
+@@ -53,6 +53,16 @@
+             job_id, shot_id, prompt, watch_dir, reason
+ 
+ 
++def _typed_flow_error(text, flowp):
++    """Rebuild a typed Flow error from a failure text that was returned, not raised."""
++    from .providers.flow_browser import FlowBrowserClosedError, FlowTransientNetworkError
++    if flowp.is_browser_closed_error(text):
++        return FlowBrowserClosedError(str(text))
++    if flowp.is_transient_network_error(text):
++        return FlowTransientNetworkError(str(text))
++    return None
++
++
+ class FlowRequestFailed(RuntimeError):
+     """A saved Flow request failed recovery without the user opting to pause."""
+ 
+@@ -1455,6 +1465,12 @@
+                 msg = str(e)
+                 if "Strict --frame-source flow" in msg:
+                     pause_requested = bool(settings.get("flow_pause_on_unresolved_request", False))
++                    from .auto_resume import strict_failure_action
++                    if strict_failure_action(settings, e.__cause__, pause_requested) == "retry":
++                        # Recoverable browser/network interruptions go back through
++                        # run_with_recovery: bounded backoff, then automatic resume.
++                        raise RecoverableInterruption(job_id, getattr(e, "shot_id", ""), e.__cause__,
++                                                      self._flow_project_url(job_id, settings))
+                     m2 = self.pm.load_manifest(job_id)
+                     m2.status = "paused" if pause_requested else "failed"
+                     self.pm.save_manifest(m2)
+@@ -2406,6 +2422,7 @@
+                 attempt = 1
+                 network_recoveries = 0
+                 browser_recoveries = 0
++                last_error = None
+                 while attempt <= max_attempts:
+                     try:
+                         r = flowp.generate_image(shot, comp, out, vertical, dry_run=False)
+@@ -2436,7 +2453,9 @@
+                                 prog(f"🌐 Network restored; retrying {shot.shot_id} {label} without losing progress.", 26)
+                                 continue
+                         errors.append(f"Flow attempt {attempt}: {errtxt}")
++                        last_error = _typed_flow_error(errtxt, flowp)
+                     except FlowRequestPending as e:
++                        last_error = e
+                         if (settings.get("flow_pause_on_unresolved_request", False) and not batch_recovery
+                                 and not (label == 'closing frame' and settings.get('flow_local_closing_fallback'))):
+                             self._pause_pending_flow(m, shot.shot_id, e, comp.get("project_url", ""))
+@@ -2458,9 +2477,10 @@
+                                 f"Strict --frame-source flow: {shot.shot_id} {label} could not proceed because Flow Agent remained at high demand. "
+                                 f"No normal frame retry was consumed. Completed frames are cached; explicitly resume `{m.job_id}` later if desired. "
+                                 + str(e)[-500:]
+-                            )
++                            ) from e
+                         break
+                     except Exception as e:
++                        last_error = e
+                         if (browser_recoveries < 2 and flowp.is_browser_closed_error(e)):
+                             prog(f"🧭 {shot.shot_id} {label}: browser session closed; rebuilding Flow session...", 26)
+                             if flowp.recover_browser(comp["project"],
+@@ -2498,7 +2518,7 @@
+                         f"Strict --frame-source flow: {shot.shot_id} {label} failed after {min(attempt, max_attempts)} attempts. "
+                         f"Completed frames are cached; after fixing connectivity/UI run `python3 cli.py v3 resume {m.job_id}`. "
+                         + "; ".join(errors)[-900:]
+-                    )
++                    ) from last_error
+                 prog(f"⚠️ {shot.shot_id} {label}: Flow failed after {min(attempt, max_attempts)} attempts -> free fallback (may use Pollinations).", 26)
+                 self.pm.log(m.job_id, "flow_frame_fallback", {
+                     "shot": shot.shot_id, "label": label, "errors": errors[-max_attempts:], "to": "free"})
+diff -ruN a/engine/job_monitor.py b/engine/job_monitor.py
+--- a/engine/job_monitor.py	2026-10-20 05:27:24.000000000 +0000
++++ b/engine/job_monitor.py	2026-10-20 11:12:58.000000000 +0000
+@@ -31,6 +31,12 @@
+                 task['result'] = factory.run_job(job, progress_cb=None)
+             except Exception as error:
+                 task['error'] = str(error)
++            finally:
++                try:
++                    from .auto_resume import after_run
++                    after_run(factory, job, task['result'], task['error'])
++                except Exception as error:
++                    print(f'[auto-resume] could not record state for {job}: {type(error).__name__}: {error}')
+         # Keep the Python/Studio process alive while production owns work. Browser
+         # tabs may close without cancelling it; durable state still supports a
+         # later Resume if the whole Studio process is force-stopped.
+diff -ruN a/engine/studio_review.py b/engine/studio_review.py
+--- a/engine/studio_review.py	2026-10-20 05:27:24.000000000 +0000
++++ b/engine/studio_review.py	2026-10-20 11:13:42.000000000 +0000
+@@ -53,10 +53,57 @@
+             for path,state in choices.items()]
+ 
+ 
+-def draft_script_cast(topic, seconds, language, characters, style='education', cleanup='delete-after-read', audio_mode='voiceover'):
++# Drafting providers offered in Create. Gemini Web uses a signed-in browser
++# session; the others use API keys from the environment (same as the job's
++# script provider). Order is the order shown in the UI.
++DRAFT_PROVIDERS = (
++    ('gemini-web', 'Gemini Web (signed-in browser session)'),
++    ('openai', 'ChatGPT / OpenAI API (OPENAI_API_KEY)'),
++    ('gemini', 'Gemini API (GEMINI_API_KEY)'),
++    ('groq', 'Groq (GROQ_API_KEY)'),
++    ('grok', 'xAI Grok (XAI_API_KEY)'),
++    ('ollama', 'Ollama on this computer (OLLAMA_BASE_URL)'),
++)
++
++
++def draft_provider_options():
++    """Return [(provider, label, available, note)] for the Create drafting selector."""
++    from .planning.script_engine import _provider_available, _default_model
++    out = []
++    for key, label in DRAFT_PROVIDERS:
++        if key == 'gemini-web':
++            ok, note = True, 'Uses the Gemini Web session you signed in to; no API key.'
++        elif key == 'ollama':
++            # Ollama is local: availability needs a live probe, so it is always offered.
++            ok, note = True, 'Needs Ollama running on this computer.'
++        else:
++            ok = bool(_provider_available(key))
++            env_name = {'openai': 'OPENAI_API_KEY', 'gemini': 'GEMINI_API_KEY', 'groq': 'GROQ_API_KEY', 'grok': 'XAI_API_KEY'}[key]
++            note = f'Model: {_default_model(key)}' if ok else f'Set {env_name} in the environment to enable this provider.'
++        out.append((key, label, ok, note))
++    return out
++
++
++def _draft_generate(provider, system, user, cleanup='delete-after-read'):
++    """Send one drafting request to the chosen provider and return raw text."""
++    provider = str(provider or 'gemini-web').lower()
++    if provider == 'gemini-web':
++        from .providers.gemini_web import gemini_web_generate
++        return gemini_web_generate(system, user, cleanup=cleanup)
++    if provider not in {k for k, _ in DRAFT_PROVIDERS}:
++        raise ValueError(f'Unsupported drafting provider: {provider}')
++    from .planning.script_engine import _call_provider, _default_model, _provider_available
++    if provider != 'ollama' and not _provider_available(provider):
++        raise ValueError(f'{provider} is not configured. Set its API key in the environment first.')
++    return _call_provider(provider, _default_model(provider), system, user)
++
++
++def draft_script_cast(topic, seconds, language, characters, style='education', cleanup='delete-after-read', audio_mode='voiceover', provider='gemini-web'):
+     if not str(topic).strip() or not 8 <= int(seconds) <= 7200:
+         raise ValueError('Enter a topic and a duration of 8–7200 seconds')
+-    from .providers.gemini_web import gemini_web_generate
++    provider = str(provider or 'gemini-web').lower()
++    if provider not in {k for k, _ in DRAFT_PROVIDERS}:
++        raise ValueError(f'Unsupported drafting provider: {provider}')
+     available = [{'id':c['id'], 'name':c['name'], 'description':c['description'][:600],
+                   'voice_style':c.get('voice_style','unspecified')} for c in characters]
+     from .visual_plan import audio_mode as normalize_audio_mode, visual_prompt, validated_visual_plan
+@@ -64,9 +111,9 @@
+     target_words = max(20, int(int(seconds) * 2.4))
+     if mode != 'voiceover':
+         system, user = visual_prompt(topic, seconds, language, mode, style, available)
+-        raw = gemini_web_generate(system, user, cleanup=cleanup)
++        raw = _draft_generate(provider, system, user, cleanup=cleanup)
+     else:
+-        raw = gemini_web_generate(
++        raw = _draft_generate(provider,
+             'Write an original, reviewable video script. Return JSON only. Do not generate media. '
+             'Start with a concrete, specific spoken hook in the first 3 seconds: a surprising question, contrast, or visible problem tied directly to the topic. '
+             'Show the promised payoff within the first 20 seconds and end with a useful takeaway. Avoid greetings, generic slogans and filler. '
+@@ -84,12 +131,12 @@
+     from .planning.script_engine import _extract_json
+     value = _extract_json(raw)
+     if value is None:
+-        raise ValueError('Gemini response has no complete script JSON. The captured answer is saved in logs/gemini; no media was generated.')
++        raise ValueError(f'{provider} response has no complete script JSON. No media was generated.' + (' The captured answer is saved in logs/gemini.' if provider == 'gemini-web' else ''))
+     suggestions = value.pop('character_suggestions', [])
+     valid_ids = {c['id'] for c in characters}
+     if not isinstance(suggestions, list) or len(suggestions)>3 or any(
+             not isinstance(s,dict) or s.get('character_id') not in valid_ids for s in suggestions):
+-        raise ValueError('Gemini suggested an unknown cast; review the script and choose cast manually')
++        raise ValueError(f'{provider} suggested an unknown cast; review the script and choose cast manually')
+     if mode != 'voiceover':
+         plan = validated_visual_plan(value, topic, seconds, language, mode)
+     else:
+@@ -102,6 +149,7 @@
+         plan['audio_mode'] = 'voiceover'
+     plan['approved'] = False
+     plan['rights']['adaptation_confirmed'] = False
++    plan['drafted_by'] = provider
+     return {'plan':plan, 'suggestions':suggestions,
+             'hook_preview':str((plan.get('scenes') or [{}])[0].get('text','')).strip()[:300]}
+ 
+diff -ruN a/tests/test_v769_auto_resume.py b/tests/test_v769_auto_resume.py
+--- a/tests/test_v769_auto_resume.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v769_auto_resume.py	2026-10-20 11:15:24.000000000 +0000
+@@ -0,0 +1,172 @@
++"""v7.0.69 automatic resume: which failures continue unattended, and the backoff budget."""
++import time
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from engine import auto_resume as ar
++from engine.automatic_recovery import run_with_recovery
++from engine.factory import RecoverableInterruption
++from engine.providers.flow_browser import (FlowBrowserClosedError, FlowReferenceUnavailable,
++                                           FlowRequestPending, FlowServiceBusy)
++
++
++class FakePM:
++    def __init__(self, root):
++        self.root = str(root)
++        self.logged = []
++
++    def job_dir(self, job_id):
++        return f'{self.root}/{job_id}'
++
++    def log(self, job_id, event, data=None):
++        self.logged.append((job_id, event))
++
++
++def make_factory(root, settings=None):
++    pm = FakePM(root)
++    fac = SimpleNamespace(pm=pm, settings=settings or {'flow_auto_recovery': True})
++    fac._settings = lambda job_id: fac.settings
++    fac.db = SimpleNamespace(upsert=lambda *a, **k: None)
++    fac._write_pause_state = lambda *a, **k: None
++    fac._is_valid_image_file = lambda path: True
++    fac.pm.load_manifest = lambda job_id: SimpleNamespace(shots=[], status='running')
++    fac.pm.save_manifest = lambda manifest: None
++    fac._active_job_providers = []
++    return fac
++
++
++def make_job(root, job_id='job-a'):
++    (root / job_id).mkdir(parents=True, exist_ok=True)
++    return job_id
++
++
++def test_strict_action_retries_only_recoverable_browser_network_and_busy(tmp_path):
++    settings = {'flow_auto_recovery': True}
++    assert ar.strict_failure_action(settings, FlowBrowserClosedError('Image download target closed'), False) == 'retry'
++    assert ar.strict_failure_action(settings, FlowServiceBusy('high demand'), False) == 'retry'
++
++
++def test_strict_action_keeps_manual_paths_for_auth_pending_and_opt_outs():
++    on = {'flow_auto_recovery': True}
++    assert ar.strict_failure_action(on, FlowBrowserClosedError('x'), True) == 'pause'
++    assert ar.strict_failure_action({'flow_auto_recovery': False}, FlowBrowserClosedError('x'), False) == 'fail'
++    assert ar.strict_failure_action(on, None, False) == 'fail'
++    # A submitted request may already have consumed credits: never retried automatically.
++    assert ar.strict_failure_action(on, FlowRequestPending('submitted, download unknown'), False) == 'fail'
++    # Sign-in or quota text is excluded even when the type is recoverable.
++    assert ar.strict_failure_action(on, FlowReferenceUnavailable('sign in required'), False) == 'fail'
++
++
++def test_recoverable_stop_schedules_backoff_then_resets_on_progress(tmp_path):
++    fac = make_factory(tmp_path)
++    make_job(tmp_path)
++    ar.note_recoverable_failure(tmp_path / 'job-a', 'browser closed', progress=[3, 1], now=1000)
++    first = ar.after_run(fac, 'job-a', {'status': 'paused'}, None, now=1000)
++    assert first['state'] == 'waiting' and first['attempts'] == 1
++    assert first['next_at'] == 1000 + 2 * 60
++
++    # Same progress again: the budget keeps counting and the delay grows.
++    ar.note_recoverable_failure(tmp_path / 'job-a', 'browser closed', progress=[3, 1], now=2000)
++    second = ar.after_run(fac, 'job-a', {'status': 'failed'}, None, now=2000)
++    assert second['attempts'] == 2 and second['next_at'] - 2000 == 5 * 60
++
++    # More saved media since last time: a new interruption, so the budget restarts.
++    ar.note_recoverable_failure(tmp_path / 'job-a', 'browser closed', progress=[5, 2], now=3000)
++    third = ar.after_run(fac, 'job-a', {'status': 'paused'}, None, now=3000)
++    assert third['attempts'] == 1 and third['next_at'] - 3000 == 2 * 60
++
++
++def test_budget_exhaustion_and_success_reset(tmp_path):
++    fac = make_factory(tmp_path)
++    make_job(tmp_path)
++    for step in range(ar.MAX_AUTOMATIC_RESUMES):
++        ar.note_recoverable_failure(tmp_path / 'job-a', 'browser closed', progress=[0, 0], now=step)
++        state = ar.after_run(fac, 'job-a', {'status': 'paused'}, None, now=step)
++    assert state['state'] == 'waiting' and state['attempts'] == ar.MAX_AUTOMATIC_RESUMES
++    ar.note_recoverable_failure(tmp_path / 'job-a', 'browser closed', progress=[0, 0], now=99)
++    assert ar.after_run(fac, 'job-a', {'status': 'paused'}, None, now=99)['state'] == 'exhausted'
++    done = ar.after_run(fac, 'job-a', {'status': 'done'}, None, now=100)
++    assert done == {'state': 'idle', 'attempts': 0, 'updated_at': 100}
++
++
++def test_non_recoverable_stop_never_schedules(tmp_path):
++    fac = make_factory(tmp_path)
++    make_job(tmp_path)
++    state = ar.after_run(fac, 'job-a', {'status': 'failed', 'message': 'quota exceeded'}, None, now=5)
++    assert state['state'] == 'stopped'
++    assert 'quota exceeded' in state['reason']
++    assert ar.scan_once(fac, now=10**12, start=lambda f, j: True) == []
++
++
++def test_scan_starts_only_due_jobs_and_restores_state_when_start_refuses(tmp_path):
++    fac = make_factory(tmp_path)
++    make_job(tmp_path, 'due')
++    make_job(tmp_path, 'later')
++    make_job(tmp_path, 'refused')
++    ar.save(tmp_path / 'due' / ar.STATE_FILE, {'state': 'waiting', 'next_at': 100, 'attempts': 1})
++    ar.save(tmp_path / 'later' / ar.STATE_FILE, {'state': 'waiting', 'next_at': 10**9, 'attempts': 1})
++    original = {'state': 'waiting', 'next_at': 100, 'attempts': 2}
++    ar.save(tmp_path / 'refused' / ar.STATE_FILE, original)
++    calls = []
++
++    def start(factory, job_id):
++        calls.append(job_id)
++        return job_id != 'refused'
++
++    started = ar.scan_once(fac, now=500, start=start)
++    assert started == ['due']
++    assert sorted(calls) == ['due', 'refused']
++    assert ar.load(tmp_path / 'due')['state'] == 'running'
++    assert ar.load(tmp_path / 'refused') == original
++    assert ar.load(tmp_path / 'later')['state'] == 'waiting'
++
++
++def test_describe_user_messages(tmp_path):
++    now = time.time()
++    text = ar.describe({'state': 'waiting', 'next_at': now + 11 * 60, 'attempts': 2}, now=now)
++    assert 'about 11 min' in text and 'attempt 2 of 8' in text and 'awake' in text
++    assert 'stopped after 8 attempts' in ar.describe({'state': 'exhausted'}, now=now)
++    assert ar.describe({'state': 'idle'}, now=now) == ''
++
++
++def test_run_with_recovery_records_recoverable_exhaustion(tmp_path):
++    """A repeatedly failing browser-closed job leaves a recoverable note for the supervisor."""
++    fac = make_factory(tmp_path)
++    make_job(tmp_path)
++    error = RecoverableInterruption('job-a', 'shot_001', FlowBrowserClosedError('Image download target closed'), '')
++
++    def failing_run(job_id, progress_cb, auto_render):
++        raise error
++
++    fac._run_job = failing_run
++    with pytest.raises(RecoverableInterruption):
++        run_with_recovery(fac, 'job-a', None, True, sleep=lambda seconds: None)
++    note = ar.load(tmp_path / 'job-a')['pending_failure']
++    assert note['recoverable'] is True and note['progress'] == [0, 0]
++    assert 'Image download target closed' in note['reason']
++
++
++def test_run_with_recovery_does_not_note_auth_failures(tmp_path):
++    fac = make_factory(tmp_path)
++    make_job(tmp_path)
++    error = RecoverableInterruption('job-a', 'shot_001', FlowReferenceUnavailable('sign in required'), '')
++    fac._run_job = lambda job_id, progress_cb, auto_render: (_ for _ in ()).throw(error)
++    with pytest.raises(RecoverableInterruption):
++        run_with_recovery(fac, 'job-a', None, True, sleep=lambda seconds: None)
++    assert 'pending_failure' not in ar.load(tmp_path / 'job-a')
++
++
++def test_job_thread_records_state_when_the_run_ends(tmp_path, monkeypatch):
++    """job_monitor.start runs the job on a thread and records automatic-resume state at the end."""
++    from engine import job_monitor
++    fac = make_factory(tmp_path)
++    make_job(tmp_path, 'job-t')
++    fac.run_job = lambda job_id, progress_cb=None: {'job_id': job_id, 'status': 'done'}
++    ar.save(tmp_path / 'job-t' / ar.STATE_FILE, {'state': 'waiting', 'next_at': 0, 'attempts': 3})
++    assert job_monitor.start(fac, 'job-t') is True
++    task = job_monitor._tasks[str(Path(tmp_path / 'job-t').resolve())]
++    task['thread'].join(timeout=10)
++    assert ar.load(tmp_path / 'job-t') == {'state': 'idle', 'attempts': 0, 'updated_at': ar.load(tmp_path / 'job-t')['updated_at']}
++
+diff -ruN a/tests/test_v769_channel_branding.py b/tests/test_v769_channel_branding.py
+--- a/tests/test_v769_channel_branding.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v769_channel_branding.py	2026-10-20 11:15:16.000000000 +0000
+@@ -0,0 +1,100 @@
++"""v7.0.69 Create form: channel name and logo come from profiles when they exist."""
++from engine.channel_branding import branding_plan, save_missing_profiles
++
++
++def test_complete_when_every_selected_edition_has_a_profile():
++    plan = branding_plan(['en', 'hi', 'or'], {'en': 'a', 'hi': 'b', 'or': 'c'}, 'en')
++    assert plan == {'complete': True, 'primary_missing': False, 'inline': []}
++
++
++def test_missing_extra_edition_is_asked_inline_and_primary_is_untouched():
++    plan = branding_plan(['en', 'hi', 'or'], {'en': 'a'}, 'en')
++    assert plan['complete'] is False
++    assert plan['primary_missing'] is False
++    assert plan['inline'] == ['hi', 'or']
++
++
++def test_missing_primary_keeps_the_single_channel_fields():
++    plan = branding_plan(['en', 'hi'], {'hi': 'b'}, 'en')
++    assert plan['primary_missing'] is True
++    assert plan['inline'] == []
++
++
++def test_single_language_without_profile_asks_the_primary_fields():
++    plan = branding_plan([], {}, 'hi')
++    assert plan == {'complete': False, 'primary_missing': True, 'inline': []}
++
++
++def test_save_missing_profiles_skips_blank_names_and_passes_logo():
++    saved_calls = []
++    uploads = []
++
++    def fake_save(name, *, names, logo):
++        saved_calls.append((name, names, logo))
++        return f'/profiles/{name}/profile.json'
++
++    def fake_upload(uploaded, kind):
++        uploads.append((uploaded, kind))
++        return f'/logos/{uploaded}' if uploaded else ''
++
++    result = save_missing_profiles({'hi': ('  Hunar Setu  ', 'logo-hi.png'), 'or': ('', 'logo-or.png'),
++                                    'de': ('Kanal', None)}, fake_save, fake_upload)
++    assert result == {'hi': '/profiles/Hunar Setu/profile.json', 'de': '/profiles/Kanal/profile.json'}
++    assert saved_calls[0] == ('Hunar Setu', {'hi': 'Hunar Setu'}, '/logos/logo-hi.png')
++    assert saved_calls[1] == ('Kanal', {'de': 'Kanal'}, '')
++    assert ('logo-or.png', 'logo') not in uploads  # blank name: nothing is uploaded or saved
++
++
++def test_inline_profile_is_a_real_profile_read_back_for_its_edition(tmp_path):
++    from engine.finishing_studio import save_profile
++    path = save_missing_profiles({'or': ('Gyana Patha', None)},
++                                 lambda name, **kw: save_profile(name, root=tmp_path, **kw),
++                                 lambda uploaded, kind: '')['or']
++    import json
++    data = json.loads(open(path, encoding='utf-8').read())
++    assert data['names']['or'] == 'Gyana Patha'
++    assert data['name'] == 'Gyana Patha'
++
++
++def _create_page(tmp_path, monkeypatch):
++    from pathlib import Path
++    from streamlit.testing.v1 import AppTest
++    import engine.factory as module
++    import engine.finishing_studio as fs
++    import engine.project.database as database
++    from engine.factory import Factory
++    shared = tmp_path / 'shared'
++    monkeypatch.setattr(fs, 'shared_root', lambda: shared)
++    f = Factory(str(tmp_path / 'outputs'), str(tmp_path / 'db.sqlite'))
++    monkeypatch.setattr(module, 'Factory', lambda *a, **k: f)
++    monkeypatch.setattr(database, 'JobDB', lambda *a, **k: f.db)
++    profiles = {
++        'en': fs.save_profile('Hunar Setu', names={'en': 'Hunar Setu'}, root=shared / 'channel_profiles'),
++        'hi': fs.save_profile('Hunar Setu HI', names={'hi': 'हुनर सेतु'}, root=shared / 'channel_profiles'),
++    }
++    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=60).run()
++    next(w for w in app.sidebar.selectbox if w.label == 'Workspace').set_value('Create').run()
++    next(r for r in app.sidebar.radio if r.label == 'Page').set_value('STUDIO').run()
++    assert not app.exception, [e.message for e in app.exception]
++    return app, profiles
++
++
++def _labels(app):
++    return [t.label for t in app.text_input]
++
++
++def test_create_page_asks_for_channel_only_where_no_profile_exists(tmp_path, monkeypatch):
++    app, profiles = _create_page(tmp_path, monkeypatch)
++    next(m for m in app.multiselect if m.label.startswith('Additional')).set_value(['hi']).run()
++    assert 'Channel name in Hindi' in _labels(app)          # no Hindi profile: ask here
++    assert 'Channel name' in _labels(app)                  # primary (English) has none either
++
++    next(s for s in app.selectbox if s.key == 'studio-edition-profile-en').set_value(str(profiles['en'])).run()
++    next(s for s in app.selectbox if s.key == 'studio-edition-profile-hi').set_value(str(profiles['hi'])).run()
++    assert not any(l in ('Channel name', 'Channel name in Hindi') for l in _labels(app))
++    assert any('come from the language profiles' in c.value for c in app.caption)
++
++    next(m for m in app.multiselect if m.label.startswith('Additional')).set_value(['hi', 'or']).run()
++    labels = _labels(app)
++    assert 'Channel name in Odia' in labels                # new edition without a profile
++    assert 'Channel name' not in labels and 'Channel name in Hindi' not in labels
+diff -ruN a/tests/test_v769_drafting.py b/tests/test_v769_drafting.py
+--- a/tests/test_v769_drafting.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v769_drafting.py	2026-10-20 11:13:38.000000000 +0000
+@@ -0,0 +1,73 @@
++"""v7.0.69 script drafting: ChatGPT/OpenAI and other API providers beside Gemini Web."""
++import json
++
++import pytest
++
++from engine import studio_review as sr
++
++
++def test_provider_list_shows_gemini_web_and_marks_api_keys(monkeypatch):
++    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
++    options = {key: (ok, note) for key, _label, ok, note in sr.draft_provider_options()}
++    assert set(options) == {'gemini-web', 'openai', 'gemini', 'groq', 'grok', 'ollama'}
++    assert options['gemini-web'][0] is True and 'no API key' in options['gemini-web'][1]
++    assert options['openai'][0] is False and 'OPENAI_API_KEY' in options['openai'][1]
++    assert options['ollama'][0] is True  # local; availability is not probed on each render
++
++
++def test_openai_is_available_when_its_key_is_set(monkeypatch):
++    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
++    options = {key: ok for key, _label, ok, _note in sr.draft_provider_options()}
++    assert options['openai'] is True
++
++
++def _plan_json():
++    return json.dumps({'narration': 'Hello there. This is a short test script.', 'scenes': [{'text': 'Hello there.'}],
++                       'character_suggestions': []})
++
++
++def _patch_validation(monkeypatch):
++    monkeypatch.setattr(sr, 'validate_plan', lambda value: {**value, 'rights': {}})
++
++
++def test_chatgpt_api_draft_uses_chosen_provider_and_never_touches_gemini_web(monkeypatch):
++    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
++    _patch_validation(monkeypatch)
++    calls = []
++    import engine.planning.script_engine as engine_script
++    monkeypatch.setattr(engine_script, '_call_provider', lambda provider, model, system, user: calls.append((provider, model)) or _plan_json())
++    import engine.providers.gemini_web as gw
++    monkeypatch.setattr(gw, 'gemini_web_generate', lambda *a, **k: (_ for _ in ()).throw(AssertionError('Gemini Web must not run')))
++
++    review = sr.draft_script_cast('Save money', 30, 'en', [], 'education', audio_mode='voiceover', provider='openai')
++    assert calls and calls[0][0] == 'openai'
++    assert review['plan']['drafted_by'] == 'openai'
++    assert review['plan']['approved'] is False
++
++
++def test_gemini_web_remains_the_default(monkeypatch):
++    _patch_validation(monkeypatch)
++    import engine.providers.gemini_web as gw
++    seen = []
++    monkeypatch.setattr(gw, 'gemini_web_generate', lambda system, user, cleanup='delete-after-read', **k: seen.append(cleanup) or _plan_json())
++    review = sr.draft_script_cast('Save money', 30, 'en', [], 'education', audio_mode='voiceover')
++    assert seen == ['delete-after-read']
++    assert review['plan']['drafted_by'] == 'gemini-web'
++
++
++def test_unknown_provider_is_rejected_before_any_request(monkeypatch):
++    with pytest.raises(ValueError, match='Unsupported drafting provider'):
++        sr.draft_script_cast('Save money', 30, 'en', [], 'education', provider='planner')
++
++
++def test_unconfigured_api_provider_fails_clearly_without_a_request(monkeypatch):
++    monkeypatch.delenv('GROQ_API_KEY', raising=False)
++    with pytest.raises(ValueError, match='not configured'):
++        sr._draft_generate('groq', 'system', 'user')
++
++
++def test_ollama_is_not_blocked_by_a_live_probe(monkeypatch):
++    import engine.planning.script_engine as engine_script
++    monkeypatch.setattr(engine_script, '_provider_available', lambda provider: False)
++    monkeypatch.setattr(engine_script, '_call_provider', lambda provider, model, system, user: 'ok')
++    assert sr._draft_generate('ollama', 'system', 'user') == 'ok'
+diff -ruN a/tmp/.env.example b/tmp/.env.example
+--- a/tmp/.env.example	1970-01-01 00:00:00.000000000 +0000
++++ b/tmp/.env.example	2026-10-20 11:06:08.000000000 +0000
+@@ -0,0 +1,68 @@
++# AutoVideoAI v5 - every API integration is optional.
++# Copy this file to .env and add only the services you want.
++
++# ---------- Free-first script + Gemini TTS ----------
++# Google AI Studio API key. Separate from Gemini browser subscriptions.
++GEMINI_API_KEY=
++# GOOGLE_API_KEY=                 # accepted alias for GEMINI_API_KEY
++# Select actual available IDs: python3 -m engine.providers.gemini_models
++GEMINI_SCRIPT_MODEL=
++GEMINI_CLIP_MODEL=
++GEMINI_TTS_VOICE=Kore
++
++# ---------- Groq: script fallback + excellent caption timing ----------
++GROQ_API_KEY=
++GROQ_SCRIPT_MODEL=openai/gpt-oss-120b
++GROQ_TTS_MODEL=canopylabs/orpheus-v1-english
++GROQ_TTS_VOICE=troy
++
++# ---------- Optional premium script providers ----------
++OPENAI_API_KEY=
++OPENAI_SCRIPT_MODEL=gpt-6-luna
++XAI_API_KEY=
++XAI_SCRIPT_MODEL=grok-4-fast
++
++# ---------- Optional ElevenLabs narration ----------
++ELEVENLABS_API_KEY=
++# ELEVENLABS_KEY=                 # accepted alias
++ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
++ELEVENLABS_TTS_MODEL=eleven_multilingual_v2
++
++# ---------- Local/free script + narration ----------
++OLLAMA_BASE_URL=http://localhost:11434
++OLLAMA_SCRIPT_MODEL=llama3.2
++KOKORO_VOICE=af_heart
++KOKORO_SPEED=1.0
++
++# ---------- AI video / stock (existing) ----------
++VEO_MODEL=veo-3.1-fast-generate-preview
++FAL_KEY=
++FAL_ENDPOINT=
++PEXELS_API_KEY=
++PIXABAY_API_KEY=
++COMFY_URL=http://127.0.0.1:8188
++COMFY_WORKFLOW=assets/comfy_workflow.json
++
++# ---------- v5.1 storage safety ----------
++# Auto mode does NOT load Kokoro/Torch unless explicitly enabled. This avoids
++# multi-GB CUDA/model downloads on storage-constrained laptops.
++AUTOVIDEO_ENABLE_LOCAL_TTS=0
++AUTOVIDEO_MIN_FREE_GB=1.5
++AUTOVIDEO_WARN_FREE_GB=5.0
++
++# MovieFlow Studio browser automation (optional cartoon provider)
++# By default MovieFlow reuses the normal browser/CDP setup. Set these only if
++# you want a different debug Chrome/session for MovieFlow.
++MOVIEFLOW_BROWSER_MODE=
++MOVIEFLOW_CDP_URL=
++MOVIEFLOW_BROWSER_CHANNEL=
++MOVIEFLOW_BROWSER_EXE=
++
++# v5.5 Gemini Web writer (no API key required; manual Google sign-in once)
++# Explicit --script-provider gemini-web always enables it.
++AUTOVIDEO_ENABLE_GEMINI_WEB=0
++GEMINI_WEB_RESPONSE_TIMEOUT=300
++GEMINI_WEB_LOGIN_WAIT=300
++# Optional independent browser transport overrides:
++GEMINI_WEB_BROWSER_MODE=auto
++GEMINI_WEB_CDP_URL=
+diff -ruN a/tmp/.github/workflows/tests.yml b/tmp/.github/workflows/tests.yml
+--- a/tmp/.github/workflows/tests.yml	1970-01-01 00:00:00.000000000 +0000
++++ b/tmp/.github/workflows/tests.yml	2026-10-20 11:06:08.000000000 +0000
+@@ -0,0 +1,39 @@
++name: Offline regression tests
++
++on:
++  push:
++  pull_request:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  tests:
++    runs-on: ubuntu-24.04
++    timeout-minutes: 15
++    strategy:
++      fail-fast: false
++      matrix:
++        python-version: ["3.10", "3.12"]
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: ${{ matrix.python-version }}
++          cache: pip
++          cache-dependency-path: requirements-test.txt
++      - name: Install FFmpeg and caption fonts
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y ffmpeg fonts-dejavu-core
++      - name: Install test dependencies
++        run: |
++          python -m pip install --upgrade pip
++          python -m pip install -r requirements-test.txt
++      - name: Run offline tests (includes real FFmpeg and libass checks)
++        env:
++          PYTHONUTF8: "1"
++        run: python -m pytest -q -rs
++      - name: Check Python syntax
++        run: python -m compileall -q engine tools app.py cli.py
+diff -ruN a/tmp/.gitignore b/tmp/.gitignore
+--- a/tmp/.gitignore	1970-01-01 00:00:00.000000000 +0000
++++ b/tmp/.gitignore	2026-10-20 11:06:08.000000000 +0000
+@@ -0,0 +1,19 @@
++.venv/
++venv/
++releases/
++.flow-profile/
++.flow-workers/
++.gemini-profile/
++.movieflow-profile/
++.env
++.env.*
++!.env.example
++config/user_settings.yaml
++cookies/
++credentials/
++outputs/
++data/
++__pycache__/
++*.pyc
++.pytest_cache/
++.flow_session.json
+diff -ruN a/tools/update_v768_to_v769.py b/tools/update_v768_to_v769.py
+--- a/tools/update_v768_to_v769.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v768_to_v769.py	2026-10-20 11:21:38.000000000 +0000
+@@ -0,0 +1,139 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.69 update (automatic resume, channel setup, drafting models) to a v7.0.68 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.69 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.69/tools/update_v768_to_v769.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.69/tools/update_v768_to_v769.py . --apply    # installs the code
++
++An installation still on 7.0.67 must first run tools/update_v767_to_v768.py from the 7.0.68 folder.
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'AUTO_RESUME_AND_DRAFTING_V7_0_69.md',
++    'VERSION',
++    'app.py',
++    'engine/auto_resume.py',
++    'engine/automatic_recovery.py',
++    'engine/channel_branding.py',
++    'engine/factory.py',
++    'engine/job_monitor.py',
++    'engine/studio_review.py',
++    'tests/test_v769_auto_resume.py',
++    'tests/test_v769_channel_branding.py',
++    'tests/test_v769_drafting.py',
++    'tools/update_v768_to_v769.py',
++]
++# Files that exist in 7.0.68: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['d4019fe552d665f3c34e1313a6e5e872e63f4adcc798cef146f3d49d3b7db39d'],
++    'app.py': ['c9775a4979231c1e967aad09ab533b2f07eb2ee43fa267c9fe3b75a4b0c4201c'],
++    'engine/automatic_recovery.py': ['63fd47c746fdf5b896ca2301ae2c66827fd4d2fc220c0c9a7fa97a33bd50bc9c'],
++    'engine/factory.py': ['fda39eb38f6725fb6a8b7766052b2468cfdb7f3c2e73fb4990e8de58eff5dcce'],
++    'engine/job_monitor.py': ['7ccb012f3f13c151c3e652623f9f5ed44b545c249dac52a119496d4f8b38d0db'],
++    'engine/studio_review.py': ['4c61eab86151a686c109c5c8d01107d4dddf8898c18e63ea9d2250d3148e346a'],
++}
++ACCEPTED_INSTALLS = ('7.0.68', '7.0.69')  # 7.0.69 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.68 (found ' + current + '). '
++                         'For 7.0.67 run ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py first.')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.69 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.69 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.69-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.69. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

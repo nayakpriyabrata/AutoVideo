@@ -1,0 +1,2688 @@
+diff -ruN a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md
+--- a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
++++ b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	2026-10-20 05:29:08.482194392 +0000
+@@ -0,0 +1,64 @@
++# AutoVideoAI: scale review for large channel operations (v7.0.68)
++
++Reviewed 20 October 2026 against the v7.0.68 source. Target operations for this review:
++
++- one YouTube channel with about 100 million views, or the equivalent scale of audience;
++- one Instagram account with about 10 million followers;
++- one Facebook page with about 10 million followers.
++
++The question was not whether the tool can make attractive videos. It was: **what would break, or create platform risk, if an operator used it to run channels at that scale?**
++
++## Verdict
++
++AutoVideoAI is a supervised production workstation. It is not yet an operations platform for channels of that size. Three things block that use, in order of importance:
++
++1. **No native publishing or analytics.** The tool exports files and records a local schedule. It does not upload to YouTube, Instagram or Facebook, and it does not pull platform analytics. Channel Desk only imports a CSV you prepare. At 10 million followers, every publish decision needs platform-side evidence (watch time, retention, reach, comments and policy notices), and the tool cannot read any of it.
++2. **Browser-driven generation is a dependency, not a service.** Flow and Gemini Web are driven through a signed-in Chrome profile. Their UI changes without notice. The tool now has conservative recovery and resume rules, but no account-level monitor, no alerting, and no way to run unattended safely.
++3. **Single-owner local state.** Jobs, journals and ledgers are JSON files on one Windows/WSL machine, with a single production lock. There is no role-based approval, no audit log that survives tampering, and no backup or restore procedure beyond copying the folder.
++
++## Platform constraints that shape the design
++
++- **YouTube upload quota.** Google's quota page lists `videos.insert` at 100 calls per day per Google Cloud project, counted in its own bucket. A 100-million-view operation publishing across several channels therefore needs deliberate quota planning, such as separate projects or an approved quota extension. The tool has no quota ledger, so it cannot warn before a batch hits the limit. Source: [Google Developers, videos.insert quota](https://developers.google.com/youtube/v3/docs/videos/insert) and [quota calculator](https://developers.google.com/youtube/data/determine_quota_cost). Check the current quota page before relying on these numbers.
++- **Identical content across channels.** Reusing one rendered file on several channels, or near-identical files with a changed title, can trigger platform spam or duplicate-content review. I have not verified current platform thresholds. The tool records a SHA-256 for exports and review packs, but it does not compare those hashes across channels or destinations. The 7.0.68 guard (`engine/delivery_duplicates.py`) now runs when a delivery is approved or scheduled; see the first P0 item.
++- **Platform terms and disclosure.** Synthetic or altered content, paid promotion and music rights are platform-specific. Channel Desk records rights and disclosure as operator fields. It does not check them against current platform rules.
++
++## What is already useful (verified in code)
++
++| Area | Evidence | Assessment at scale |
++|---|---|---|
++| Flow and Gemini request journals | `engine/flow_project_cleanup.py`, `engine/providers/gemini_video.py` | Conservative. A request is not resubmitted after an uncertain click. Good for cost control. |
++| Final-file QC | v7.0.66 Channel Desk review (see `CHANNEL_MANAGER_AUDIT_V7_0_66.md`) | Good. Reviews the exact export and records the hash. |
++| Metrics import | `engine/channel_desk.py` (`parse_metrics`, `metrics_summary`) | Useful for a monthly CSV. Not a substitute for live analytics. |
++| Language editions | v7.0.67 and v7.0.68 | Works for English, Hindi and Odia. Needs one live Flow/Gemini test per language. |
++
++## Changes made in v7.0.68 for this review
++
++1. **Gemini Web video downloads wait for a loaded tile.** Gemini shows "I'm generating your video" before the file exists, and the tile can appear as a placeholder. The old check accepted metadata only (`readyState >= 1`). The download now starts only after the video is decoded (`readyState >= 3`), has a duration, and its source has not changed for 2 seconds. Covered by `tests/test_v768_gemini_video_settle.py`.
++2. **Flow project cleanup remains gated.** This review did not loosen deletion rules. See "Open decisions" below.
++
++## Ranked feature list (what I would build next, with acceptance tests)
++
++| Rank | Feature | Why it matters at scale | Acceptance test |
++|---|---|---|---|
++| P0 | **Cross-channel duplicate guard.** Before a delivery is recorded, compare its SHA-256 and near-duplicate fingerprint against every other delivery in the same workspace. | Prevents accidental reuse of one file across several channels. | Two channels given the same export are flagged; a re-export with changed content is not. **Status (7.0.68): implemented at approval and scheduling, not at export.** Identical bytes approved or scheduled for another account are blocked. A near-duplicate (8 sampled frames, 9x8 dHash, mean Hamming distance at most 10 of 64 bits, durations within 2%) needs explicit acknowledgment. The threshold is a proposal, checked only on synthetic footage. Records written before 7.0.68 are compared at their next approval or schedule. |
++| P0 | **Per-project upload budget ledger.** Track uploads per Cloud project and day against the documented quota, and block a batch that would exceed it. | Stops a batch from failing halfway through. | A batch of 101 uploads on one project is refused before any upload starts. |
++| P0 | **Browser-session health check** for Flow and Gemini Web: sign-in state, profile age, and the last successful run. | Most failures at scale will come from an expired session or a UI change. | Check reports `signed-out`, `ui-changed` or `ok` without submitting a prompt. |
++| P1 | **Platform analytics connectors** (YouTube Analytics, Meta Graph) with explicit scopes and read-only use. | Needed for retention, reach and comment review at 10 million followers. | Read-only scope verified; no write permission requested. |
++| P1 | **Approval audit log** with append-only records and per-user identity. | Needed before more than one editor works on the same channel. | Every publish-approval change produces one record that cannot be edited in place. |
++| P2 | **Multi-channel brand isolation** (separate profiles, logos, languages and destinations per account) with a single view of schedules. | Reduces the risk of posting the wrong language or logo to the wrong account. | Posting a Hindi edition to the English account is refused. |
++
++## Open decisions for you
++
++1. **Flow project deletion.** The tool already has an exact-project delete path (`engine/flow_project_delete.py`). It is available only from the Dashboard panel "Clean downloaded Flow image projects · optional", and only for image-only projects that pass all of these checks:
++   - the project records an image request, with a verified local copy;
++   - the project has a complete captured gallery inventory;
++   - no earlier cleanup of that project is recorded as uncertain.
++   Projects that do not meet all three are listed with the reason. If your photo projects are not appearing as eligible, that reason is the first thing to check. I did not loosen these checks. The cleanup panel states that remote deletion removes the Flow copy; local media and resume records stay on disk. Flow's project menu also has a bin, but I have not verified how long deleted projects remain recoverable. Should a downloaded, locally verified image project be deletable without the captured inventory?
++2. **Which P0 feature to build first.** The duplicate guard is the smallest change. The quota ledger needs your Google Cloud project list.
++3. **Control Center deployment.** The hosted Control Center (`autovideoai-control…chatgpt.site`) is not in this repository, and I cannot deploy to it from this workspace. I updated the local documentation only. To update the hosted Site, I need its source or the deployment method you use.
++
++## Validation and limits
++
++- Code paths reviewed: `engine/flow_project_cleanup.py`, `engine/flow_project_delete.py`, `engine/providers/gemini_video.py`, `engine/channel_desk.py`, and the v7.0.66 audit.
++- New tests: `tests/test_v768_gemini_video_settle.py` (5 tests, fake clock; no live Gemini session).
++- Not tested live: Gemini Web upload and download, Flow project deletion, and any platform upload or analytics call. These need a signed-in browser on your machine.
+diff -ruN a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
+--- a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
++++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-20 05:29:08.482194392 +0000
+@@ -0,0 +1,71 @@
++# AutoVideoAI 7.0.68 · language editions now render as videos
++
++## What was wrong in 7.0.67
++
++- Create selected English, Hindi and Odia editions, but production rendered **only the primary-language video**. The extra editions stopped at reviewed narration and timed-card bundles. Nothing turned them into videos.
++- Language-specific channel profiles chosen in Create were saved in `language_editions.json` and then ignored.
++- In Finishing Studio, an edition with no reviewed narration kept the **source video's voice**. Reproduced with a 440 Hz English voice: the Hindi export still spoke English.
++
++## What 7.0.68 does
++
++- After the primary video is rendered, every additional edition selected in Create is rendered automatically from:
++  - the approved clean picture (no speech, captions, music or branding from the English render);
++  - that edition's **reviewed narration** and measured word timings;
++  - the edition's timed text cards and **word-timed captions in its own language**;
++  - the channel profile chosen for that language in Create (logo, channel name in that language, optional intro and outro);
++  - the primary production's background track, with its recorded licence, when one was used.
++- Output: `outputs/<job>/language_editions/<plan>/exports/<lang>-<plan>.mp4`, plus a `.provenance.json` for each export. Each export is a new file and is never overwritten.
++- `production/language_editions_render.json` records each language's status. Re-running reuses verified exports, so nothing is re-rendered needlessly.
++- **Refusal instead of English.** An edition without its own reviewed narration is refused with a clear message. Nothing falls back to the source voice.
++- **Length fit.** If a reviewed Hindi or Odia narration is longer than the approved picture, the picture is slowed by up to 25% so the whole narration is heard. Longer than that, the edition fails with a message asking for a shorter script. Cards and captions stay in narration time, so they remain in sync.
++- **Create page.**
++  - Extra editions require Voiceover and a reviewed, prepared language batch (step 4, "reuse this exact batch"). Otherwise submission is blocked, so no edition can silently have no voice.
++  - Step 3 lets you pick a saved channel profile per language, or create one there: channel name, logo, and optional intro and outro.
++  - Under the job, a "Language editions" panel shows each language's status and exports, with a button to render any pending editions. This also works for jobs created before this release.
++- **Finishing Studio.** The source video's narration language is now declared. Any other edition needs its own reviewed narration.
++
++## Using it
++
++1. Create → Reels & Long Videos → choose the master language and up to two additional editions.
++2. Approve the master script (step 2).
++3. Step 3: choose or create a channel profile for each language (logo and name).
++4. Step 4: approve each localized narration, click **Prepare all selected TTS → then all language text cards**, review every voice and card, and tick **reuse this exact batch**.
++5. Create the production. Each selected language is rendered when the primary video finishes. Check the "Language editions" panel.
++
++## Limits and review points
++
++- Hindi and Odia wording still needs a fluent reviewer before publishing.
++- Additional editions use the approved picture with that edition's narration, cards, captions and channel mark. Production-only extras (ambience, sound effects, graphics from the English timeline) are not carried over.
++- The primary edition keeps the production render. Its channel logo comes from the Create-page profile, but its intro and outro are not added, to avoid changing the primary video.
++- Live Gemini, TTS and browser flows were not exercised in this release. Automated tests use real FFmpeg media and synthetic narration.
++- If an edition fails, the primary video is still produced and the job shows a warning naming the failed language.
++
++## Verification
++
++- `tests/test_v768_language_editions_render.py`: 10 tests with real FFmpeg media. They check:
++  - each language gets its own narration (660 Hz Hindi and 880 Hz Odia voice fingerprints);
++  - the length fit and its 25% limit;
++  - refusal of a missing batch and of a voiceless edition;
++  - profile-less editions;
++  - re-run reuse;
++  - the Create and factory wiring.
++- Full suite: the same 24 pre-existing failures as v7.0.67 (fonts, browser and UI environment tests), with 10 new passing tests.
++
++## Upgrading an installed 7.0.67 folder
++
++Stop the dashboard first. Extract the 7.0.68 zip beside your installation folder, then run from the installation folder:
++
++```
++python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py .            # dry run: shows the plan
++python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py . --apply    # installs the code
++```
++
++The updater replaces only the code and documentation files listed in its plan. Outputs, jobs, profiles, music, characters and channel data are never copied, moved or deleted. It refuses to run if a listed file was edited locally, if the installed version is not 7.0.67 (or an already-updated 7.0.68), or if the 7.0.68 zip is incomplete. Before replacing files it saves the previous code under `code-update-backups/v7.0.68-<timestamp>`, and it restores those files if an install step fails. Re-running after success reports "Already up to date" and changes nothing. Restart the dashboard afterwards.
++
++## Flow downloads wait for the media to load
++
++Flow shows a placeholder or 360p preview first and prepares the real file in the background, which can take 15-20 seconds. Earlier builds could open a tile's Download menu, or click Download in the viewer, before that happened. The download then saved partial media, or the browser page closed.
++
++Now every Flow image and video download waits until the element is visible, decoded, not busy, and unchanged for 2 seconds. Video tiles keep their 15-second settle. After 90 seconds the request is retained for exact recovery and nothing is downloaded. Before this change, a slow media load could still start a download early.
++
++Known limit: the readiness rules are checked against Flow's page structure only in unit tests with fake page objects. Run one live generation and confirm the log shows "finished loading; starting download" before the download.
+diff -ruN a/README.md b/README.md
+--- a/README.md	2026-10-20 05:29:08.462194290 +0000
++++ b/README.md	2026-10-20 05:29:08.482194392 +0000
+@@ -1,3 +1,7 @@
++# Update 7.0.68
++
++Selected language editions now render as finished videos. Each additional English, Hindi or Odia edition uses the approved picture, its own reviewed narration, timed cards, captions and its chosen channel profile. A missing or voiceless edition is refused instead of exported with English audio. See [the 7.0.68 render guide](LANGUAGE_EDITIONS_RENDER_V7_0_68.md).
++
+ # Update 7.0.67
+ 
+ Guided Studio now separates the master script from its output language editions. Choose the master/primary language and any additional English, Hindi or Odia editions before drafting. Gemini drafts one story, selected editions are localized for review, and the exact approved scripts are used to prepare every TTS track before any timed-card request. See [the language-edition guide](LANGUAGE_EDITIONS_V7_0_67.md).
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-20 05:29:08.458194269 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-20 05:29:08.498194474 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.67",
+-  "built_at": "2026-10-19T03:37:42+00:00",
++  "version": "7.0.68",
++  "built_at": "2026-10-20T05:27:31+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -78,6 +78,11 @@
+       "sha256": "0d5950187b0104460e75fa85d008c230c6a5359161c99056009fda1c30670e4f"
+     },
+     {
++      "path": "CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md",
++      "bytes": 8570,
++      "sha256": "40afd4a207aca1f49b60546ca7bfe3195fbdbf73eaa0fb551059293120eb7c42"
++    },
++    {
+       "path": "CHANNEL_RENDER_SPEED_V7_0_63.md",
+       "bytes": 3461,
+       "sha256": "a76ff77ad57abbad14e66b950d2d9bd15481bbd050597b63e35a2de2c78a60f7"
+@@ -223,6 +228,11 @@
+       "sha256": "eb0faec571a67515a621de7af2f90f8cd388bb5aa6daa10c44fbdfa6985d3947"
+     },
+     {
++      "path": "LANGUAGE_EDITIONS_RENDER_V7_0_68.md",
++      "bytes": 6317,
++      "sha256": "d9f427e06f2c8447f2ee79caee14cbdb0b448e6349bdc76034044a81366df872"
++    },
++    {
+       "path": "LANGUAGE_EDITIONS_V7_0_67.md",
+       "bytes": 3810,
+       "sha256": "a76ad31f1f49d617eed2433ba0230e0000b2474b0374d9b768602ad7f7dd4f03"
+@@ -299,8 +309,8 @@
+     },
+     {
+       "path": "README.md",
+-      "bytes": 6168,
+-      "sha256": "c715996256015f9b2ce5a97bf943f8884037fb4ef18aa48c70e335e78b65366b"
++      "bytes": 6550,
++      "sha256": "786227a43d8bfaa5e97aa33a587be0e3c745476eff75ed6553bdec0a01477122"
+     },
+     {
+       "path": "README_V742.md",
+@@ -805,7 +815,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "6448baf7e1324e84ccefd1993bab81c1f3e7f3f6a948e3014839f1698ccd1146"
++      "sha256": "d4019fe552d665f3c34e1313a6e5e872e63f4adcc798cef146f3d49d3b7db39d"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -844,8 +854,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 210281,
+-      "sha256": "3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75"
++      "bytes": 215443,
++      "sha256": "c9775a4979231c1e967aad09ab533b2f07eb2ee43fa267c9fe3b75a4b0c4201c"
+     },
+     {
+       "path": "architecture.md",
+@@ -1193,6 +1203,11 @@
+       "sha256": "120f2a4ab9a7726dc87119bb98be1d9c7d8e62a3f22f1a70ef4ce78d8bc34692"
+     },
+     {
++      "path": "engine/delivery_duplicates.py",
++      "bytes": 10470,
++      "sha256": "19d1f16e8b3a423fbaa41aa1e5a4119355c5c5039532f698861e0ff0cd3c6a06"
++    },
++    {
+       "path": "engine/editorial_text.py",
+       "bytes": 2604,
+       "sha256": "5c1c01facf24de02e6de00570e3a33c1cb773b881d37901a031b4f6c7e34993e"
+@@ -1209,18 +1224,18 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 274332,
+-      "sha256": "34fa4a483bb18aeb472208c6408f25ebdb737c1c9c581770709874c7fbd5e22a"
++      "bytes": 275319,
++      "sha256": "fda39eb38f6725fb6a8b7766052b2468cfdb7f3c2e73fb4990e8de58eff5dcce"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+-      "bytes": 21676,
+-      "sha256": "fd75959b452f8cfe5ea24afd92119aa018f255babfdef0b4ca0160c2f5cf6026"
++      "bytes": 26909,
++      "sha256": "7b53d24e7ba337df1fd291191723cc5ad52dcad40a19841d04e832732bb32ad8"
+     },
+     {
+       "path": "engine/finishing_ui.py",
+-      "bytes": 11501,
+-      "sha256": "f52a733c16b7828dc30a084492b34a622a56bc94ba1bf4a5d96ee2927eb7f383"
++      "bytes": 11861,
++      "sha256": "d0519ca0d3d8b483af6b09377f7ed9623cf8f83d9de1779e602bb16a6f007e78"
+     },
+     {
+       "path": "engine/flow_approval.py",
+@@ -1254,13 +1269,13 @@
+     },
+     {
+       "path": "engine/flow_project_cleanup.py",
+-      "bytes": 7131,
+-      "sha256": "d386855db0d8e39b449ae9bc4177ee9118f88e486c4aeef45336d227a449d247"
++      "bytes": 7802,
++      "sha256": "3bb233520e4969dd3f08dd6defcd9034dc3cfab76d00093b15b8d9099dcfecd4"
+     },
+     {
+       "path": "engine/flow_project_delete.py",
+-      "bytes": 4452,
+-      "sha256": "443e108be47daed0300980ad82575ace78113fd9dcd8445cbbc1a3a9988c7867"
++      "bytes": 5103,
++      "sha256": "586baee4e4c2d1ffa0c5ca91d85a53b072c25274c46caaee72c24d2de8b7442c"
+     },
+     {
+       "path": "engine/flow_project_isolation.py",
+@@ -1343,6 +1358,11 @@
+       "sha256": "f9b1844cf109e00da91a1b88d00d0943127926b6891fba4f44f8fbbf0cf61dc0"
+     },
+     {
++      "path": "engine/language_editions.py",
++      "bytes": 7143,
++      "sha256": "10fdefa8205edb01aec847c0719b457cfb9a0812b841a11c987e9a94f7dd585d"
++    },
++    {
+       "path": "engine/languages.py",
+       "bytes": 2269,
+       "sha256": "a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c"
+@@ -1479,8 +1499,8 @@
+     },
+     {
+       "path": "engine/providers/flow_browser.py",
+-      "bytes": 301711,
+-      "sha256": "f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9"
++      "bytes": 306571,
++      "sha256": "f0e963159c7261698fdd8d656391c458fa2a81f9e1506f771949a3933009d96c"
+     },
+     {
+       "path": "engine/providers/flow_extension.py",
+@@ -1494,8 +1514,8 @@
+     },
+     {
+       "path": "engine/providers/gemini_video.py",
+-      "bytes": 9192,
+-      "sha256": "d95343e99adebe1f21b66bda8a608b5b82782fe8e4f56f8c091a1c1e2b34e5bf"
++      "bytes": 10229,
++      "sha256": "26a9b6bf736af4a78c108f9b22850a97309bb6ebb8f2fb98059fa80e77785cfd"
+     },
+     {
+       "path": "engine/providers/gemini_web.py",
+@@ -1524,8 +1544,8 @@
+     },
+     {
+       "path": "engine/publishing.py",
+-      "bytes": 18399,
+-      "sha256": "d7fe5de3cdc8a8fe6ebd6cf44927b03ad278191125c2333eaa4818eb184de488"
++      "bytes": 19338,
++      "sha256": "f849f322155310a5a6fcc49abd69993d43908f8d82ac2f3fa4ccc27f8b5ae465"
+     },
+     {
+       "path": "engine/qc/__init__.py",
+@@ -2154,8 +2174,8 @@
+     },
+     {
+       "path": "tests/test_v571_flow_recovery_ux.py",
+-      "bytes": 14476,
+-      "sha256": "85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4"
++      "bytes": 14812,
++      "sha256": "aeb39e0d08a5a3bec0ab49ff426a1022e5d46c2121af263759d0552f5c547e6d"
+     },
+     {
+       "path": "tests/test_v572_clipping.py",
+@@ -2229,8 +2249,8 @@
+     },
+     {
+       "path": "tests/test_v600_delivery_clip_audio.py",
+-      "bytes": 5343,
+-      "sha256": "8a212b59731e8da722c2b1f39b3b3d9f9894f79aa1983d3057a0d1b0f3136572"
++      "bytes": 5566,
++      "sha256": "a8a58608766f246d288e6dee0427f92008ed420d0b5f747177ddc4bf8d6e19e8"
+     },
+     {
+       "path": "tests/test_v601_flow_parallel_and_recovery.py",
+@@ -2259,8 +2279,8 @@
+     },
+     {
+       "path": "tests/test_v609_flow_video_typed_recovery.py",
+-      "bytes": 27052,
+-      "sha256": "12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae"
++      "bytes": 27232,
++      "sha256": "2ac3d53b586d7c35cc545f1c1e7108e52503ef3f0248599e002ac63644440d3d"
+     },
+     {
+       "path": "tests/test_v619_flow_download_hardening.py",
+@@ -2269,13 +2289,13 @@
+     },
+     {
+       "path": "tests/test_v700_content_studio.py",
+-      "bytes": 6143,
+-      "sha256": "4e440d64616f5daf2cfd701a584ee19c323afa3fad3a9adc2978f5a7c80b8150"
++      "bytes": 6565,
++      "sha256": "ca2a060361011547d98c7c3bcd32a5569d8d7e666e44fad5ab2e532dd5d4a9be"
+     },
+     {
+       "path": "tests/test_v702_flow_recovery.py",
+-      "bytes": 6485,
+-      "sha256": "28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9"
++      "bytes": 6540,
++      "sha256": "2cad018b0cb3e90fa36bde1cbeca5297c5a356b7ea415b5acfa23c701d6525f1"
+     },
+     {
+       "path": "tests/test_v703_workflow.py",
+@@ -2509,8 +2529,8 @@
+     },
+     {
+       "path": "tests/test_v750_readiness.py",
+-      "bytes": 7220,
+-      "sha256": "64e8f0c8b354a81bf9411b93efcb963e544e76af3bd2e0289126382906276186"
++      "bytes": 7227,
++      "sha256": "2995b40a359891fb8820b2b6ac686a6a5e89e168bc0fcd6ef9442f818d6d648f"
+     },
+     {
+       "path": "tests/test_v751_visual_only.py",
+@@ -2584,13 +2604,13 @@
+     },
+     {
+       "path": "tests/test_v765_speech_gemini.py",
+-      "bytes": 5689,
+-      "sha256": "826f47a7e7161ab81cf95384941ed8c559c098c13ae9c56f36461e3a84f9c5cb"
++      "bytes": 5832,
++      "sha256": "e69c8773665030202b06ade9907b25921151a201f068d285e68575ffa81101b7"
+     },
+     {
+       "path": "tests/test_v766_channel_desk.py",
+-      "bytes": 8376,
+-      "sha256": "9c8181bcea756336a90459db239874e0d8e3eec54bed4abe52df4f23aee235d3"
++      "bytes": 8596,
++      "sha256": "f995ee3448157c436cf87a59f3d4efcacfabdfd03965f90ee6a94dac3b7f8423"
+     },
+     {
+       "path": "tests/test_v767_language_editions.py",
+@@ -2598,6 +2618,31 @@
+       "sha256": "4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa"
+     },
+     {
++      "path": "tests/test_v768_delivery_duplicates.py",
++      "bytes": 8812,
++      "sha256": "55e33074132c8bd76ed2409022bafe0a2229c2fc655901c60c85186453c8c794"
++    },
++    {
++      "path": "tests/test_v768_flow_image_cleanup.py",
++      "bytes": 7351,
++      "sha256": "692405f348877182165fc5ec3c0e3ccbe93110e9925bd016d4621062e520969b"
++    },
++    {
++      "path": "tests/test_v768_gemini_video_settle.py",
++      "bytes": 1747,
++      "sha256": "bb9e0054e746385050f14cd44b7041ee25fefb1981c68bb3656cd810b7b04991"
++    },
++    {
++      "path": "tests/test_v768_language_editions_render.py",
++      "bytes": 11436,
++      "sha256": "ff9bae7bf525bff97b1b00f0ab915d404e075da2343f80857796e26fa3099e77"
++    },
++    {
++      "path": "tests/test_v768_media_load_before_download.py",
++      "bytes": 4595,
++      "sha256": "6c1ac2414392d8d048ef1a3cd80b1e622525e2a45875c18f6851cffefa8f4bf1"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2838,6 +2883,11 @@
+       "sha256": "a07e02af1df9f50970150098c2e9905b5d70066f4b7dbf318f7e92853525a35b"
+     },
+     {
++      "path": "tools/update_v767_to_v768.py",
++      "bytes": 8943,
++      "sha256": "9f4e2774296a13dfd3707fa28042b220d86e3c9d954cf3f91ce55cde892b49c0"
++    },
++    {
+       "path": "topics.csv",
+       "bytes": 467,
+       "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-20 05:29:08.466194310 +0000
++++ b/VERSION	2026-10-20 05:29:08.486194413 +0000
+@@ -1 +1 @@
+-7.0.67
++7.0.68
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-20 05:29:08.466194310 +0000
++++ b/app.py	2026-10-20 05:29:08.486194413 +0000
+@@ -501,6 +501,39 @@
+         c.metric(name, "✓" if ok is True else ("·" if ok is False else ok))
+ 
+ 
++def language_edition_panel(job_id):
++    """Language editions of a job: status, exports and an explicit render action."""
++    from engine.language_editions import requested_languages, render_job_editions
++    from engine.production_lock import production_slot
++    from engine.languages import LANGUAGES as LANGUAGE_PACKS
++    job_dir = Path(F.pm.job_dir(job_id))
++    source, extra, state = requested_languages(job_dir)
++    if not extra:
++        return
++    record_path = job_dir / 'production' / 'language_editions_render.json'
++    record = json.loads(record_path.read_text(encoding='utf-8')) if record_path.is_file() else {'editions': {}}
++    st.subheader('Language editions')
++    st.caption('Each extra edition uses the approved picture, its reviewed narration, timed cards, captions and its own channel profile. The primary edition is the video above.')
++    for code in extra:
++        entry = record.get('editions', {}).get(code, {})
++        status = entry.get('status', 'not rendered yet')
++        st.write(f"**{LANGUAGE_PACKS[code].label}** · {status}")
++        if entry.get('status') == 'exported' and Path(entry.get('path', '')).is_file():
++            st.video(entry['path'], width=420)
++        elif entry.get('status') == 'failed':
++            st.error(entry.get('error', 'Render failed.'))
++    if st.button('Render pending language editions', key=f'render-language-editions-{job_id}'):
++        try:
++            with production_slot(job_dir):
++                report = render_job_editions(job_dir)
++            if report.get('status') == 'exported':
++                st.success('All language editions are exported.')
++            else:
++                st.warning('Language editions: ' + report.get('status', 'check details') + ('. ' + report['error'] if report.get('error') else ''))
++        except Exception as error:
++            st.error(str(error))
++
++
+ # ================= STUDIO =================
+ queued_resume = st.session_state.pop("pending_resume_job", None)
+ if queued_resume:
+@@ -593,22 +626,50 @@
+                     reviewed_path=save_reviewed_plan(edited_plan,True)
+                     approved_plan_path=reviewed_path
+                 except Exception as error:st.error(str(error))
+-    with st.expander('3 · Language editions and channel profiles', expanded=False):
+-        from engine.finishing_studio import profiles as saved_channel_profiles
++    with st.expander('3 · Language editions and channel profiles', expanded=bool(st.session_state.get('studio-profile-open'))):
++        from engine.finishing_studio import profiles as saved_channel_profiles, save_profile as save_channel_profile
++        from engine.finishing_ui import _upload as upload_channel_media
+         available_profiles = saved_channel_profiles()
+         channel_editions=batch_languages
++        if st.session_state.get('studio-profile-flash'):
++            st.success(st.session_state.pop('studio-profile-flash'))
+         st.write('Selected editions: '+', '.join(LANGUAGES[x].label for x in channel_editions))
+-        st.caption('Each selected edition can use its own channel profile. Its logo, name, intro and outro are applied when that language edition is finished.')
++        st.caption('Each language edition gets its own channel profile: logo, channel name in that language, and optional intro and outro. Pick a saved profile or create one for a language below. An edition without a profile is rendered with no channel mark.')
+         edition_profiles = {}
+         for edition in channel_editions:
++            edition_label = LANGUAGES[edition].label
+             if available_profiles:
+-                choice = st.selectbox(f'{edition.upper()} channel profile (logo, intro, outro and name)',
++                choice = st.selectbox(f'{edition_label} channel profile (logo, name, intro and outro)',
+                                       [''] + [str(p) for p in available_profiles],
+                                       format_func=lambda value: 'Select a profile' if not value else Path(value).parent.name,
+                                       key=f'studio-edition-profile-{edition}')
+-                if choice: edition_profiles[edition] = choice
++                if choice:
++                    edition_profiles[edition] = choice
++                    logo_path = (json.loads(Path(choice).read_text(encoding='utf-8')).get('assets') or {}).get('logo', {}).get('path')
++                    if logo_path and Path(logo_path).is_file():
++                        st.image(logo_path, width=90, caption=f'{edition_label} logo')
+             else:
+-                st.caption('Create language-specific profiles in Finishing Studio to attach each channel’s identity.')
++                st.caption('No channel profiles saved yet. Create one for this language below.')
++            with st.expander(f'Create a {edition_label} channel profile here · logo, name, intro, outro', expanded=not available_profiles):
++                new_name = st.text_input(f'Channel name for the {edition_label} edition', key=f'studio-new-profile-name-{edition}', placeholder='e.g. Hunar Setu')
++                new_logo = st.file_uploader(f'{edition_label} logo', type=['png','jpg','jpeg','webp'], key=f'studio-new-profile-logo-{edition}')
++                new_intro = st.file_uploader(f'Optional {edition_label} intro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-intro-{edition}')
++                new_outro = st.file_uploader(f'Optional {edition_label} outro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-outro-{edition}')
++                st.caption('Saving with the name of an existing channel updates that channel. Empty uploads keep its saved media.')
++                if st.button(f'Save {edition_label} channel profile', key=f'studio-save-profile-{edition}'):
++                    saved_profile = False
++                    try:
++                        if not new_name.strip():
++                            raise ValueError('Enter the channel name for this edition')
++                        save_channel_profile(new_name, names={edition: new_name.strip()}, logo=upload_channel_media(new_logo,'logo'),
++                                             intro=upload_channel_media(new_intro,'intro'), outro=upload_channel_media(new_outro,'outro'))
++                        saved_profile = True
++                    except Exception as error:
++                        st.error(str(error))
++                    if saved_profile:
++                        st.session_state['studio-profile-flash'] = f'Saved “{new_name.strip()}”. Select it for the {edition_label} edition above.'
++                        st.session_state['studio-profile-open'] = True
++                        st.rerun()
+     prepared_batch = None
+     use_prepared_batch = False
+     with st.expander('4 · Review language scripts → all TTS → timed cards', expanded=True):
+@@ -690,7 +751,7 @@
+         gemini_video_count = st.number_input('Use Gemini Web for up to this many AI video shots', min_value=0, max_value=4, value=0,
+             help='Zero uses existing providers. Requests approximately 10 seconds per shot; duration and quota depend on Gemini. Resume recovers unfinished requests without resubmission.')
+         flow_auto_cleanup_images = st.checkbox('Delete captured image-only Flow projects automatically', value=False,
+-            help='Deletes only isolated image projects with verified complete galleries and local files. Video, mixed and unresolved projects are retained.')
++            help='After this job finishes, deletes isolated image-only Flow projects whose downloaded image and request record are verified locally. Video, mixed, pending and changed projects are retained. Off by default because deletion removes the Flow copy.')
+     with st.expander('Characters and recovery preferences · optional', expanded=False):
+         studio_cast = cast_picker(st,'studio-cast')
+         studio_replace_images = st.checkbox('Regenerate an unresolved image once after 3 recovery retries',value=False,key='studio-replace-images',
+@@ -774,8 +835,8 @@
+     if submitted:
+         if review and st.session_state.get("studio-use-review") and not reviewed_path:
+             st.warning("Approve a valid reviewed script before creating this production.")
+-        elif studio_voice_on and prepare_language_audio and len(batch_languages)>1 and not use_prepared_batch:
+-            st.warning('Review and prepare the selected language batch in step 4 before automatic multilingual audio. This prevents unreviewed localization from reaching TTS.')
++        elif len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch):
++            st.warning('Additional language editions need Voiceover and an approved language batch. In step 4, approve each localized narration, click “Prepare all selected TTS”, then tick “reuse this exact batch”. Without it, no extra edition can be made, so nothing falls back to English.')
+         elif studio_flow_music_on and studio_audio_mode != 'Silent' and not studio_flow_music_path:
+             st.warning('Choose and download your Flow Music track before creating the production.')
+         elif studio_audio_mode == 'Music only' and background_music == 'off' and not studio_flow_music_path:
+@@ -857,6 +918,7 @@
+     if st.session_state.job_id:
+         st.divider()
+         pipeline_view(st.session_state.job_id)
++        language_edition_panel(st.session_state.job_id)
+ 
+ # ================= MUSIC VIDEO =================
+ elif page == 'MUSIC VIDEO':
+@@ -2364,13 +2426,16 @@
+     language_ok = st.checkbox('Native-language narration and text reviewed')
+     kids = st.selectbox('Intended for children?',['Choose','Yes','No'])
+     ai = st.selectbox('AI disclosure required for this delivery?',['Choose','Yes','No'])
++    dup_ack = st.checkbox('Near-duplicate warning reviewed: any similar approved or scheduled video listed in the warning is a different video for this channel', value=False,
++                          help='Identical bytes already approved for another account are always blocked. A similar re-encoded video needs this acknowledgment.')
+     st.caption('The approval fingerprint covers the video hash, copy, destination, exact account and review choices. Editing the release JSON or upload packet after approval requires re-review.')
+     if st.button('Approve exact file + metadata for manual upload'):
+         try:
+             st.json(approve_release(release_path,account_id=account,rights_confirmed=rights,facts_reviewed=facts,
+                                     language_reviewed=language_ok,made_for_kids=None if kids=='Choose' else kids=='Yes',
+                                     ai_disclosure_required=None if ai=='Choose' else ai=='Yes',
+-                                    editorial_review_path=editorial_review.strip() or None))
++                                    editorial_review_path=editorial_review.strip() or None,
++                                    acknowledge_duplicate_warning=dup_ack))
+         except Exception as error:
+             st.error(str(error))
+     when = st.text_input('Optional local reminder: future ISO time with timezone',placeholder='2026-10-05T18:00:00+05:30')
+diff -ruN a/engine/delivery_duplicates.py b/engine/delivery_duplicates.py
+--- a/engine/delivery_duplicates.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/delivery_duplicates.py	2026-10-20 05:29:08.490194433 +0000
+@@ -0,0 +1,217 @@
++"""Cross-channel duplicate guard for approved manual-upload deliveries.
++
++Two checks run when a delivery is approved or scheduled for an account:
++
++* Identical bytes (same SHA-256) already approved or scheduled for a different
++  non-empty account are blocked. The same file cannot be cleared for two channels.
++* A near-duplicate (same content after re-encoding) is a warning. It needs an
++  explicit acknowledgment that names the matching release records.
++
++Near-duplicate test (a proposal, tune with real data): sample 8 frames across the
++video, reduce each to a 9x8 grayscale difference hash (64 bits), and compare the
++mean Hamming distance. Matching requires a mean at or below NEAR_MAX_MEAN_BITS
++and durations within DURATION_TOLERANCE.
++
++Fingerprints are cached in a sidecar next to each video. The release JSON is not
++changed, so existing approval fingerprints stay valid.
++"""
++from pathlib import Path
++import json
++import os
++import subprocess
++
++from .production import digest, read
++
++FRAME_SAMPLES = 8
++HASH_WIDTH, HASH_HEIGHT = 9, 8          # 8 comparisons per row x 8 rows = 64 bits
++NEAR_MAX_MEAN_BITS = 10                 # proposed threshold, mean per frame (of 64)
++DURATION_TOLERANCE = 0.02               # 2 %, same tolerance as delivery export
++ACTIVE_STATES = ('APPROVED_FOR_MANUAL_UPLOAD', 'SCHEDULED_MANUAL_REMINDER')
++DEFAULT_ROOTS = ('outputs',)
++CACHE_SUFFIX = '.duplicate-fingerprint.json'
++
++
++def _duration(path):
++    from .render.ffmpeg_renderer import _probe_av_durations
++    measured = _probe_av_durations(str(path))
++    value = measured.get('video') or measured.get('format')
++    if not value or value <= 0:
++        raise ValueError('Cannot read video duration for the duplicate check: ' + Path(path).name)
++    return float(value)
++
++
++def _frame_hash(ffmpeg, path, seconds):
++    command = [ffmpeg, '-v', 'error', '-ss', f'{seconds:.3f}', '-i', str(path),
++               '-frames:v', '1', '-vf', f'scale={HASH_WIDTH}:{HASH_HEIGHT}:flags=area,format=gray',
++               '-f', 'rawvideo', '-pix_fmt', 'gray', '-']
++    result = subprocess.run(command, capture_output=True, timeout=120)
++    pixels = result.stdout
++    if result.returncode or len(pixels) != HASH_WIDTH * HASH_HEIGHT:
++        raise ValueError('Cannot decode a frame for the duplicate check: ' + Path(path).name)
++    value = 0
++    for y in range(HASH_HEIGHT):
++        row = y * HASH_WIDTH
++        for x in range(HASH_WIDTH - 1):
++            value = (value << 1) | (1 if pixels[row + x] > pixels[row + x + 1] else 0)
++    return value
++
++
++def _file_identity(path):
++    stat = Path(path).stat()
++    return stat.st_size, stat.st_mtime_ns
++
++
++def fingerprint(path, *, use_cache=True):
++    """Return {'sha256','size','duration','frames'} for one delivery video."""
++    from .render.ffmpeg_renderer import ffmpeg_exe
++    path = Path(path).resolve()
++    if not path.is_file():
++        raise ValueError('Delivery video is missing: ' + path.name)
++    sha = digest(path)
++    size, mtime_ns = _file_identity(path)
++    cache_path = path.with_name(path.name + CACHE_SUFFIX)
++    cached = read(cache_path) if use_cache else None
++    if (isinstance(cached, dict) and cached.get('sha256') == sha and cached.get('size') == size
++            and cached.get('mtime_ns') == mtime_ns and len(cached.get('frames') or []) == FRAME_SAMPLES):
++        return {'sha256': sha, 'size': size, 'duration': cached['duration'],
++                'frames': [int(v, 16) for v in cached['frames']]}
++    duration = _duration(path)
++    ffmpeg = ffmpeg_exe()
++    frames = [_frame_hash(ffmpeg, path, duration * (i + 0.5) / FRAME_SAMPLES) for i in range(FRAME_SAMPLES)]
++    result = {'sha256': sha, 'size': size, 'duration': duration, 'frames': frames}
++    try:  # The cache is an optimisation; a failed write must not block a review.
++        tmp = cache_path.with_suffix(cache_path.suffix + '.tmp')
++        tmp.write_text(json.dumps({'sha256': sha, 'size': size, 'mtime_ns': mtime_ns,
++                                   'duration': duration, 'frames': [f'{v:016x}' for v in frames]}),
++                       encoding='utf-8')
++        os.replace(tmp, cache_path)
++    except OSError:
++        pass
++    return result
++
++
++def mean_hamming(a, b):
++    if len(a) != FRAME_SAMPLES or len(b) != FRAME_SAMPLES:
++        raise ValueError('Fingerprints must have the same frame count')
++    return sum(bin(x ^ y).count('1') for x, y in zip(a, b)) / FRAME_SAMPLES
++
++
++def candidate_releases(roots=DEFAULT_ROOTS, *, extra_dirs=(), exclude=None):
++    """Release JSON files under the roots (recursive) and the given folders (flat)."""
++    seen, paths = set(), []
++    excluded = Path(exclude).resolve() if exclude else None
++    found = []
++    for root in roots:
++        base = Path(root)
++        if base.is_dir():
++            found.extend(base.rglob('*.release.json'))
++    for folder in extra_dirs:
++        base = Path(folder)
++        if base.is_dir():
++            found.extend(base.glob('*.release.json'))
++    for path in found:
++        if path.is_symlink() or not path.is_file():
++            continue
++        resolved = path.resolve()
++        if resolved == excluded or resolved in seen:
++            continue
++        seen.add(resolved)
++        paths.append(resolved)
++    return sorted(paths)
++
++
++def _describe(path, record, match, **extra):
++    row = {'release': str(path), 'id': record.get('id', path.stem), 'account_id': record.get('account_id', ''),
++           'destination': record.get('destination', ''), 'state': record.get('state', ''), 'match': match}
++    row.update(extra)
++    return row
++
++
++def check(record, release_path, *, account_id, roots=DEFAULT_ROOTS):
++    """Compare this delivery with approved/scheduled releases on other accounts.
++
++    Returns {'blocked': [...], 'warnings': [...], 'skipped': [...]}. Raises ValueError
++    if this delivery's own video cannot be fingerprinted (fail closed).
++    """
++    account = str(account_id or '').strip()
++    release_path = Path(release_path).resolve()
++    result = {'blocked': [], 'warnings': [], 'skipped': []}
++    if not account:
++        return result
++    video = Path(record['video'])
++    current = fingerprint(video)
++    if current['sha256'] != record.get('sha256'):
++        raise ValueError('Delivery file is missing or changed; review the current render')
++    for path in candidate_releases(roots, extra_dirs=[release_path.parent], exclude=release_path):
++        other = read(path)
++        if not isinstance(other, dict):
++            result['skipped'].append({'release': str(path), 'reason': 'unreadable release record'})
++            continue
++        other_account = str(other.get('account_id') or '').strip()
++        if other.get('state') not in ACTIVE_STATES or not other_account or other_account == account:
++            continue
++        other_video = Path(str(other.get('video') or ''))
++        if not other_video.is_file():
++            result['skipped'].append({'release': str(path), 'reason': 'video file missing'})
++            continue
++        try:
++            other_fp = fingerprint(other_video)
++        except (OSError, ValueError, subprocess.SubprocessError) as error:
++            result['skipped'].append({'release': str(path), 'reason': str(error)[:200]})
++            continue
++        if other_fp['sha256'] == current['sha256']:
++            result['blocked'].append(_describe(path, other, 'identical_bytes'))
++            continue
++        distance = mean_hamming(current['frames'], other_fp['frames'])
++        delta = abs(current['duration'] - other_fp['duration']) / max(current['duration'], other_fp['duration'])
++        if distance <= NEAR_MAX_MEAN_BITS and delta <= DURATION_TOLERANCE:
++            result['warnings'].append(_describe(path, other, 'near_duplicate',
++                                                mean_hamming=round(distance, 2),
++                                                duration_delta=round(delta, 4)))
++    return result
++
++
++def acknowledged_paths(record):
++    review = record.get('duplicate_review')
++    if not isinstance(review, dict) or review.get('acknowledged') is not True:
++        return set()
++    return {row.get('release') for row in review.get('matches', []) if isinstance(row, dict)}
++
++
++def enforce(record, release_path, *, account_id, acknowledge, roots=DEFAULT_ROOTS):
++    """Raise on blocked duplicates; require acknowledgment for near-duplicates.
++
++    Returns the review note to store on the release record, or None when there is
++    nothing to report.
++    """
++    result = check(record, release_path, account_id=account_id, roots=roots)
++    if result['blocked']:
++        names = ', '.join(f"{row['id']} ({row['account_id']})" for row in result['blocked'])
++        raise ValueError('Identical video is already approved or scheduled for another account: '
++                         f'{names}. Nothing approved; choose one channel for this file.')
++    pending = [row for row in result['warnings'] if row['release'] not in acknowledged_paths(record)]
++    if pending and acknowledge is not True:
++        names = ', '.join(f"{row['id']} ({row['account_id']}, mean {row['mean_hamming']} bits)" for row in pending)
++        raise ValueError('Near-duplicate of approved or scheduled delivery: ' + names
++                         + '. Review the match and tick the acknowledgment to continue.')
++    if not result['warnings'] and not result['skipped']:
++        return None
++    return {'acknowledged': bool(result['warnings']) and (acknowledge is True or not pending),
++            'matches': result['warnings'], 'skipped': result['skipped'],
++            'threshold': {'mean_hamming_bits_max': NEAR_MAX_MEAN_BITS, 'duration_tolerance': DURATION_TOLERANCE}}
++
++
++def reverify_for_schedule(record, release_path, *, roots=DEFAULT_ROOTS):
++    """Scheduling re-check: no new blocking or unacknowledged matches are allowed.
++
++    Any new near-duplicate needs a fresh approval review, so the approval fingerprint
++    stays the record of what was reviewed.
++    """
++    result = check(record, release_path, account_id=record.get('account_id'), roots=roots)
++    if result['blocked']:
++        names = ', '.join(f"{row['id']} ({row['account_id']})" for row in result['blocked'])
++        raise ValueError('Identical video is now approved or scheduled for another account: '
++                         f'{names}. Re-review this delivery before scheduling.')
++    acknowledged = acknowledged_paths(record)
++    if any(row['release'] not in acknowledged for row in result['warnings']):
++        raise ValueError('A new near-duplicate delivery appeared since approval. Re-review and approve again.')
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/factory.py	2026-10-20 05:29:08.490194433 +0000
+@@ -4265,7 +4265,19 @@
+             for fs in fallback_shots:
+                 gf.write(f"- {fs.shot_id}: {fs.provider} -> {fs.actual_provider or fs.provider}: {fs.fallback_reason}\n")
+ 
++        # v7.0.68: the primary edition is complete here. Every additional language
++        # edition selected in Create is rendered from the approved clean picture and
++        # its reviewed narration. A failure is reported, never replaced by English audio.
++        edition_report = {"status": "not_requested", "editions": {}}
++        try:
++            from .language_editions import render_job_editions
++            edition_report = render_job_editions(
++                D["root"], progress=lambda label, pct, detail="": prog(label, 96 + 3 * float(pct) / 100, detail))
++        except Exception as edition_error:
++            edition_report = {"status": "failed", "editions": {}, "error": str(edition_error)[:800]}
+         final_warnings = list(tl["warnings"])
++        if edition_report.get("status") in ("failed", "partial"):
++            final_warnings.append("Language editions need attention: " + str(edition_report.get("error") or "see production/language_editions_render.json"))
+         if image_fallbacks:
+             final_warnings.append(f'{len(image_fallbacks)} storyboard/master image(s) used substitute media; character and scene fidelity need review')
+         if fallback_shots:
+@@ -4360,6 +4372,7 @@
+                        accepted_shots=m.accepted_count())
+         prog(f"Render complete — {publish_readiness['status']}; providers={actual_counts} fallbacks={total_fallbacks} (storyboard={len(image_fallbacks)})", 100)
+         return {"job_id": job_id, "status": "done", "video": out, "renderer": renderer,
++                "language_editions": edition_report,
+                 "captions": cap, "generation_summary": generation_summary,
+                 "visual_diversity": diversity, "publish_readiness": publish_readiness,
+                 "graphics": overlays if "overlays" in locals() else [],
+diff -ruN a/engine/finishing_studio.py b/engine/finishing_studio.py
+--- a/engine/finishing_studio.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/finishing_studio.py	2026-10-20 05:29:08.490194433 +0000
+@@ -63,6 +63,21 @@
+     return {'path': str(dest.resolve()), 'sha256': sha, 'duration': duration}
+ 
+ 
++def _json_snapshot(path, folder, kind):
++    """Immutable copy of reviewed word timings; verified like every other asset."""
++    path = Path(path).expanduser().resolve(strict=True)
++    if not path.is_file() or path.is_symlink():
++        raise ValueError('Invalid ' + kind + ' file')
++    sha = _hash(path)
++    folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
++    dest = folder / (kind + '-' + sha[:20] + '.json')
++    if not dest.exists():
++        tmp = dest.with_name('.' + dest.name + '-' + uuid.uuid4().hex)
++        shutil.copyfile(path, tmp)
++        os.replace(tmp, dest)
++    return {'path': str(dest.resolve()), 'sha256': sha, 'duration': 0}
++
++
+ def save_profile(name, *, names=None, logo='', intro='', outro='', music='', music_license='', root=None):
+     """Create a shared channel profile; optional media becomes immutable snapshots."""
+     root = Path(root or shared_root() / 'channel_profiles').resolve()
+@@ -105,15 +120,25 @@
+ 
+ 
+ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+-                source_rights='own_content', shared_music=None, shared_music_license=''):
+-    """A profile may be a single path or a language->profile path mapping."""
++                source_rights='own_content', shared_music=None, shared_music_license='',
++                source_language=None, require_profiles=True, fit_narration=False, captions=False):
++    """A profile may be a single path or a language->profile path mapping.
++
++    ``source_language`` names the language spoken in the source picture's own
++    narration. Any other edition must carry its own reviewed narration; render()
++    refuses to export it with the source voice. ``fit_narration`` lets a longer
++    reviewed narration stretch the approved picture (bounded, see render()).
++    ``captions`` burns word-timed captions from each edition's reviewed narration.
++    """
+     if source_rights not in ('own_content', 'licensed', 'creative_commons'):
+         raise ValueError('Review and declare source rights')
+     languages = list(dict.fromkeys(languages))
+     if not languages or any(lang not in LANGUAGES for lang in languages):
+         raise ValueError('Choose English, Hindi or Odia editions')
++    if source_language is not None and source_language not in LANGUAGES:
++        raise ValueError('Source language must be English, Hindi or Odia')
+     selection = profile_path if isinstance(profile_path, dict) else {lang: profile_path for lang in languages}
+-    if any(lang not in selection or not selection[lang] for lang in languages):
++    if require_profiles and any(lang not in selection or not selection[lang] for lang in languages):
+         raise ValueError('Choose an actual channel profile for each language edition')
+     original_source = Path(source).resolve()
+     job_root = original_source.parent.parent if original_source.parent.name == 'render' else original_source.parent
+@@ -133,9 +158,13 @@
+         shared = _snapshot(shared_music, asset_dir, 'shared-music')
+     editions = {}
+     for lang in languages:
+-        profile = json.loads(Path(selection[lang]).read_text(encoding='utf8'))
+-        if profile.get('schema_version') != 1 or not profile.get('name'):
+-            raise ValueError('Unsupported channel profile for '+lang)
++        if selection.get(lang):
++            profile = json.loads(Path(selection[lang]).read_text(encoding='utf8'))
++            if profile.get('schema_version') != 1 or not profile.get('name'):
++                raise ValueError('Unsupported channel profile for '+lang)
++        else:
++            # Optional in automatic editions: no logo, name, intro or outro is invented.
++            profile = {'schema_version': 1, 'name': '', 'names': {}, 'assets': {}}
+         assets = {}
+         for kind, entry in profile.get('assets', {}).items():
+             if kind in ('logo', 'intro', 'outro', 'music'):
+@@ -143,7 +172,7 @@
+                 assets[kind] = _snapshot(entry['path'], asset_dir, kind+'-'+lang)
+         editions[lang] = {'channel': {'name': profile['name'], 'display_name': profile.get('names', {}).get(lang) or profile['name']},
+                           'assets': assets, 'profile_music_license': profile.get('music_license',''),
+-                          'cards': [], 'narration': None, 'music': None,
++                          'cards': [], 'narration': None, 'music': None, 'words': None,
+                           'intro': bool(assets.get('intro')), 'outro': bool(assets.get('outro')), 'reviewed': False}
+     edition_file = job_root / 'production' / 'language_editions.json'
+     if edition_file.is_file():
+@@ -157,10 +186,14 @@
+                 edition['cards'] = bundle['cards']
+                 edition['script'] = bundle['script']
+                 edition['timing_source'] = bundle.get('timing_source','unverified')
++                if bundle.get('words') and Path(bundle['words']).is_file():
++                    edition['words'] = _json_snapshot(bundle['words'], asset_dir, 'words-'+lang)
+                 edition['reviewed'] = False
+     plan = {'schema_version': 2, 'state': 'draft', 'source_rights': source_rights,
+             'source': source_asset, 'shared_music': shared,
+             'shared_music_license': str(shared_music_license).strip()[:500],
++            'source_language': source_language, 'fit_narration': bool(fit_narration),
++            'captions': bool(captions),
+             'editions': editions, 'music_volume': 0.12,
+             'branding_motion': True, 'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+     _atomic_json(folder / 'plan.json', plan)
+@@ -271,31 +304,63 @@
+ 
+ 
+ def render(plan_path, language, *, progress=None):
+-    """Render one edition to a new output. Exact snapshots and reviewed plan required."""
++    """Render one edition to a new output. Exact snapshots and reviewed plan required.
++
++    Language editions (``plan['source_language']`` set) never fall back to the
++    source video's voice: the edition must carry its own reviewed narration.
++    When ``plan['fit_narration']`` is set, a longer reviewed narration slows the
++    approved picture by at most 25% so the whole narration is heard; cards and
++    captions are anchored to narration time, so they stay in sync.
++    """
+     plan_path = Path(plan_path).resolve(); plan = json.loads(plan_path.read_text(encoding='utf8'))
+     if plan['state'] != 'reviewed': raise ValueError('Review the plan and approve its cards/assets before render')
+     if language not in plan['editions']: raise ValueError('Edition unavailable')
+     if not plan['editions'][language].get('reviewed'): raise ValueError('This language edition needs review')
+     src = _verified(plan['source']); edition = plan['editions'][language]
++    source_language = plan.get('source_language')
++    if source_language and language != source_language and not edition.get('narration'):
++        raise ValueError(LANGUAGES[language] + ' edition has no reviewed narration. It is not exported with the '
++                         + LANGUAGES[source_language] + ' source voice; prepare and approve its narration first.')
+     edition_assets = edition.get('assets', plan.get('assets', {}))
+     assets = {k:_verified(v) for k,v in edition_assets.items()}
+     for key in ('narration','music'):
+         if edition.get(key): _verified(edition[key])
++    voice = edition.get('narration')
++    words_path = _verified(edition['words']) if edition.get('words') and plan.get('captions') else None
+     info, duration = _probe(src)
+     vstream = next(s for s in info['streams'] if s['codec_type']=='video')
+     width, height = int(vstream['width']), int(vstream['height'])
+     width -= width%2; height -= height%2
+     if width < 320 or height < 240: raise ValueError('Source resolution too small')
++    picture_seconds = float(plan['source']['duration'])
++    fit = False
++    if voice and float(voice['duration']) > picture_seconds + 0.25:
++        if not plan.get('fit_narration'):
++            raise ValueError('Narration exceeds source footage; edit timing or source')
++        if float(voice['duration']) > picture_seconds * 1.25:
++            raise ValueError(LANGUAGES[language]+' narration is more than 25% longer than the approved picture. '
++                             'Shorten that language script, review it, and prepare it again.')
++        fit = True
+     folder = plan_path.parent / 'exports'; folder.mkdir(exist_ok=True)
+     dest = folder / (language+'-'+plan_path.parent.name+'.mp4')
+     if dest.exists(): raise FileExistsError('Export exists; it will never be overwritten: '+str(dest))
+     tmp_dir = Path(tempfile.mkdtemp(dir=plan_path.parent, prefix='.render-'))
+     try:
++        picture = src
++        if fit:
++            # Stretch only the picture timeline; the reviewed narration keeps its natural pace.
++            voice_seconds = float(voice['duration'])
++            scale = voice_seconds / picture_seconds
++            picture = tmp_dir/'picture-fit.mp4'
++            _run(['ffmpeg','-y','-hide_banner','-loglevel','error','-i',str(src),'-an',
++                  '-vf',f'setpts={scale:.6f}*PTS','-t',f'{voice_seconds:.3f}',
++                  '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
++            picture_seconds = voice_seconds
+         # Normalization yields identical codec/timebase for concat, and handles odd source dimensions.
+         clips=[]
+         for index, kind in enumerate(['intro','source','outro']):
+             if kind != 'source' and (not edition.get(kind) or kind not in assets): continue
+-            source = src if kind=='source' else assets[kind]
++            source = picture if kind=='source' else assets[kind]
+             i, d = _probe(source)
+             has_audio = any(s.get('codec_type')=='audio' for s in i['streams'])
+             segment=tmp_dir / f'{index}.mp4'
+@@ -334,12 +399,29 @@
+             cmd += ['-loop','1','-framerate','30','-i',str(art)]
+             start=offset+float(card['start']);end=offset+float(card['end'])
+             filters += [f'[{current}][{inp}:v]overlay=0:0:enable=\'between(t,{start:.3f},{end:.3f})\':shortest=1[v{inp}]'];current=f'v{inp}';inp+=1
+-        voice=edition.get('narration')
++        caption_ass=None
++        if words_path:
++            # Captions use this edition's own reviewed word timings, shifted past any intro.
++            from engine.render.captions_ass import build_captions
++            from engine.render.ffmpeg_renderer import has_subtitles_filter, _esc_filter_path, _fontsdir
++            if not has_subtitles_filter():
++                raise RuntimeError('Captions need FFmpeg with libass subtitles. This edition was not exported without its captions.')
++            words=json.loads(words_path.read_text(encoding='utf8'))
++            shifted=[{'word':w['word'],'start':float(w['start'])+offset,'end':float(w['end'])+offset} for w in words]
++            vertical=height>width
++            cap=build_captions(shifted,str(tmp_dir/'captions'),template='OPUS' if vertical else 'HORMOZI',
++                               aspect='9:16' if vertical else '16:9',W=width,H=height,duration=full_duration)
++            caption_ass=cap.get('ass')
++            if caption_ass:
++                fontsdir=_fontsdir()
++                sub=f"subtitles='{_esc_filter_path(caption_ass)}'"+(f":fontsdir='{_esc_filter_path(fontsdir)}'" if fontsdir else '')
++                filters += [f'[{current}]{sub}[vcap]']; current='vcap'
++        voice_path=None
+         if voice:
+-            # Narration must fit the source timeline; no implicit speed-up or dialogue replacement of intro/outro.
+-            if voice['duration'] > plan['source']['duration']+0.25: raise ValueError('Narration exceeds source footage; edit timing or source')
+-            cmd += ['-i',str(_verified(voice))]
+-            source_end = offset + plan['source']['duration']
++            # Narration sits on the approved timeline; intro/outro audio is kept and the picture's audio is muted.
++            voice_path=_verified(voice)
++            cmd += ['-i',str(voice_path)]
++            source_end = offset + picture_seconds
+             filters += [f'[{inp}:a]adelay={int(offset*1000)}|{int(offset*1000)},apad,atrim=0:{full_duration:.3f}[voice]',
+                         f"[0:a]volume='if(between(t,{offset:.3f},{source_end:.3f}),0,1)':eval=frame[bookends]",
+                         '[bookends][voice]amix=inputs=2:duration=first:dropout_transition=0[speech]']
+@@ -370,7 +452,9 @@
+         os.replace(result,dest)
+         _atomic_json(dest.with_suffix('.provenance.json'), {'plan':str(plan_path),'language':language,'source_sha256':plan['source']['sha256'],
+                      'output_sha256':_hash(dest),'music_license':edition.get('music_license') or plan.get('shared_music_license') or edition.get('profile_music_license') or plan.get('profile_music_license'),
+-                     'channel':edition.get('channel',plan.get('channel')), 'duration':final_duration})
++                     'channel':edition.get('channel',plan.get('channel')), 'duration':final_duration,
++                     'narration_sha256': voice['sha256'] if voice else None,
++                     'narration_fitted_picture': fit, 'captions_burned': bool(caption_ass)})
+         if progress:progress(1.0)
+         return dest
+     finally:shutil.rmtree(tmp_dir,ignore_errors=True)
+diff -ruN a/engine/finishing_ui.py b/engine/finishing_ui.py
+--- a/engine/finishing_ui.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/finishing_ui.py	2026-10-20 05:29:08.490194433 +0000
+@@ -48,6 +48,8 @@
+     source=st.selectbox('Saved source', ['Enter local MP4 path']+[r['path'] for r in choices],
+                        format_func=lambda p:next((r['label'] for r in choices if r['path']==p),p))
+     if source=='Enter local MP4 path':source=st.text_input('Local video path',key='finish-source-path')
++    source_language=st.selectbox('Language spoken in this source video', ['en','hi','or'], format_func=lambda x:finish.LANGUAGES[x], key='finish-source-language',
++        help='Any other edition must have its own reviewed narration. Without it, that edition is refused rather than exported with this voice.')
+     languages=st.multiselect('Language editions',['en','hi','or'],default=['en'],format_func=lambda x:finish.LANGUAGES[x])
+     st.subheader('Choose the actual channel for each edition')
+     channel_choices={}
+@@ -65,6 +67,7 @@
+             if row and hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()!=row['sha256']:
+                 raise ValueError('Music changed after import; import it again')
+             path=finish.create_plan(source,channel_choices,languages=languages,source_rights=rights,
++                  source_language=source_language,
+                   shared_music=row['path'] if row else None,
+                   shared_music_license=(row['source_url']+' · '+row['license']) if row else '')
+             st.session_state['finish-plan']=str(path);st.success('Draft plan saved: '+str(path))
+diff -ruN a/engine/flow_project_cleanup.py b/engine/flow_project_cleanup.py
+--- a/engine/flow_project_cleanup.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/flow_project_cleanup.py	2026-10-20 05:29:08.490194433 +0000
+@@ -26,11 +26,16 @@
+             if row.get('kind')!='image':item['blocked'].append('Video/recovery project retained');continue
+             if row.get('scope') not in SCOPES:item['blocked'].append('Not an isolated single-image project');continue
+             if not completed(output,row):item['blocked'].append('Image is pending, missing or changed');continue
+-            references_for(row)
++            refs=references_for(row)
+             record['media_sha256']=digest(output)
++            # The verified local image is the required evidence. A captured gallery
++            # inventory, when present, tightens the live check; it is not required.
+             signatures=row.get('capture_inventory') or []
+-            if not signatures:item['blocked'].append('Complete captured gallery inventory is missing');continue
+-            item['signatures'].extend(signatures)
++            if signatures:item['signatures'].extend(signatures)
++            else:item['inventory_complete']=False
++            # Upper bound on live images this request could have produced: its own
++            # output plus any uploaded references (see flow_image_transaction).
++            item['max_images']=item.get('max_images',0)+len(refs)+1
+         except (OSError,ValueError,RuntimeError,KeyError,TypeError,AttributeError):
+             unreadable=True
+     ledger_path=root/'.flow-project-cleanup.json'
+@@ -39,11 +44,14 @@
+     if not isinstance(ledger,dict):ledger={};unreadable=True
+     for url,item in grouped.items():
+         item['signatures']=sorted(set(item['signatures']))
++        # Exact matching only when every record carries a captured inventory.
++        item['exact']=bool(item['signatures']) and item.get('inventory_complete',True)
++        item.setdefault('max_images',0)
+         if unreadable:item['blocked'].append('An unreadable request journal needs reconciliation')
+         item['blocked']=sorted(set(item['blocked']))
+         item['remote_state']=ledger.get(url,{}).get('status','retained')
+         if item['remote_state'] in ('deleted','uncertain'):item['blocked'].append('Remote cleanup already '+item['remote_state'])
+-        item['eligible']=bool(item['records'] and item['signatures'] and not item['blocked'])
++        item['eligible']=bool(item['records'] and item['max_images'] and not item['blocked'])
+     return sorted(grouped.values(),key=lambda x:x['project_url'])
+ 
+ 
+@@ -74,7 +82,9 @@
+                 # result is never retried automatically after a browser interruption.
+                 ledger[url]={'status':'uncertain','records':row['records']};save(ledger_path,ledger)
+                 try:
+-                    verification=bridge.delete_exact_project(url,expected_signatures=row['signatures'])
++                    verification=bridge.delete_exact_project(
++                        url,expected_signatures=row['signatures'] if row.get('exact') else None,
++                        max_images=row.get('max_images'))
+                     if not isinstance(verification,dict) or verification.get('status')!='deleted':
+                         raise RuntimeError('Flow deletion was not independently confirmed')
+                     ledger[url]['status']='deleted';save(ledger_path,ledger)
+@@ -92,7 +102,7 @@
+ 
+ def panel(st,root):
+     with st.expander('Clean downloaded Flow image projects · optional'):
+-        st.caption('Retains all video projects, pending requests and changed/missing captures. Only isolated still projects with verified local media and a complete gallery inventory can be selected. Remote deletion loses the Flow copy; local media and resume records stay saved.')
++        st.caption('Retains every video project, pending request and changed or missing capture. An isolated image project can be selected once its image and request record are verified locally. Remote deletion removes the Flow copy; local media and resume records stay saved.')
+         if st.button('Review saved Flow projects',key='flow-project-review-action'):
+             st.session_state['flow-project-review-data']=inventory(root)
+         rows=st.session_state.get('flow-project-review-data',[])
+diff -ruN a/engine/flow_project_delete.py b/engine/flow_project_delete.py
+--- a/engine/flow_project_delete.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/flow_project_delete.py	2026-10-20 05:29:08.490194433 +0000
+@@ -3,11 +3,19 @@
+ import time
+ 
+ 
+-def delete(bridge,url,expected_signatures):
++def delete(bridge,url,expected_signatures=None,max_images=None):
++    """Delete one exact Flow project after its local image evidence is verified.
++
++    With a captured inventory, the live gallery must match it exactly. Without
++    one, the live project must hold only images and no more than max_images,
++    the number of images its verified local requests could have produced.
++    """
+     from .providers.flow_browser import FlowBrowser, FlowUIChanged, media_signature_matches
+     wanted=FlowBrowser.normalize_project_url(url)
+-    if not wanted or not expected_signatures:
+-        raise FlowUIChanged('Automatic Flow project deletion is disabled without a verified isolated-image inventory')
++    if not wanted:
++        raise FlowUIChanged('Flow project identity is invalid; nothing deleted')
++    if not expected_signatures and (type(max_images) is not int or max_images<1):
++        raise FlowUIChanged('Flow project deletion needs verified local image evidence; nothing deleted')
+     bridge.ensure_project('Reviewed image cleanup',project_url=wanted)
+     page=bridge._page
+     def bound():
+@@ -17,10 +25,13 @@
+     assets=bridge.media_assets()
+     if not assets or any(a.get('kind')!='image' for a in assets):
+         raise FlowUIChanged('Project contains non-image or unreadable assets; retained for review')
+-    actual=[a['sig'] for a in assets if a.get('sig')]
+-    if (len(actual)!=len(expected_signatures)
+-            or any(not any(media_signature_matches(sig,old) for old in expected_signatures) for sig in actual)):
+-        raise FlowUIChanged('Live project gallery differs from the saved captured inventory; retained')
++    if expected_signatures:
++        actual=[a['sig'] for a in assets if a.get('sig')]
++        if (len(actual)!=len(expected_signatures)
++                or any(not any(media_signature_matches(sig,old) for old in expected_signatures) for sig in actual)):
++            raise FlowUIChanged('Live project gallery differs from the saved captured inventory; retained')
++    elif len(assets)>max_images:
++        raise FlowUIChanged('Live project holds more images than its verified requests; retained for review')
+     menu=bridge._try_resolve('project_actions',timeout_ms=2000)
+     if menu is None:
+         # Observed Oct-16 UI: the project-title row has its own more_vert menu.
+diff -ruN a/engine/language_editions.py b/engine/language_editions.py
+--- a/engine/language_editions.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/language_editions.py	2026-10-20 05:29:08.490194433 +0000
+@@ -0,0 +1,156 @@
++"""Render the reviewed language editions of a finished production.
++
++The production's own final render stays the primary-language edition. Each
++additional edition is built from the same clean visual master (picture only),
++its exact reviewed narration, its timed cards and word-timed captions, and the
++channel profile chosen in Create. Nothing here calls Gemini, Flow or any visual
++generator, and nothing is overwritten: each export is a new file.
++
++State lives in the job:
++  production/language_editions.json       selections saved by Create (inputs)
++  production/language_editions_render.json per-language render record (outputs)
++"""
++from __future__ import annotations
++
++import json
++import time
++from pathlib import Path
++
++from . import finishing_studio as finish
++
++STATE_NAME = 'language_editions.json'
++RECORD_NAME = 'language_editions_render.json'
++
++
++def _read(path, default=None):
++    path = Path(path)
++    if not path.is_file():
++        return default
++    return json.loads(path.read_text(encoding='utf8'))
++
++
++def _label(code):
++    return finish.LANGUAGES.get(code, code)
++
++
++def _production_music(job_root):
++    """Reuse the primary production's background track, with its recorded licence."""
++    sound = _read(Path(job_root) / 'audio' / 'sound_plan.json', {}) or {}
++    music = sound.get('music')
++    if isinstance(music, str):
++        music = {'path': music}
++    if not isinstance(music, dict) or not music.get('path'):
++        return None, ''
++    path = Path(music['path'])
++    if not path.is_file():
++        return None, ''
++    licence = ' · '.join(str(x) for x in (music.get('source'), music.get('license')) if x) or \
++        'Production background track; licence recorded in the job provenance'
++    return str(path), licence
++
++
++def _record_path(job_root):
++    return Path(job_root) / 'production' / RECORD_NAME
++
++
++def _save_record(job_root, record):
++    record['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
++    finish._atomic_json(_record_path(job_root), record)
++
++
++def requested_languages(job_root):
++    """(source_language, additional_languages, state) for a job; empty when single-language."""
++    state = _read(Path(job_root) / 'production' / STATE_NAME)
++    if not state:
++        return None, [], None
++    source = str(state.get('source_language') or 'en')
++    editions = list(dict.fromkeys(state.get('editions') or [source]))
++    return source, [code for code in editions if code != source], state
++
++
++def render_job_editions(job_root, *, progress=None):
++    """Render every pending additional edition. Returns a status report; never silently English.
++
++    Status values: ``not_requested`` (no language state), ``single_language``,
++    ``exported`` (all editions current), ``partial`` or ``failed`` (see ``editions``).
++    Raises ValueError only for preconditions the user must fix first.
++    """
++    job_root = Path(job_root).resolve()
++    emit = progress or (lambda label, pct, detail='': None)
++    source, extra, state = requested_languages(job_root)
++    if state is None:
++        return {'status': 'not_requested', 'editions': {}}
++    if not extra:
++        return {'status': 'single_language', 'editions': {}}
++
++    bundles = state.get('bundles') or {}
++    not_ready = [code for code in extra if code not in bundles]
++    if not_ready:
++        raise ValueError('Approve and prepare the narration for ' + ', '.join(_label(c) for c in not_ready) +
++                         ' in Create step 4 before rendering language editions. No English voice is used as a fallback.')
++    visual_record = _read(job_root / 'production' / 'visual_master.json')
++    if not visual_record:
++        raise ValueError('The clean visual master is missing. Render this production again so the language '
++                         'editions use the approved picture.')
++    visual = Path(visual_record['path'])
++    if not visual.is_file() or finish._hash(visual) != visual_record.get('sha256'):
++        raise ValueError('The clean visual master changed or is missing. Render this production again.')
++
++    record = _read(_record_path(job_root), {'schema_version': 1, 'editions': {}})
++    previous = record.get('editions', {})
++    pending = []
++    for code in extra:
++        bundle_sha = bundles[code].get('audio_sha256')
++        entry = previous.get(code, {})
++        export = Path(entry.get('path', '')) if entry.get('path') else None
++        current = (entry.get('status') == 'exported' and entry.get('audio_sha256') == bundle_sha
++                   and export is not None and export.is_file() and finish._hash(export) == entry.get('sha256'))
++        if not current:
++            pending.append(code)
++    if not pending:
++        return {'status': 'exported', 'editions': previous, 'record': str(_record_path(job_root))}
++
++    profiles = state.get('profiles') or {}
++    music_path, music_licence = _production_music(job_root)
++    plan_path = finish.create_plan(
++        visual, {code: profiles.get(code) for code in pending}, languages=pending,
++        output_root=job_root / 'language_editions', source_rights='own_content',
++        shared_music=music_path, shared_music_license=music_licence,
++        source_language=source, require_profiles=False, fit_narration=True, captions=True)
++    plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
++    for code in pending:
++        finish.set_edition(plan_path, code, reviewed=True)
++
++    record.update({'schema_version': 1, 'source_language': source, 'plan': str(plan_path)})
++    failures = []
++    for index, code in enumerate(pending):
++        label = _label(code)
++        entry = {'status': 'rendering', 'plan': str(plan_path), 'audio_sha256': bundles[code].get('audio_sha256'),
++                 'channel': plan['editions'][code].get('channel', {})}
++        record.setdefault('editions', {})[code] = entry
++        _save_record(job_root, record)
++        emit('Rendering ' + label + ' edition', 100 * index / len(pending), label)
++
++        def edition_progress(value, _index=index, _label=label):
++            emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / len(pending), _label)
++        try:
++            exported = finish.render(plan_path, code, progress=edition_progress)
++            entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
++        except Exception as error:  # keep the primary edition and every finished edition
++            entry.update(status='failed', error=str(error)[:800])
++            failures.append(label + ': ' + str(error)[:300])
++        entry['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
++        _save_record(job_root, record)
++    emit('Language editions finished', 100)
++
++    statuses = {code: record['editions'][code].get('status') for code in extra}
++    if all(status == 'exported' for status in statuses.values()):
++        overall = 'exported'
++    elif any(status == 'exported' for status in statuses.values()):
++        overall = 'partial'
++    else:
++        overall = 'failed'
++    record['status'] = overall
++    _save_record(job_root, record)
++    return {'status': overall, 'editions': record['editions'], 'record': str(_record_path(job_root)),
++            'error': '; '.join(failures)}
+diff -ruN a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/providers/flow_browser.py	2026-10-20 05:29:08.490194433 +0000
+@@ -478,6 +478,33 @@
+     pass
+ 
+ 
++# Flow paints a placeholder or 360p preview first and prepares the real file in
++# the background. These checks let the downloader wait for the loaded element.
++_MEDIA_READY_JS = r"""el => {
++    const r = el.getBoundingClientRect(), s = getComputedStyle(el);
++    const visible = r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
++    const loaded = el.tagName === 'VIDEO'
++        ? (el.readyState >= 2 && el.videoWidth > 0)
++        : (el.complete && el.naturalWidth > 0);
++    const scope = el.parentElement;
++    const busy = !!el.closest('[aria-busy="true"]') || !!(scope && scope.querySelector(
++        ':scope > [role="progressbar"], :scope > mat-spinner, :scope > mat-progress-spinner, :scope > .spinner'));
++    return {ready: visible && loaded && !busy && !el.error, src: el.currentSrc || el.src || el.poster || ''};
++}"""
++
++_MEDIA_PICK_JS = r"""() => {
++    let best = -1, area = 0;
++    document.querySelectorAll('video,img').forEach((el, i) => {
++        const r = el.getBoundingClientRect(), s = getComputedStyle(el);
++        if (r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && r.width * r.height > area) {
++            area = r.width * r.height;
++            best = i;
++        }
++    });
++    return best;
++}"""
++
++
+ class FlowUIChanged(Exception):
+     """A selector failed -> caller should switch to Assisted Flow Mode."""
+     pass
+@@ -1495,9 +1522,9 @@
+             pass
+         return getattr(self, "_project_url", None) or ""
+ 
+-    def delete_exact_project(self, project_url, expected_signatures=None):
++    def delete_exact_project(self, project_url, expected_signatures=None, max_images=None):
+         from engine.flow_project_delete import delete
+-        return delete(self, project_url, expected_signatures)
++        return delete(self, project_url, expected_signatures, max_images=max_images)
+ 
+ 
+     def create_project(self, name: str):
+@@ -2764,6 +2791,7 @@
+         if current.hostname != u.hostname or current.path != u.path:
+             raise FlowUIChanged('Flow did not open the reviewed video editor; download was not attempted')
+         self._page.keyboard.press('Escape')
++        self._wait_for_largest_media_ready()
+         # The global menu's Download project is a different operation. Only
+         # the asset toolbar's download control is eligible here.
+         selectors = ["button[aria-label*='download' i]:not([aria-label*='project' i])",
+@@ -3365,6 +3393,64 @@
+                 raise FlowBrowserClosedError(str(exc))
+             raise FlowUIChanged('The recorded video tile detached before download; request retained for exact recovery') from exc
+ 
++    def _wait_for_media_ready(self, locator, kind: str, timeout_s: float = 90.0) -> None:
++        """Return only after one Flow image/video element has fully loaded.
++
++        The element must be visible, decoded, not busy, and unchanged for 2 s
++        (so a placeholder swapped for the real file restarts the wait). Starting
++        a download earlier saved partial media or closed the page. After the
++        timeout the request is retained for exact recovery rather than downloaded.
++        """
++        print(f"[Flow] Waiting for the {kind} to finish loading before download.")
++        deadline = time.monotonic() + max(1.0, float(timeout_s))
++        stable_src = None
++        stable_since = None
++        while True:
++            try:
++                state = locator.evaluate(_MEDIA_READY_JS, timeout=2000)
++            except Exception as exc:
++                if self._looks_like_browser_closed_error(exc):
++                    raise FlowBrowserClosedError(str(exc))
++                state = {"ready": False, "src": ""}
++            now = time.monotonic()
++            if state.get("ready"):
++                src = str(state.get("src") or "")
++                if stable_since is None or src != stable_src:
++                    stable_src, stable_since = src, now
++                if now - stable_since >= 2.0:
++                    print(f"[Flow] The {kind} finished loading; starting download.")
++                    return
++            else:
++                stable_since = None
++            if now >= deadline:
++                raise FlowUIChanged(f"The {kind} was still loading after {int(timeout_s)}s; download not started, request retained for exact recovery")
++            try:
++                self._page.wait_for_timeout(500)
++            except Exception as exc:
++                if self._looks_like_browser_closed_error(exc):
++                    raise FlowBrowserClosedError(str(exc))
++                raise
++
++    def _wait_for_largest_media_ready(self, timeout_s: float = 90.0) -> None:
++        """Wait for the dominant visible image/video on an open viewer or card."""
++        deadline = time.monotonic() + max(1.0, float(timeout_s))
++        while True:
++            try:
++                index = int(self._page.evaluate(_MEDIA_PICK_JS))
++            except Exception as exc:
++                if self._looks_like_browser_closed_error(exc):
++                    raise FlowBrowserClosedError(str(exc))
++                index = -1
++            if index >= 0:
++                break
++            # The viewer may still be rendering its media; poll until the deadline.
++            if time.monotonic() >= deadline:
++                raise FlowUIChanged("No visible image or video is loaded to download; download not started")
++            self._page.wait_for_timeout(500)
++        locator = self._page.locator("video, img").nth(index)
++        kind = "video" if str(locator.evaluate("el => el.tagName")).upper() == "VIDEO" else "image"
++        self._wait_for_media_ready(locator, kind, max(1.0, deadline - time.monotonic()))
++
+     def _wait_for_media_signature(self, signature: str, timeout_ms: int = 15000):
+         """Poll a loaded project gallery for one exact asset identity."""
+         deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+@@ -3475,6 +3561,12 @@
+             settled, element = self._settle_exact_video_tile(preferred_signature)
+             chosen = (chosen[0], chosen[1], str(settled['sig']), element, 'video')
+ 
++        # Images load in the grid too. Never open a tile's download menu while
++        # the tile is still a placeholder: that download was saved partially or
++        # closed the page.
++        if chosen is not None:
++            self._wait_for_media_ready(chosen[3], chosen[4])
++
+         # Stay on the canonical project page.  This avoids the Flow media viewer
+         # target-closing race that made Download.save_as fail repeatedly on WSL.
+         direct_tile_menu = False
+@@ -4304,6 +4396,9 @@
+         cards = self.collect_generation_cards()
+         if cards and card_index < len(cards):
+             cards[card_index].click()
++            # The card opens a viewer whose media loads after the click. Wait for
++            # the loaded element before Download, otherwise the download starts early.
++            self._wait_for_largest_media_ready()
+         with self._page.expect_download(timeout=self.ui["timeouts"]["download"] * 1000) as dl:
+             self._resolve("download_button").click()
+         d = dl.value
+diff -ruN a/engine/providers/gemini_video.py b/engine/providers/gemini_video.py
+--- a/engine/providers/gemini_video.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/providers/gemini_video.py	2026-10-20 05:29:08.490194433 +0000
+@@ -50,6 +50,32 @@
+     return {'duration':duration,'width':videos[0]['width'],'height':videos[0]['height']}
+ 
+ 
++# Gemini shows its chat text before the video exists. Start the download only
++# when the video element is decoded and its source has stopped changing.
++GEMINI_VIDEO_READY_JS = "(v) => ({ready: Boolean(v.currentSrc || v.src) && v.readyState >= 3 && Number.isFinite(v.duration) && v.duration > 0 && !v.error, src: v.currentSrc || v.src || ''})"
++VIDEO_STABLE_SECONDS = 2.0
++
++
++class VideoTileSettle:
++    """Reports True only after a loaded tile's source is unchanged for VIDEO_STABLE_SECONDS."""
++
++    def __init__(self, clock=time.monotonic, stable_seconds=VIDEO_STABLE_SECONDS):
++        self.clock = clock
++        self.stable_seconds = stable_seconds
++        self.src = None
++        self.since = None
++
++    def observe(self, state):
++        if not isinstance(state, dict) or not state.get('ready'):
++            self.src, self.since = None, None
++            return False
++        src = str(state.get('src') or '')
++        now = self.clock()
++        if self.since is None or src != self.src:
++            self.src, self.since = src, now
++        return now - self.since >= self.stable_seconds
++
++
+ def unique_visible(nodes):
+     rows=[nodes.nth(i) for i in range(min(nodes.count(),50)) if nodes.nth(i).is_visible()]
+     return rows[0] if len(rows)==1 else None
+@@ -100,7 +126,7 @@
+                 if send is None:raise GeminiVideoPending('Gemini Send is unavailable; no request submitted')
+                 row['status']='submitting';save(journal,row)
+                 send.click(timeout=5000)  # Never press Enter after an uncertain click.
+-            deadline=time.monotonic()+self.timeout;last_notice=0
++            deadline=time.monotonic()+self.timeout;last_notice=0;settle=VideoTileSettle()
+             while time.monotonic()<deadline:
+                 url=chat_url(page.url)
+                 if url and not row.get('chat_url'):
+@@ -111,7 +137,7 @@
+                     last_notice=time.monotonic()
+                 tile=unique_visible(page.locator('model-response video'))
+                 if tile is not None and row.get('chat_url'):
+-                    ready=tile.evaluate('(v) => Boolean(v.currentSrc || v.src) && v.readyState >= 1 && Number.isFinite(v.duration) && v.duration > 0')
++                    ready=settle.observe(tile.evaluate(GEMINI_VIDEO_READY_JS))
+                     if ready:
+                         self._download(session,tile,media)
+                         info=video_info(media);row.update(status='downloaded',sha256=digest(media),**info);save(journal,row)
+diff -ruN a/engine/publishing.py b/engine/publishing.py
+--- a/engine/publishing.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/publishing.py	2026-10-20 05:29:08.490194433 +0000
+@@ -128,6 +128,8 @@
+             'ai_disclosure_required', 'rights_confirmed', 'facts_reviewed',
+             'language_reviewed', 'post_metadata', 'editorial_evidence')
+     payload = {key: record.get(key) for key in keys}
++    if 'duplicate_review' in record:  # Only records that carry the review are bound to it.
++        payload['duplicate_review'] = record['duplicate_review']
+     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+     return hashlib.sha256(encoded).hexdigest()
+ 
+@@ -282,7 +284,8 @@
+ 
+ 
+ def approve_release(path, *, account_id, rights_confirmed=False, facts_reviewed=False,
+-                    language_reviewed=False, made_for_kids=None, ai_disclosure_required=None, editorial_review_path=None):
++                    language_reviewed=False, made_for_kids=None, ai_disclosure_required=None, editorial_review_path=None,
++                    acknowledge_duplicate_warning=False, duplicate_roots=None):
+     record = read(path)
+     if not record or digest(record['video']) != record['sha256']:
+         raise ValueError('Delivery file is missing or changed; review the current render')
+@@ -313,12 +316,21 @@
+         record['editorial_evidence'] = {'path': str(Path(editorial_review_path).resolve()), 'sha256': digest(editorial_review_path)}
+     else:
+         record.pop('editorial_evidence', None)
++    # Cross-channel guard: identical bytes on another account block; near-duplicates need acknowledgment.
++    from . import delivery_duplicates
++    roots = duplicate_roots or delivery_duplicates.DEFAULT_ROOTS
++    note = delivery_duplicates.enforce(record, path, account_id=record['account_id'],
++                                       acknowledge=acknowledge_duplicate_warning is True, roots=roots)
++    if note is not None:
++        record['duplicate_review'] = note
++    else:
++        record.pop('duplicate_review', None)
+     record['approval_sha256'] = _approval_fingerprint(record)
+     _write_upload_packet(record, path)
+     return record
+ 
+ 
+-def schedule_release(path, publish_at):
++def schedule_release(path, publish_at, *, duplicate_roots=None):
+     from datetime import datetime, timezone
+     record = read(path)
+     approved = bool(
+@@ -332,6 +344,8 @@
+     evidence = record.get('editorial_evidence')
+     if evidence and (not Path(evidence['path']).is_file() or digest(evidence['path']) != evidence['sha256']):
+         raise ValueError('Attached editorial evidence changed; re-review before scheduling')
++    from . import delivery_duplicates
++    delivery_duplicates.reverify_for_schedule(record, path, roots=duplicate_roots or delivery_duplicates.DEFAULT_ROOTS)
+     when = datetime.fromisoformat(str(publish_at))
+     if when.tzinfo is None or when <= datetime.now(timezone.utc):
+         raise ValueError('Use a future timezone-aware ISO timestamp')
+diff -ruN a/tests/test_v571_flow_recovery_ux.py b/tests/test_v571_flow_recovery_ux.py
+--- a/tests/test_v571_flow_recovery_ux.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v571_flow_recovery_ux.py	2026-10-20 05:29:08.494194454 +0000
+@@ -98,6 +98,8 @@
+     b._resolve = lambda action, timeout_ms=0: _Element("download", b._page)
+     b._try_resolve = lambda action, timeout_ms=0: None
+     b._ensure_project_guard_page = lambda *a, **k: None
++    b._wait_for_media_ready = lambda *a, **k: None  # fake tiles have no DOM; readiness is tested separately
++    b._wait_for_largest_media_ready = lambda *a, **k: None
+     b.return_to_project = lambda timeout_ms=0: True
+     b.network_issue_detected = lambda err=None: False
+ 
+@@ -126,6 +128,8 @@
+     b._resolve = lambda action, timeout_ms=0: menu
+     b._try_resolve = lambda action, timeout_ms=0: option if action == "download_video_original_option" else None
+     b._ensure_project_guard_page = lambda *a, **k: None
++    b._wait_for_media_ready = lambda *a, **k: None  # fake tiles have no DOM; readiness is tested separately
++    b._wait_for_largest_media_ready = lambda *a, **k: None
+     b.return_to_project = lambda timeout_ms=0: True
+     b.network_issue_detected = lambda err=None: False
+ 
+diff -ruN a/tests/test_v600_delivery_clip_audio.py b/tests/test_v600_delivery_clip_audio.py
+--- a/tests/test_v600_delivery_clip_audio.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v600_delivery_clip_audio.py	2026-10-20 05:29:08.494194454 +0000
+@@ -70,7 +70,8 @@
+     assert Path(record['video']).is_file() and record['sha256']==digest(record['video'])
+ 
+ 
+-def test_release_needs_explicit_audience_rights_and_unchanged_file(tmp_path):
++def test_release_needs_explicit_audience_rights_and_unchanged_file(tmp_path, monkeypatch):
++    import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # placeholder video bytes; guard covered in test_v768_delivery_duplicates
+     video=tmp_path/'video.mp4';video.write_bytes(b'approved render')
+     path=tmp_path/'release.json';save(path,{'video':str(video),'sha256':digest(video),'state':'REVIEW_REQUIRED'})
+     with pytest.raises(ValueError):approve_release(path,account_id='my-channel')
+diff -ruN a/tests/test_v609_flow_video_typed_recovery.py b/tests/test_v609_flow_video_typed_recovery.py
+--- a/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 05:29:08.494194454 +0000
+@@ -479,6 +479,8 @@
+     browser._resolve = lambda action, timeout_ms=0: _Element()
+     browser._try_resolve = lambda action, timeout_ms=0: None
+     browser._ensure_project_guard_page = lambda *args, **kwargs: None
++    browser._wait_for_media_ready = lambda *a, **k: None  # fake tiles have no DOM; readiness is tested separately
++    browser._wait_for_largest_media_ready = lambda *a, **k: None
+     browser.return_to_project = lambda timeout_ms=0: True
+     browser.network_issue_detected = lambda _error=None: False
+ 
+diff -ruN a/tests/test_v700_content_studio.py b/tests/test_v700_content_studio.py
+--- a/tests/test_v700_content_studio.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v700_content_studio.py	2026-10-20 05:29:08.494194454 +0000
+@@ -39,6 +39,7 @@
+ 
+ 
+ def test_export_creates_manual_upload_packet_and_metadata_is_approval_locked(tmp_path, monkeypatch):
++    import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # fake encoder; guard covered in test_v768_delivery_duplicates
+     source = tmp_path / "master.mp4"
+     source.write_bytes(b"original master video")
+     import engine.render.ffmpeg_renderer as renderer
+@@ -76,7 +77,8 @@
+     assert publishing.schedule_release(release_path, "2099-01-01T10:00:00+05:30")["state"] == "SCHEDULED_MANUAL_REMINDER"
+ 
+ 
+-def test_upload_packet_or_caption_edit_requires_fresh_approval(tmp_path):
++def test_upload_packet_or_caption_edit_requires_fresh_approval(tmp_path, monkeypatch):
++    import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # placeholder video bytes; guard covered in test_v768_delivery_duplicates
+     video = tmp_path / "delivery.mp4"
+     video.write_bytes(b"approved render")
+     release = tmp_path / "delivery.release.json"
+diff -ruN a/tests/test_v702_flow_recovery.py b/tests/test_v702_flow_recovery.py
+--- a/tests/test_v702_flow_recovery.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v702_flow_recovery.py	2026-10-20 05:29:08.494194454 +0000
+@@ -105,6 +105,7 @@
+     page=NS(url=url,goto=lambda target,**kw:calls.append(target),wait_for_timeout=lambda ms:None,
+             keyboard=keyboard,get_by_role=lambda role,**kw:Controls([toolbar]),locator=lambda selector:Controls([]))
+     b=FlowBrowser.__new__(FlowBrowser);b._page=page;b._ensure_project_guard_page=lambda project:None
++    b._wait_for_largest_media_ready=lambda *a,**k:None
+     b._download_from_tile_button=lambda control,out:calls.append('asset download') or out
+     assert b.download_reviewed_editor_video(url,str(tmp_path/'video.mp4'),'https://flow.google.com/project/saved').endswith('video.mp4')
+     assert calls==[url,'Escape','asset download']
+diff -ruN a/tests/test_v750_readiness.py b/tests/test_v750_readiness.py
+--- a/tests/test_v750_readiness.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v750_readiness.py	2026-10-20 05:29:08.494194454 +0000
+@@ -108,7 +108,7 @@
+ def test_unverified_remote_delete_is_disabled_before_any_mutation():
+     from engine.providers.flow_browser import FlowBrowser, FlowUIChanged
+     browser=FlowBrowser.__new__(FlowBrowser)
+-    with pytest.raises(FlowUIChanged,match='disabled'):browser.delete_exact_project('https://flow.google.com/project/example')
++    with pytest.raises(FlowUIChanged,match='nothing deleted'):browser.delete_exact_project('https://flow.google.com/project/example')
+ 
+ 
+ @pytest.mark.parametrize('count',[1,2])
+diff -ruN a/tests/test_v765_speech_gemini.py b/tests/test_v765_speech_gemini.py
+--- a/tests/test_v765_speech_gemini.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v765_speech_gemini.py	2026-10-20 05:29:08.494194454 +0000
+@@ -54,7 +54,7 @@
+     root=tmp_path/'gemini-videos';root.mkdir();(root/'selection.json').write_text(json.dumps({'shots':['shot_001']}));calls=[]
+     class Tile:
+         def is_visible(self):return True
+-        def evaluate(self,expression):return True
++        def evaluate(self,expression):return {'ready':True,'src':'blob:fixture'}
+     class Nodes:
+         def count(self):return 1
+         def nth(self,n):return Tile()
+@@ -62,6 +62,7 @@
+         url='https://gemini.google.com/app'
+         def locator(self,selector):return Nodes()
+         def goto(self,url,**kw):calls.append(('goto',url));self.url=url
++        def wait_for_timeout(self,ms):import time;time.sleep(ms/1000)  # real time: the readiness window is 2 s
+     page=Page()
+     class Send:
+         def click(self,**kw):calls.append(('send',));page.url='https://gemini.google.com/app/exact123'
+diff -ruN a/tests/test_v766_channel_desk.py b/tests/test_v766_channel_desk.py
+--- a/tests/test_v766_channel_desk.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v766_channel_desk.py	2026-10-20 05:29:08.498194474 +0000
+@@ -79,7 +79,8 @@
+  assert len(result['long_image_segments'])==1
+ 
+ 
+-def test_publishing_signoff_is_for_exact_delivery_and_evidence_cannot_change(tmp_path):
++def test_publishing_signoff_is_for_exact_delivery_and_evidence_cannot_change(tmp_path, monkeypatch):
++ import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # placeholder video bytes; guard covered in test_v768_delivery_duplicates
+  from engine.publishing import approve_release,schedule_release
+  media=tmp_path/'video.mp4';media.write_bytes(b'final fixture')
+  release=tmp_path/'a.release.json';review=tmp_path/'review.json'
+diff -ruN a/tests/test_v768_delivery_duplicates.py b/tests/test_v768_delivery_duplicates.py
+--- a/tests/test_v768_delivery_duplicates.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_delivery_duplicates.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,190 @@
++"""v7.0.68 cross-channel duplicate guard, exercised with generated synthetic videos.
++
++Identical bytes approved or scheduled for another account are blocked. Re-encoded
++near-duplicates need explicit acknowledgment. Scheduling re-checks both.
++"""
++import shutil
++import subprocess
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++
++import pytest
++
++pytestmark = pytest.mark.skipif(shutil.which('ffprobe') is None, reason='ffprobe unavailable')
++
++
++def _gen(path, source, *extra):
++    from engine.render.ffmpeg_renderer import ffmpeg_exe
++    subprocess.run([ffmpeg_exe(), '-y', '-v', 'error', '-f', 'lavfi', '-i', source, '-t', '4', '-an',
++                    *extra, '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'veryfast', str(path)],
++                   check=True, timeout=300)
++    return path
++
++
++@pytest.fixture
++def world(tmp_path, monkeypatch):
++    """Run inside a temp repo so 'outputs/' is isolated; provide three sources."""
++    monkeypatch.chdir(tmp_path)
++    src = {
++        'base': _gen(tmp_path / 'base.mp4', 'testsrc=size=540x960:rate=30'),
++        'reencoded': _gen(tmp_path / 'reencoded.mp4', 'testsrc=size=540x960:rate=30', '-crf', '40'),
++        'other': _gen(tmp_path / 'other.mp4', 'mandelbrot=size=540x960:rate=30'),
++    }
++    return src
++
++
++def _export(source, folder, title='Launch'):
++    from engine.publishing import export_delivery
++    return export_delivery(source, folder, 'youtube_short', language='en', title=title,
++                           caption='Caption', description='Description')
++
++
++def _approve(record_path, account, **kw):
++    from engine.publishing import approve_release
++    return approve_release(record_path, account_id=account, rights_confirmed=True, facts_reviewed=True,
++                           language_reviewed=True, made_for_kids=False, ai_disclosure_required=False, **kw)
++
++
++def _twin(record, folder, identifier):
++    """Identical bytes, separate release record: the same file uploaded from a second folder."""
++    from engine.production import save
++    from engine.publishing import _write_upload_packet
++    folder = Path(folder)
++    folder.mkdir(parents=True, exist_ok=True)
++    video = folder / (identifier + '.mp4')
++    shutil.copy(record['video'], video)
++    twin = dict(record, id=identifier, video=str(video), state='REVIEW_REQUIRED', account_id='')
++    for key in ('approval_sha256', 'duplicate_review', 'editorial_evidence', 'publish_at'):
++        twin.pop(key, None)
++    release = folder / (identifier + '.release.json')
++    save(release, twin)
++    _write_upload_packet(twin, release)
++    return release
++
++
++def _record_path(record):
++    return Path(record['video']).with_suffix('.release.json')
++
++
++def test_identical_bytes_for_another_account_are_blocked(world):
++    from engine.production import read
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    with pytest.raises(ValueError, match='Identical video is already approved or scheduled for another account'):
++        _approve(twin, 'channel-two')
++    assert read(twin)['state'] == 'REVIEW_REQUIRED'
++
++
++def test_identical_bytes_for_the_same_account_are_allowed(world):
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    assert _approve(twin, 'channel-one')['state'] == 'APPROVED_FOR_MANUAL_UPLOAD'
++
++
++def test_near_duplicate_needs_acknowledgment_then_is_recorded(world):
++    from engine.production import read
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    variant = _export(world['reencoded'], 'outputs/deliveries/b', title='Launch variant')
++    with pytest.raises(ValueError, match='Near-duplicate of approved or scheduled delivery'):
++        _approve(_record_path(variant), 'channel-two')
++    assert read(_record_path(variant))['state'] == 'REVIEW_REQUIRED'
++    approved = _approve(_record_path(variant), 'channel-two', acknowledge_duplicate_warning=True)
++    review = approved['duplicate_review']
++    assert review['acknowledged'] is True
++    assert [row['id'] for row in review['matches']] == [first['id']]
++    assert review['matches'][0]['mean_hamming'] <= 10
++    assert read(_record_path(variant))['duplicate_review']['acknowledged'] is True
++
++
++def test_unrelated_content_raises_no_warning(world):
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    other = _export(world['other'], 'outputs/deliveries/b', title='Different')
++    approved = _approve(_record_path(other), 'channel-two')
++    assert 'duplicate_review' not in approved
++
++
++def test_approval_without_matches_keeps_fingerprint_contract(world):
++    from engine.publishing import _approval_fingerprint, schedule_release
++    record = _approve(_record_path(_export(world['base'], 'outputs/deliveries/a')), 'channel-one')
++    assert _approval_fingerprint(record) == record['approval_sha256']
++    when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
++    assert schedule_release(_record_path(record), when)['state'] == 'SCHEDULED_MANUAL_REMINDER'
++
++
++def test_schedule_blocks_identical_bytes_that_appeared_after_approval(world):
++    from engine.production import read, save
++    from engine.publishing import schedule_release
++    first = _export(world['base'], 'outputs/deliveries/a')
++    approved = _approve(_record_path(first), 'channel-one')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    record = read(twin)
++    record.update(state='SCHEDULED_MANUAL_REMINDER', account_id='channel-two')
++    save(twin, record)  # a record written outside this approval path
++    when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
++    with pytest.raises(ValueError, match='Identical video is now approved or scheduled'):
++        schedule_release(_record_path(approved), when)
++
++
++def test_schedule_requires_review_for_a_new_near_duplicate(world):
++    from engine.production import read, save
++    from engine.publishing import schedule_release
++    first = _export(world['base'], 'outputs/deliveries/a')
++    approved = _approve(_record_path(first), 'channel-one')
++    variant = _export(world['reencoded'], 'outputs/deliveries/b', title='Variant')
++    record = read(_record_path(variant))
++    record.update(state='APPROVED_FOR_MANUAL_UPLOAD', account_id='channel-two')
++    save(_record_path(variant), record)  # appeared after the first approval
++    when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
++    with pytest.raises(ValueError, match='new near-duplicate delivery appeared'):
++        schedule_release(_record_path(approved), when)
++
++
++def test_candidate_outside_active_states_does_not_block(world):
++    from engine.production import read, save
++    first = _export(world['base'], 'outputs/deliveries/a')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    record = read(twin)
++    record['account_id'] = 'channel-two'  # still REVIEW_REQUIRED: not approved, not scheduled
++    save(twin, record)
++    assert _approve(_record_path(first), 'channel-one')['state'] == 'APPROVED_FOR_MANUAL_UPLOAD'
++
++
++def test_missing_candidate_video_is_reported_and_does_not_block(world):
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    Path(first['video']).unlink()
++    variant = _export(world['reencoded'], 'outputs/deliveries/b', title='Variant')
++    approved = _approve(_record_path(variant), 'channel-two')
++    assert approved['duplicate_review']['skipped'][0]['reason'] == 'video file missing'
++
++
++def test_fingerprint_cache_avoids_recomputing_frames(world, monkeypatch):
++    from engine import delivery_duplicates as dd
++    video = _export(world['base'], 'outputs/deliveries/a')['video']
++    first = dd.fingerprint(video)
++    def boom(*a, **kw):
++        raise AssertionError('frames recomputed despite a valid cache')
++    monkeypatch.setattr(dd, '_frame_hash', boom)
++    again = dd.fingerprint(video)
++    assert again['frames'] == first['frames'] and again['sha256'] == first['sha256']
++
++
++def test_changed_video_invalidates_the_cache(world):
++    from engine import delivery_duplicates as dd
++    video = Path(_export(world['base'], 'outputs/deliveries/a')['video'])
++    before = dd.fingerprint(video)
++    replacement = _gen(video.with_suffix('.replacement.mp4'), 'mandelbrot=size=540x960:rate=30')
++    shutil.copy(replacement, video)
++    after = dd.fingerprint(video)
++    assert after['sha256'] != before['sha256']
++    assert dd.mean_hamming(before['frames'], after['frames']) > 10
++
++
++def test_mean_hamming_rejects_mismatched_frame_counts():
++    from engine.delivery_duplicates import mean_hamming
++    with pytest.raises(ValueError):
++        mean_hamming([0, 0], [0, 0])
+diff -ruN a/tests/test_v768_flow_image_cleanup.py b/tests/test_v768_flow_image_cleanup.py
+--- a/tests/test_v768_flow_image_cleanup.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_flow_image_cleanup.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,198 @@
++"""v7.0.68: image-only Flow projects may be deleted once their local image and
++request record are verified; video projects and changed or pending captures stay."""
++import json
++from pathlib import Path
++from types import SimpleNamespace as NS
++
++import pytest
++
++URL = 'https://flow.google.com/project/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
++
++
++def _png(path, colour):
++    from PIL import Image
++    path.parent.mkdir(parents=True, exist_ok=True)
++    Image.new("RGB", (96, 96), colour).save(path, format='PNG')
++    return path
++
++
++def _record(root, name, *, kind='image', scope='isolated_image_v1', status='downloaded',
++            colour=(10, 20, 30), capture_inventory=None, project_url=URL):
++    from engine.isolated_frame_regeneration import sha
++    out = _png(Path(root) / 'images' / name, colour)
++    row = {'kind': kind, 'scope': scope, 'status': status, 'project_url': project_url,
++           'media_sha256': sha(out), 'reference_hashes': {}}
++    if capture_inventory is not None:
++        row['capture_inventory'] = capture_inventory
++    (Path(str(out) + '.flow-request.json')).write_text(json.dumps(row))
++    return out
++
++
++def _project(tmp_path, **kw):
++    root = tmp_path / 'job'
++    root.mkdir()
++    _record(root, 'frame-1.png', **kw)
++    return root
++
++
++def _rows(root):
++    from engine.flow_project_cleanup import inventory
++    return {r['project_url']: r for r in inventory(root)}
++
++
++# ---- eligibility -----------------------------------------------------------
++
++def test_image_project_without_captured_inventory_is_eligible(tmp_path):
++    row = _rows(_project(tmp_path))[URL]
++    assert row['eligible'] and row['max_images'] == 1 and not row['exact']
++
++
++def test_two_image_records_bound_is_their_sum(tmp_path):
++    root = _project(tmp_path)
++    _record(root, 'frame-2.png', colour=(90, 90, 90))
++    row = _rows(root)[URL]
++    assert row['eligible'] and row['max_images'] == 2
++
++
++def test_captured_inventory_is_used_for_exact_match_when_complete(tmp_path):
++    root = _project(tmp_path, capture_inventory=['sig-a'])
++    row = _rows(root)[URL]
++    assert row['eligible'] and row['exact'] and row['signatures'] == ['sig-a']
++
++
++def test_video_project_stays_protected(tmp_path):
++    row = _rows(_project(tmp_path, kind='video'))[URL]
++    assert not row['eligible'] and 'Video/recovery project retained' in row['blocked']
++
++
++def test_pending_image_stays_protected(tmp_path):
++    row = _rows(_project(tmp_path, status='pending'))[URL]
++    assert not row['eligible'] and any('pending' in b for b in row['blocked'])
++
++
++def test_changed_local_image_stays_protected(tmp_path):
++    root = _project(tmp_path)
++    _png(root / 'images' / 'frame-1.png', (1, 1, 1))  # bytes no longer match the journal
++    row = _rows(root)[URL]
++    assert not row['eligible']
++
++
++def test_one_video_record_blocks_the_whole_project(tmp_path):
++    root = _project(tmp_path)
++    _record(root, 'clip.png', kind='video', colour=(5, 5, 5))
++    assert not _rows(root)[URL]['eligible']
++
++
++# ---- live check at deletion ------------------------------------------------
++
++class Loc:
++    def __init__(self, text, actions, state):
++        self.text, self.actions, self.state = text, actions, state
++        self.first = self
++
++    def count(self):
++        return 0 if hasattr(self.text, 'pattern') and 'confirm' not in self.actions else 1
++
++    def is_visible(self, **kw):
++        return bool(self.count())
++
++    def click(self, **kw):
++        self.actions.append(self.text)
++
++    def inner_text(self, **kw):
++        return 'Delete this project?'
++
++    def get_by_role(self, *a, **kw):
++        return Loc('confirm', self.actions, self.state)
++
++    def wait_for(self, **kw):
++        if not self.state['toast']:
++            raise RuntimeError('No explicit success confirmation')
++
++
++def _bridge(assets, toast=True):
++    actions, state = [], {'toast': toast}
++    page = NS(url=URL, get_by_text=lambda *a, **kw: Loc(a[0], actions, state),
++              get_by_role=lambda *a, **kw: Loc('dialog', actions, state))
++    bridge = NS(_page=page, ensure_project=lambda *a, **kw: None,
++                media_assets=lambda: assets,
++                _try_resolve=lambda *a, **kw: Loc('project-menu', actions, state))
++    return bridge, actions
++
++
++def test_delete_without_inventory_accepts_images_within_bound():
++    from engine.flow_project_delete import delete
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'x'}])
++    assert delete(bridge, URL, None, max_images=1)['status'] == 'deleted'
++    assert actions == ['project-menu', 'Delete', 'confirm']
++
++
++def test_delete_without_inventory_refuses_a_video_asset_before_any_click():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'x'}, {'kind': 'video', 'sig': 'v'}])
++    with pytest.raises(FlowUIChanged, match='non-image'):
++        delete(bridge, URL, None, max_images=5)
++    assert not actions
++
++
++def test_delete_without_inventory_refuses_more_images_than_verified_requests():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': str(n)} for n in range(3)])
++    with pytest.raises(FlowUIChanged, match='more images'):
++        delete(bridge, URL, None, max_images=2)
++    assert not actions
++
++
++def test_delete_without_any_evidence_refuses_before_any_click():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'x'}])
++    with pytest.raises(FlowUIChanged, match='nothing deleted'):
++        delete(bridge, URL, None)
++    assert not actions
++
++
++def test_delete_with_inventory_still_requires_exact_match():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'extra'}])
++    with pytest.raises(FlowUIChanged, match='captured inventory'):
++        delete(bridge, URL, ['exact'], max_images=5)
++    assert not actions
++
++
++def test_delete_without_success_toast_is_not_reported_as_deleted():
++    from engine.flow_project_delete import delete
++    bridge, _ = _bridge([{'kind': 'image', 'sig': 'x'}], toast=False)
++    with pytest.raises(RuntimeError, match='success'):
++        delete(bridge, URL, None, max_images=1)
++
++
++# ---- cleanup dispatch ------------------------------------------------------
++
++def test_delete_selected_passes_bound_only_when_no_inventory(tmp_path):
++    from engine.flow_project_cleanup import delete_selected
++    calls = []
++
++    class Bridge:
++        def delete_exact_project(self, url, expected_signatures=None, max_images=None):
++            calls.append((expected_signatures, max_images))
++            return {'status': 'deleted'}
++
++    class Provider:
++        def _ensure(self):
++            return Bridge()
++
++    root = _project(tmp_path)
++    delete_selected(root, [_rows(root)[URL]], provider_factory=Provider, lock_held=True)
++    assert calls == [(None, 1)]
++
++
++def test_video_project_is_never_selectable_for_delete(tmp_path):
++    from engine.flow_project_cleanup import delete_selected
++    root = _project(tmp_path, kind='video')
++    with pytest.raises(ValueError):
++        delete_selected(root, [_rows(root)[URL]], provider_factory=lambda: pytest.fail('no browser'),
++                        lock_held=True)
+diff -ruN a/tests/test_v768_gemini_video_settle.py b/tests/test_v768_gemini_video_settle.py
+--- a/tests/test_v768_gemini_video_settle.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_gemini_video_settle.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,53 @@
++"""v7.0.68: Gemini-web video downloads wait for a loaded, stable video tile."""
++from engine.providers.gemini_video import GEMINI_VIDEO_READY_JS, VideoTileSettle
++
++
++class Clock:
++    def __init__(self):
++        self.now = 0.0
++
++    def __call__(self):
++        return self.now
++
++
++def test_chat_text_without_a_loaded_video_never_settles():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    for _ in range(20):
++        assert settle.observe({'ready': False, 'src': ''}) is False
++        clock.now += 1.5
++
++
++def test_loaded_video_must_stay_unchanged_for_two_seconds():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is False
++    clock.now += 1.5
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is False
++    clock.now += 0.5
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is True
++
++
++def test_source_change_restarts_the_window():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    settle.observe({'ready': True, 'src': 'poster-thumb'})
++    clock.now += 1.9
++    assert settle.observe({'ready': True, 'src': 'blob:final'}) is False
++    clock.now += 2.0
++    assert settle.observe({'ready': True, 'src': 'blob:final'}) is True
++
++
++def test_not_ready_resets_the_window():
++    clock = Clock()
++    settle = VideoTileSettle(clock=clock)
++    settle.observe({'ready': True, 'src': 'blob:a'})
++    clock.now += 1.9
++    settle.observe({'ready': False, 'src': 'blob:a'})
++    clock.now += 0.2
++    assert settle.observe({'ready': True, 'src': 'blob:a'}) is False
++
++
++def test_readiness_script_requires_decoded_video_not_metadata_only():
++    assert 'readyState >= 3' in GEMINI_VIDEO_READY_JS
++    assert 'readyState >= 1' not in GEMINI_VIDEO_READY_JS
+diff -ruN a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
+--- a/tests/test_v768_language_editions_render.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,215 @@
++"""v7.0.68: every selected language edition is rendered from its own reviewed narration.
++
++Real FFmpeg media, no Gemini/TTS/Flow calls. Narration tones are used as voice
++fingerprints: 660 Hz for Hindi and 880 Hz for Odia. An English 440 Hz voice must
++never appear in a non-English edition.
++"""
++import array
++import hashlib
++import importlib.util
++import json
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++SPEC = importlib.util.spec_from_file_location('finish_v768', ROOT / 'engine' / 'finishing_studio.py')
++finish = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(finish)
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')), reason='FFmpeg required')
++
++
++def _tone(path, frequency, seconds):
++    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', f'sine=frequency={frequency}:sample_rate=44100',
++           '-t', str(seconds), '-c:a', 'libmp3lame', '-b:a', '128k', str(path)]
++    subprocess.run(cmd, check=True)
++    return path
++
++
++def _picture(path, seconds):
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=24',
++                    '-t', str(seconds), '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)], check=True)
++    return path
++
++
++def _sha(path):
++    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
++
++
++def _zero_crossings_per_second(path, seconds=1.0, start=0.0):
++    raw = subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', str(start), '-i', str(path), '-vn', '-ac', '1', '-ar', '8000',
++                          '-f', 's16le', '-t', str(seconds), '-'], capture_output=True, check=True).stdout
++    samples = array.array('h', raw)
++    crossings = sum(1 for a, b in zip(samples, samples[1:]) if (a < 0) != (b < 0))
++    return crossings / seconds
++
++
++def _duration(path):
++    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', str(path)],
++                         capture_output=True, text=True, check=True).stdout
++    return float(out.strip())
++
++
++def _job(tmp_path, *, picture_seconds=3.0, hindi_seconds=3.0, odia_seconds=3.0, odia_profile=None):
++    """A finished production: clean visual master plus reviewed Hindi/Odia bundles."""
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    (job / 'audio').mkdir()
++    visual = _picture(job / 'render' / 'visual-master.mp4', picture_seconds)
++    finish._atomic_json(job / 'production' / 'visual_master.json',
++                        {'path': str(visual.resolve()), 'sha256': _sha(visual), 'duration': picture_seconds,
++                         'contains': 'picture and approved B-roll only; no speech, captions, music or branding'})
++    bundles = {}
++    for code, freq, seconds in (('hi', 660, hindi_seconds), ('or', 880, odia_seconds)):
++        folder = job / 'speech-editions' / code / ('key-' + code)
++        folder.mkdir(parents=True)
++        audio = _tone(folder / 'voice.mp3', freq, seconds)
++        words = [{'word': 'शब्द', 'start': 0.1, 'end': 0.9}, {'word': 'दो', 'start': 1.0, 'end': 1.8},
++                 {'word': 'तीन', 'start': 2.0, 'end': 2.8}]
++        words_path = folder / 'words.json'
++        words_path.write_text(json.dumps(words, ensure_ascii=False), encoding='utf-8')
++        bundles[code] = {'audio': str(audio), 'audio_sha256': _sha(audio), 'duration': seconds,
++                         'words': str(words_path), 'script': 'स्वीकृत वर्णन', 'language': code,
++                         'timing_source': 'test-measured',
++                         'cards': [{'text': 'नमस्ते', 'start': 0.5, 'end': 2.5, 'start_word': 0, 'end_word': 1,
++                                    'spoken_anchor': 'शब्द दो'}]}
++    profiles = {'hi': None, 'or': odia_profile}
++    finish._atomic_json(job / 'production' / 'language_editions.json',
++                        {'source_language': 'en', 'editions': ['en', 'hi', 'or'], 'profiles': profiles,
++                         'prepare_audio': True, 'bundles': bundles, 'status': 'prepared batch attached'})
++    return job
++
++
++@needs_ffmpeg
++def test_each_selected_language_is_rendered_with_its_own_narration(tmp_path):
++    from engine.language_editions import render_job_editions
++    profile_root = tmp_path / 'profiles'
++    logo = tmp_path / 'odia-logo.png'
++    from PIL import Image
++    Image.new('RGB', (120, 120), 'orange').save(logo)
++    odia_profile = finish.save_profile('Odia Pragati', names={'or': 'ଓଡ଼ିଆ ପ୍ରଗତି'}, logo=logo, root=profile_root)
++    job = _job(tmp_path, odia_profile=str(odia_profile))
++
++    report = render_job_editions(job)
++
++    assert report['status'] == 'exported', report
++    hindi = Path(report['editions']['hi']['path'])
++    odia = Path(report['editions']['or']['path'])
++    assert hindi.is_file() and odia.is_file()
++    assert hindi.name.startswith('hi-') and odia.name.startswith('or-')
++    # Each edition speaks its own reviewed narration, never the primary/English voice.
++    assert 1250 < _zero_crossings_per_second(hindi) < 1400          # 660 Hz Hindi voice
++    assert 1700 < _zero_crossings_per_second(odia) < 1850           # 880 Hz Odia voice
++    assert abs(_duration(hindi) - 3.0) < 0.3 and abs(_duration(odia) - 3.0) < 0.3
++    hindi_provenance = json.loads(hindi.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert hindi_provenance['captions_burned'] is True and hindi_provenance['narration_fitted_picture'] is False
++    assert json.loads(odia.with_suffix('.provenance.json').read_text(encoding='utf-8'))['channel']['name'] == 'Odia Pragati'
++    record = json.loads((job / 'production' / 'language_editions_render.json').read_text(encoding='utf-8'))
++    assert record['status'] == 'exported' and set(record['editions']) == {'hi', 'or'}
++
++    # Re-running reuses the verified exports; nothing is re-rendered or overwritten.
++    again = render_job_editions(job)
++    assert again['status'] == 'exported'
++    assert again['editions']['hi']['path'] == report['editions']['hi']['path']
++
++
++@needs_ffmpeg
++def test_longer_localized_narration_stretches_the_picture_within_the_limit(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, picture_seconds=3.0, hindi_seconds=3.3, odia_seconds=3.0)
++    report = render_job_editions(job)
++    assert report['status'] == 'exported', report
++    export = Path(report['editions']['hi']['path'])
++    assert abs(_duration(export) - 3.3) < 0.2          # the whole Hindi narration is kept
++    assert 1250 < _zero_crossings_per_second(export, seconds=1.0, start=0.5) < 1400   # Hindi voice intact
++    provenance = json.loads(export.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['narration_fitted_picture'] is True
++
++
++@needs_ffmpeg
++def test_narration_more_than_quarter_longer_fails_visibly_not_with_english(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, picture_seconds=3.0, hindi_seconds=4.2, odia_seconds=3.0)
++    report = render_job_editions(job)
++    assert report['status'] == 'partial'
++    assert report['editions']['hi']['status'] == 'failed'
++    assert '25%' in report['editions']['hi']['error']
++    assert report['editions']['or']['status'] == 'exported'
++
++
++@needs_ffmpeg
++def test_missing_reviewed_narration_is_refused_before_any_render(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    state_path = job / 'production' / 'language_editions.json'
++    state = json.loads(state_path.read_text(encoding='utf-8'))
++    del state['bundles']['or']
++    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
++    with pytest.raises(ValueError, match='Odia'):
++        render_job_editions(job)
++    assert not (job / 'language_editions').exists()
++
++
++@needs_ffmpeg
++def test_single_language_job_keeps_the_normal_single_render(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    finish._atomic_json(job / 'production' / 'language_editions.json',
++                        {'source_language': 'en', 'editions': ['en'], 'profiles': {}, 'bundles': {}})
++    assert render_job_editions(job)['status'] == 'single_language'
++    assert render_job_editions(tmp_path / 'no-selection')['status'] == 'not_requested'
++
++
++@needs_ffmpeg
++def test_manual_edition_never_borrows_the_source_voice(tmp_path):
++    """Finishing Studio: a Hindi edition without its own narration is refused, not exported in English."""
++    source = _picture(tmp_path / 'source.mp4', 2.0)
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(source), '-f', 'lavfi', '-i', 'sine=frequency=440',
++                    '-t', '2', '-c:v', 'copy', '-c:a', 'aac', '-shortest', str(tmp_path / 'with-voice.mp4')], check=True)
++    profile = finish.save_profile('Guard', root=tmp_path / 'profiles')
++    plan = finish.create_plan(tmp_path / 'with-voice.mp4', profile, languages=['en', 'hi'],
++                              output_root=tmp_path / 'out', source_language='en')
++    finish.set_edition(plan, 'hi', cards=[], reviewed=True)
++    with pytest.raises(ValueError, match='no reviewed narration'):
++        finish.render(plan, 'hi')
++    finish.set_edition(plan, 'en', cards=[], reviewed=True)
++    assert finish.render(plan, 'en').is_file()        # the source-language edition keeps its own audio
++
++
++@needs_ffmpeg
++def test_edition_without_a_channel_profile_renders_without_a_mark(tmp_path):
++    source = _picture(tmp_path / 'source.mp4', 2.0)
++    plan = finish.create_plan(source, {'hi': None}, languages=['hi'], output_root=tmp_path / 'out', require_profiles=False)
++    data = json.loads(Path(plan).read_text(encoding='utf-8'))
++    assert data['editions']['hi']['channel']['name'] == '' and data['editions']['hi']['assets'] == {}
++    with pytest.raises(ValueError, match='channel profile'):
++        finish.create_plan(source, {'hi': None}, languages=['hi'], output_root=tmp_path / 'out2')
++
++
++def test_primary_render_hooks_language_editions_and_surfaces_failures():
++    factory = (ROOT / 'engine' / 'factory.py').read_text(encoding='utf-8')
++    assert 'render_job_editions(' in factory
++    assert 'Language editions need attention' in factory
++    assert factory.index('render_job_editions(') < factory.index('m.status = "done"')
++    assert '"language_editions": edition_report' in factory
++
++
++def test_create_page_blocks_extra_editions_without_approved_batch_and_offers_profiles():
++    app = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert 'Additional language editions need Voiceover and an approved language batch' in app
++    assert 'len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch)' in app
++    assert 'Create a {edition_label} channel profile here' in app
++    assert 'def language_edition_panel' in app and 'render_job_editions' in app
++    assert app.index('Additional language editions · optional') < app.index('2 · Review script and cast · optional')
++    assert 'Prepare selected language scripts for review · no TTS' in app
++
++
++def test_finishing_ui_declares_source_language_before_planning():
++    ui = (ROOT / 'engine' / 'finishing_ui.py').read_text(encoding='utf-8')
++    assert "'Language spoken in this source video'" in ui
++    assert 'source_language=source_language' in ui
+diff -ruN a/tests/test_v768_media_load_before_download.py b/tests/test_v768_media_load_before_download.py
+--- a/tests/test_v768_media_load_before_download.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_media_load_before_download.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,124 @@
++"""v7.0.68: Flow downloads wait until the image or video has fully loaded.
++
++Regression: the downloader opened a tile's Download menu while Flow was still
++painting a placeholder, so the download started early and the page closed.
++These tests drive the real wait loop with a fake clock, so they never sleep.
++"""
++from types import SimpleNamespace as NS
++
++import pytest
++
++from engine.providers import flow_browser as fb
++from engine.providers.flow_browser import FlowBrowser, FlowBrowserClosedError, FlowUIChanged
++
++TAG_SCRIPT = "el => el.tagName"
++
++
++class FakeClock:
++    """Advances only when the page waits, so the loop's time checks are exact (seconds)."""
++
++    def __init__(self):
++        self.now = 0.0
++
++    def monotonic(self):
++        return self.now
++
++    def time(self):
++        return self.now
++
++    def advance(self, ms):
++        self.now += ms / 1000.0
++
++
++@pytest.fixture
++def clock(monkeypatch):
++    fake = FakeClock()
++    monkeypatch.setattr(fb, "time", fake)
++    return fake
++
++
++def _browser(clock, state_for_poll, *, error=None):
++    """A browser whose tile answers poll N with state_for_poll(N) (or raises error)."""
++    polls = []
++
++    def evaluate(script, timeout=None):
++        polls.append(clock.now)
++        if error is not None:
++            raise error
++        return state_for_poll(len(polls) - 1)
++
++    tile = NS(evaluate=evaluate)
++    page = NS(wait_for_timeout=lambda ms: clock.advance(ms))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    browser._looks_like_browser_closed_error = lambda exc: "has been closed" in str(exc)
++    return browser, tile, polls
++
++
++LOADING = {"ready": False, "src": "placeholder"}
++
++
++def test_download_waits_for_placeholder_to_become_the_loaded_file(clock):
++    def state(n):
++        if n < 3:
++            return LOADING                                  # placeholder
++        if n == 3:
++            return {"ready": True, "src": "360p-thumb"}     # thumbnail is decoded
++        return {"ready": True, "src": "full-res"}           # real file swaps in
++    browser, tile, polls = _browser(clock, state)
++    browser._wait_for_media_ready(tile, "image", timeout_s=60)
++    # Polls are 0.5 s apart. The full-res source first appears at t=2.0 s and must
++    # stay stable for 2 s, so the download may start at t=4.0 s, never earlier.
++    assert clock.now == 4.0
++    assert polls[-1] == 4.0
++
++
++def test_download_never_starts_while_media_is_still_loading(clock):
++    browser, tile, _ = _browser(clock, lambda n: LOADING)
++    with pytest.raises(FlowUIChanged, match="still loading after 20s"):
++        browser._wait_for_media_ready(tile, "video", timeout_s=20)
++    assert clock.now >= 20
++
++
++def test_a_changing_source_restarts_the_stability_window(clock):
++    browser, tile, _ = _browser(clock, lambda n: {"ready": True, "src": "a" if n % 2 else "b"})
++    with pytest.raises(FlowUIChanged, match="still loading"):
++        browser._wait_for_media_ready(tile, "image", timeout_s=5)
++
++
++def test_closed_page_during_load_wait_is_reported_as_closed(clock):
++    browser, tile, _ = _browser(clock, lambda n: LOADING,
++                                error=RuntimeError("Target page, context or browser has been closed"))
++    with pytest.raises(FlowBrowserClosedError):
++        browser._wait_for_media_ready(tile, "video", timeout_s=20)
++
++
++def test_viewer_wait_polls_until_media_appears_then_waits_for_it(clock):
++    picks = [-1, -1, 0]        # the viewer has no media for two polls, then a video
++    checked = []
++
++    def element_evaluate(script, timeout=None):
++        if script == TAG_SCRIPT:
++            return "VIDEO"
++        checked.append(script)
++        return {"ready": True, "src": "viewer"}
++
++    video = NS(evaluate=element_evaluate)
++    page = NS(evaluate=lambda script: picks.pop(0),
++              locator=lambda selector: NS(nth=lambda index: video),
++              wait_for_timeout=lambda ms: clock.advance(ms))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    browser._looks_like_browser_closed_error = lambda exc: False
++    browser._wait_for_largest_media_ready(timeout_s=30)
++    assert picks == []
++    assert checked, "the selected viewer video must be checked for readiness"
++
++
++def test_viewer_without_any_media_refuses_instead_of_downloading(clock):
++    page = NS(evaluate=lambda script: -1, wait_for_timeout=lambda ms: clock.advance(ms))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    browser._looks_like_browser_closed_error = lambda exc: False
++    with pytest.raises(FlowUIChanged, match="No visible image or video"):
++        browser._wait_for_largest_media_ready(timeout_s=3)
+diff -ruN a/tools/update_v767_to_v768.py b/tools/update_v767_to_v768.py
+--- a/tools/update_v767_to_v768.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v767_to_v768.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,169 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.68 language-edition render update to a v7.0.67 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.68 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.68/tools/update_v767_to_v768.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md',
++    'LANGUAGE_EDITIONS_RENDER_V7_0_68.md',
++    'README.md',
++    'VERSION',
++    'app.py',
++    'engine/delivery_duplicates.py',
++    'engine/factory.py',
++    'engine/finishing_studio.py',
++    'engine/finishing_ui.py',
++    'engine/flow_project_cleanup.py',
++    'engine/flow_project_delete.py',
++    'engine/language_editions.py',
++    'engine/providers/flow_browser.py',
++    'engine/providers/gemini_video.py',
++    'engine/publishing.py',
++    'tests/test_v571_flow_recovery_ux.py',
++    'tests/test_v600_delivery_clip_audio.py',
++    'tests/test_v609_flow_video_typed_recovery.py',
++    'tests/test_v700_content_studio.py',
++    'tests/test_v702_flow_recovery.py',
++    'tests/test_v750_readiness.py',
++    'tests/test_v765_speech_gemini.py',
++    'tests/test_v766_channel_desk.py',
++    'tests/test_v768_delivery_duplicates.py',
++    'tests/test_v768_flow_image_cleanup.py',
++    'tests/test_v768_gemini_video_settle.py',
++    'tests/test_v768_language_editions_render.py',
++    'tests/test_v768_media_load_before_download.py',
++    'tools/update_v767_to_v768.py',
++]
++# Files that already exist in 7.0.67 or in the earlier 7.0.68 build: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md': ['5ae87fdc28c93566bbe44560d88a411626b6dfae7ddcba48d8cc9380ca1671f2'],
++    'README.md': ['c715996256015f9b2ce5a97bf943f8884037fb4ef18aa48c70e335e78b65366b'],
++    'VERSION': ['6448baf7e1324e84ccefd1993bab81c1f3e7f3f6a948e3014839f1698ccd1146'],
++    'app.py': ['3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75', 'ee0e97ff9e25f865b454a64a2fa4356d584957667ce9833cecad419ccc6541ad'],
++    'engine/factory.py': ['34fa4a483bb18aeb472208c6408f25ebdb737c1c9c581770709874c7fbd5e22a'],
++    'engine/finishing_studio.py': ['fd75959b452f8cfe5ea24afd92119aa018f255babfdef0b4ca0160c2f5cf6026'],
++    'engine/finishing_ui.py': ['f52a733c16b7828dc30a084492b34a622a56bc94ba1bf4a5d96ee2927eb7f383'],
++    'engine/flow_project_cleanup.py': ['d386855db0d8e39b449ae9bc4177ee9118f88e486c4aeef45336d227a449d247'],
++    'engine/flow_project_delete.py': ['443e108be47daed0300980ad82575ace78113fd9dcd8445cbbc1a3a9988c7867'],
++    'engine/providers/flow_browser.py': ['f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9', '8d91e90f83121550dc20d980810b1117b20406562fa25991aca8c47aa831b869'],
++    'engine/providers/gemini_video.py': ['d95343e99adebe1f21b66bda8a608b5b82782fe8e4f56f8c091a1c1e2b34e5bf'],
++    'engine/publishing.py': ['d7fe5de3cdc8a8fe6ebd6cf44927b03ad278191125c2333eaa4818eb184de488'],
++    'tests/test_v571_flow_recovery_ux.py': ['85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4'],
++    'tests/test_v600_delivery_clip_audio.py': ['8a212b59731e8da722c2b1f39b3b3d9f9894f79aa1983d3057a0d1b0f3136572'],
++    'tests/test_v609_flow_video_typed_recovery.py': ['12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae'],
++    'tests/test_v700_content_studio.py': ['4e440d64616f5daf2cfd701a584ee19c323afa3fad3a9adc2978f5a7c80b8150'],
++    'tests/test_v702_flow_recovery.py': ['28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9'],
++    'tests/test_v750_readiness.py': ['64e8f0c8b354a81bf9411b93efcb963e544e76af3bd2e0289126382906276186'],
++    'tests/test_v765_speech_gemini.py': ['826f47a7e7161ab81cf95384941ed8c559c098c13ae9c56f36461e3a84f9c5cb'],
++    'tests/test_v766_channel_desk.py': ['9c8181bcea756336a90459db239874e0d8e3eec54bed4abe52df4f23aee235d3'],
++    'tools/update_v767_to_v768.py': ['024dfe02095f382b6d034b0706821429cacc10ff19281a932decf0fb8beac6c2'],
++}
++ACCEPTED_INSTALLS = ('7.0.67', '7.0.68')  # 7.0.68 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.67 (found ' + current + '). '
++                         'For 7.0.66 run tools/update_v766_to_v767.py from the 7.0.67 folder first.')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.68 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.68 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.68-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.68. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

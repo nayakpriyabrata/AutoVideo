@@ -1,6 +1,6 @@
-diff -ruN -x .pytest_cache -x __pycache__ a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md
+diff -ruN a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md
 --- a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
-+++ b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	2026-10-20 04:46:23.253852746 +0000
++++ b/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md	2026-10-20 05:29:08.482194392 +0000
 @@ -0,0 +1,64 @@
 +# AutoVideoAI: scale review for large channel operations (v7.0.68)
 +
@@ -23,7 +23,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68
 +## Platform constraints that shape the design
 +
 +- **YouTube upload quota.** Google's quota page lists `videos.insert` at 100 calls per day per Google Cloud project, counted in its own bucket. A 100-million-view operation publishing across several channels therefore needs deliberate quota planning, such as separate projects or an approved quota extension. The tool has no quota ledger, so it cannot warn before a batch hits the limit. Source: [Google Developers, videos.insert quota](https://developers.google.com/youtube/v3/docs/videos/insert) and [quota calculator](https://developers.google.com/youtube/data/determine_quota_cost). Check the current quota page before relying on these numbers.
-+- **Identical content across channels.** Reusing one rendered file on several channels, or near-identical files with a changed title, can trigger platform spam or duplicate-content review. I have not verified current platform thresholds. The tool records a SHA-256 for exports and review packs, but it does not compare those hashes across channels or destinations. This is a cheap, high-value check that is not yet implemented.
++- **Identical content across channels.** Reusing one rendered file on several channels, or near-identical files with a changed title, can trigger platform spam or duplicate-content review. I have not verified current platform thresholds. The tool records a SHA-256 for exports and review packs, but it does not compare those hashes across channels or destinations. The 7.0.68 guard (`engine/delivery_duplicates.py`) now runs when a delivery is approved or scheduled; see the first P0 item.
 +- **Platform terms and disclosure.** Synthetic or altered content, paid promotion and music rights are platform-specific. Channel Desk records rights and disclosure as operator fields. It does not check them against current platform rules.
 +
 +## What is already useful (verified in code)
@@ -44,7 +44,7 @@ diff -ruN -x .pytest_cache -x __pycache__ a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68
 +
 +| Rank | Feature | Why it matters at scale | Acceptance test |
 +|---|---|---|---|
-+| P0 | **Cross-channel duplicate guard.** Before a delivery is recorded, compare its SHA-256 and near-duplicate fingerprint against every other delivery in the same workspace. | Prevents accidental reuse of one file across several channels. | Two channels given the same export are flagged; a re-export with changed content is not. |
++| P0 | **Cross-channel duplicate guard.** Before a delivery is recorded, compare its SHA-256 and near-duplicate fingerprint against every other delivery in the same workspace. | Prevents accidental reuse of one file across several channels. | Two channels given the same export are flagged; a re-export with changed content is not. **Status (7.0.68): implemented at approval and scheduling, not at export.** Identical bytes approved or scheduled for another account are blocked. A near-duplicate (8 sampled frames, 9x8 dHash, mean Hamming distance at most 10 of 64 bits, durations within 2%) needs explicit acknowledgment. The threshold is a proposal, checked only on synthetic footage. Records written before 7.0.68 are compared at their next approval or schedule. |
 +| P0 | **Per-project upload budget ledger.** Track uploads per Cloud project and day against the documented quota, and block a batch that would exceed it. | Stops a batch from failing halfway through. | A batch of 101 uploads on one project is refused before any upload starts. |
 +| P0 | **Browser-session health check** for Flow and Gemini Web: sign-in state, profile age, and the last successful run. | Most failures at scale will come from an expired session or a UI change. | Check reports `signed-out`, `ui-changed` or `ok` without submitting a prompt. |
 +| P1 | **Platform analytics connectors** (YouTube Analytics, Meta Graph) with explicit scopes and read-only use. | Needed for retention, reach and comment review at 10 million followers. | Read-only scope verified; no write permission requested. |
@@ -66,9 +66,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68
 +- Code paths reviewed: `engine/flow_project_cleanup.py`, `engine/flow_project_delete.py`, `engine/providers/gemini_video.py`, `engine/channel_desk.py`, and the v7.0.66 audit.
 +- New tests: `tests/test_v768_gemini_video_settle.py` (5 tests, fake clock; no live Gemini session).
 +- Not tested live: Gemini Web upload and download, Flow project deletion, and any platform upload or analytics call. These need a signed-in browser on your machine.
-diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
+diff -ruN a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md
 --- a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	1970-01-01 00:00:00.000000000 +0000
-+++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-20 04:46:23.253852746 +0000
++++ b/LANGUAGE_EDITIONS_RENDER_V7_0_68.md	2026-10-20 05:29:08.482194392 +0000
 @@ -0,0 +1,71 @@
 +# AutoVideoAI 7.0.68 · language editions now render as videos
 +
@@ -141,9 +141,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/LANGUAGE_EDITIONS_RENDER_V7_0_68.md 
 +Now every Flow image and video download waits until the element is visible, decoded, not busy, and unchanged for 2 seconds. Video tiles keep their 15-second settle. After 90 seconds the request is retained for exact recovery and nothing is downloaded. Before this change, a slow media load could still start a download early.
 +
 +Known limit: the readiness rules are checked against Flow's page structure only in unit tests with fake page objects. Run one live generation and confirm the log shows "finished loading; starting download" before the download.
-diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
---- a/README.md	2026-10-20 04:46:23.233852646 +0000
-+++ b/README.md	2026-10-20 04:46:23.253852746 +0000
+diff -ruN a/README.md b/README.md
+--- a/README.md	2026-10-20 05:29:08.462194290 +0000
++++ b/README.md	2026-10-20 05:29:08.482194392 +0000
 @@ -1,3 +1,7 @@
 +# Update 7.0.68
 +
@@ -152,15 +152,15 @@ diff -ruN -x .pytest_cache -x __pycache__ a/README.md b/README.md
  # Update 7.0.67
  
  Guided Studio now separates the master script from its output language editions. Choose the master/primary language and any additional English, Hindi or Odia editions before drafting. Gemini drafts one story, selected editions are localized for review, and the exact approved scripts are used to prepare every TTS track before any timed-card request. See [the language-edition guide](LANGUAGE_EDITIONS_V7_0_67.md).
-diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
---- a/RELEASE_MANIFEST.json	2026-10-20 04:46:23.233852646 +0000
-+++ b/RELEASE_MANIFEST.json	2026-10-20 04:46:23.285852906 +0000
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-20 05:29:08.458194269 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-20 05:29:08.498194474 +0000
 @@ -1,6 +1,6 @@
  {
 -  "version": "7.0.67",
 -  "built_at": "2026-10-19T03:37:42+00:00",
 +  "version": "7.0.68",
-+  "built_at": "2026-10-20T04:43:22+00:00",
++  "built_at": "2026-10-20T05:27:31+00:00",
    "files": [
      {
        "path": ".env.example",
@@ -169,8 +169,8 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
 +      "path": "CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md",
-+      "bytes": 8074,
-+      "sha256": "5ae87fdc28c93566bbe44560d88a411626b6dfae7ddcba48d8cc9380ca1671f2"
++      "bytes": 8570,
++      "sha256": "40afd4a207aca1f49b60546ca7bfe3195fbdbf73eaa0fb551059293120eb7c42"
 +    },
 +    {
        "path": "CHANNEL_RENDER_SPEED_V7_0_63.md",
@@ -214,12 +214,24 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "app.py",
 -      "bytes": 210281,
 -      "sha256": "3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75"
-+      "bytes": 214927,
-+      "sha256": "ee0e97ff9e25f865b454a64a2fa4356d584957667ce9833cecad419ccc6541ad"
++      "bytes": 215443,
++      "sha256": "c9775a4979231c1e967aad09ab533b2f07eb2ee43fa267c9fe3b75a4b0c4201c"
      },
      {
        "path": "architecture.md",
-@@ -1209,18 +1219,18 @@
+@@ -1193,6 +1203,11 @@
+       "sha256": "120f2a4ab9a7726dc87119bb98be1d9c7d8e62a3f22f1a70ef4ce78d8bc34692"
+     },
+     {
++      "path": "engine/delivery_duplicates.py",
++      "bytes": 10470,
++      "sha256": "19d1f16e8b3a423fbaa41aa1e5a4119355c5c5039532f698861e0ff0cd3c6a06"
++    },
++    {
+       "path": "engine/editorial_text.py",
+       "bytes": 2604,
+       "sha256": "5c1c01facf24de02e6de00570e3a33c1cb773b881d37901a031b4f6c7e34993e"
+@@ -1209,18 +1224,18 @@
      },
      {
        "path": "engine/factory.py",
@@ -244,7 +256,25 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "engine/flow_approval.py",
-@@ -1343,6 +1353,11 @@
+@@ -1254,13 +1269,13 @@
+     },
+     {
+       "path": "engine/flow_project_cleanup.py",
+-      "bytes": 7131,
+-      "sha256": "d386855db0d8e39b449ae9bc4177ee9118f88e486c4aeef45336d227a449d247"
++      "bytes": 7802,
++      "sha256": "3bb233520e4969dd3f08dd6defcd9034dc3cfab76d00093b15b8d9099dcfecd4"
+     },
+     {
+       "path": "engine/flow_project_delete.py",
+-      "bytes": 4452,
+-      "sha256": "443e108be47daed0300980ad82575ace78113fd9dcd8445cbbc1a3a9988c7867"
++      "bytes": 5103,
++      "sha256": "586baee4e4c2d1ffa0c5ca91d85a53b072c25274c46caaee72c24d2de8b7442c"
+     },
+     {
+       "path": "engine/flow_project_isolation.py",
+@@ -1343,6 +1358,11 @@
        "sha256": "f9b1844cf109e00da91a1b88d00d0943127926b6891fba4f44f8fbbf0cf61dc0"
      },
      {
@@ -256,18 +286,18 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "engine/languages.py",
        "bytes": 2269,
        "sha256": "a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c"
-@@ -1479,8 +1494,8 @@
+@@ -1479,8 +1499,8 @@
      },
      {
        "path": "engine/providers/flow_browser.py",
 -      "bytes": 301711,
 -      "sha256": "f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9"
-+      "bytes": 306531,
-+      "sha256": "8d91e90f83121550dc20d980810b1117b20406562fa25991aca8c47aa831b869"
++      "bytes": 306571,
++      "sha256": "f0e963159c7261698fdd8d656391c458fa2a81f9e1506f771949a3933009d96c"
      },
      {
        "path": "engine/providers/flow_extension.py",
-@@ -1494,8 +1509,8 @@
+@@ -1494,8 +1514,8 @@
      },
      {
        "path": "engine/providers/gemini_video.py",
@@ -278,7 +308,18 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "engine/providers/gemini_web.py",
-@@ -2154,8 +2169,8 @@
+@@ -1524,8 +1544,8 @@
+     },
+     {
+       "path": "engine/publishing.py",
+-      "bytes": 18399,
+-      "sha256": "d7fe5de3cdc8a8fe6ebd6cf44927b03ad278191125c2333eaa4818eb184de488"
++      "bytes": 19338,
++      "sha256": "f849f322155310a5a6fcc49abd69993d43908f8d82ac2f3fa4ccc27f8b5ae465"
+     },
+     {
+       "path": "engine/qc/__init__.py",
+@@ -2154,8 +2174,8 @@
      },
      {
        "path": "tests/test_v571_flow_recovery_ux.py",
@@ -289,7 +330,18 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v572_clipping.py",
-@@ -2259,8 +2274,8 @@
+@@ -2229,8 +2249,8 @@
+     },
+     {
+       "path": "tests/test_v600_delivery_clip_audio.py",
+-      "bytes": 5343,
+-      "sha256": "8a212b59731e8da722c2b1f39b3b3d9f9894f79aa1983d3057a0d1b0f3136572"
++      "bytes": 5566,
++      "sha256": "a8a58608766f246d288e6dee0427f92008ed420d0b5f747177ddc4bf8d6e19e8"
+     },
+     {
+       "path": "tests/test_v601_flow_parallel_and_recovery.py",
+@@ -2259,8 +2279,8 @@
      },
      {
        "path": "tests/test_v609_flow_video_typed_recovery.py",
@@ -300,7 +352,14 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v619_flow_download_hardening.py",
-@@ -2274,8 +2289,8 @@
+@@ -2269,13 +2289,13 @@
+     },
+     {
+       "path": "tests/test_v700_content_studio.py",
+-      "bytes": 6143,
+-      "sha256": "4e440d64616f5daf2cfd701a584ee19c323afa3fad3a9adc2978f5a7c80b8150"
++      "bytes": 6565,
++      "sha256": "ca2a060361011547d98c7c3bcd32a5569d8d7e666e44fad5ab2e532dd5d4a9be"
      },
      {
        "path": "tests/test_v702_flow_recovery.py",
@@ -311,7 +370,18 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v703_workflow.py",
-@@ -2584,8 +2599,8 @@
+@@ -2509,8 +2529,8 @@
+     },
+     {
+       "path": "tests/test_v750_readiness.py",
+-      "bytes": 7220,
+-      "sha256": "64e8f0c8b354a81bf9411b93efcb963e544e76af3bd2e0289126382906276186"
++      "bytes": 7227,
++      "sha256": "2995b40a359891fb8820b2b6ac686a6a5e89e168bc0fcd6ef9442f818d6d648f"
+     },
+     {
+       "path": "tests/test_v751_visual_only.py",
+@@ -2584,13 +2604,13 @@
      },
      {
        "path": "tests/test_v765_speech_gemini.py",
@@ -322,10 +392,27 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
      },
      {
        "path": "tests/test_v766_channel_desk.py",
-@@ -2598,6 +2613,21 @@
+-      "bytes": 8376,
+-      "sha256": "9c8181bcea756336a90459db239874e0d8e3eec54bed4abe52df4f23aee235d3"
++      "bytes": 8596,
++      "sha256": "f995ee3448157c436cf87a59f3d4efcacfabdfd03965f90ee6a94dac3b7f8423"
+     },
+     {
+       "path": "tests/test_v767_language_editions.py",
+@@ -2598,6 +2618,31 @@
        "sha256": "4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa"
      },
      {
++      "path": "tests/test_v768_delivery_duplicates.py",
++      "bytes": 8812,
++      "sha256": "55e33074132c8bd76ed2409022bafe0a2229c2fc655901c60c85186453c8c794"
++    },
++    {
++      "path": "tests/test_v768_flow_image_cleanup.py",
++      "bytes": 7351,
++      "sha256": "692405f348877182165fc5ec3c0e3ccbe93110e9925bd016d4621062e520969b"
++    },
++    {
 +      "path": "tests/test_v768_gemini_video_settle.py",
 +      "bytes": 1747,
 +      "sha256": "bb9e0054e746385050f14cd44b7041ee25fefb1981c68bb3656cd810b7b04991"
@@ -344,27 +431,27 @@ diff -ruN -x .pytest_cache -x __pycache__ a/RELEASE_MANIFEST.json b/RELEASE_MANI
        "path": "tests/test_web_media_helper.py",
        "bytes": 4375,
        "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
-@@ -2838,6 +2868,11 @@
+@@ -2838,6 +2883,11 @@
        "sha256": "a07e02af1df9f50970150098c2e9905b5d70066f4b7dbf318f7e92853525a35b"
      },
      {
 +      "path": "tools/update_v767_to_v768.py",
-+      "bytes": 7361,
-+      "sha256": "024dfe02095f382b6d034b0706821429cacc10ff19281a932decf0fb8beac6c2"
++      "bytes": 8943,
++      "sha256": "9f4e2774296a13dfd3707fa28042b220d86e3c9d954cf3f91ce55cde892b49c0"
 +    },
 +    {
        "path": "topics.csv",
        "bytes": 467,
        "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
-diff -ruN -x .pytest_cache -x __pycache__ a/VERSION b/VERSION
---- a/VERSION	2026-10-20 04:46:23.237852666 +0000
-+++ b/VERSION	2026-10-20 04:46:23.257852766 +0000
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-20 05:29:08.466194310 +0000
++++ b/VERSION	2026-10-20 05:29:08.486194413 +0000
 @@ -1 +1 @@
 -7.0.67
 +7.0.68
-diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
---- a/app.py	2026-10-20 04:46:23.237852666 +0000
-+++ b/app.py	2026-10-20 04:46:23.257852766 +0000
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-20 05:29:08.466194310 +0000
++++ b/app.py	2026-10-20 05:29:08.486194413 +0000
 @@ -501,6 +501,39 @@
          c.metric(name, "✓" if ok is True else ("·" if ok is False else ok))
  
@@ -462,6 +549,15 @@ diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
      prepared_batch = None
      use_prepared_batch = False
      with st.expander('4 · Review language scripts → all TTS → timed cards', expanded=True):
+@@ -690,7 +751,7 @@
+         gemini_video_count = st.number_input('Use Gemini Web for up to this many AI video shots', min_value=0, max_value=4, value=0,
+             help='Zero uses existing providers. Requests approximately 10 seconds per shot; duration and quota depend on Gemini. Resume recovers unfinished requests without resubmission.')
+         flow_auto_cleanup_images = st.checkbox('Delete captured image-only Flow projects automatically', value=False,
+-            help='Deletes only isolated image projects with verified complete galleries and local files. Video, mixed and unresolved projects are retained.')
++            help='After this job finishes, deletes isolated image-only Flow projects whose downloaded image and request record are verified locally. Video, mixed, pending and changed projects are retained. Off by default because deletion removes the Flow copy.')
+     with st.expander('Characters and recovery preferences · optional', expanded=False):
+         studio_cast = cast_picker(st,'studio-cast')
+         studio_replace_images = st.checkbox('Regenerate an unresolved image once after 3 recovery retries',value=False,key='studio-replace-images',
 @@ -774,8 +835,8 @@
      if submitted:
          if review and st.session_state.get("studio-use-review") and not reviewed_path:
@@ -481,9 +577,248 @@ diff -ruN -x .pytest_cache -x __pycache__ a/app.py b/app.py
  
  # ================= MUSIC VIDEO =================
  elif page == 'MUSIC VIDEO':
-diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.py
---- a/engine/factory.py	2026-10-20 04:46:23.241852686 +0000
-+++ b/engine/factory.py	2026-10-20 04:46:23.261852786 +0000
+@@ -2364,13 +2426,16 @@
+     language_ok = st.checkbox('Native-language narration and text reviewed')
+     kids = st.selectbox('Intended for children?',['Choose','Yes','No'])
+     ai = st.selectbox('AI disclosure required for this delivery?',['Choose','Yes','No'])
++    dup_ack = st.checkbox('Near-duplicate warning reviewed: any similar approved or scheduled video listed in the warning is a different video for this channel', value=False,
++                          help='Identical bytes already approved for another account are always blocked. A similar re-encoded video needs this acknowledgment.')
+     st.caption('The approval fingerprint covers the video hash, copy, destination, exact account and review choices. Editing the release JSON or upload packet after approval requires re-review.')
+     if st.button('Approve exact file + metadata for manual upload'):
+         try:
+             st.json(approve_release(release_path,account_id=account,rights_confirmed=rights,facts_reviewed=facts,
+                                     language_reviewed=language_ok,made_for_kids=None if kids=='Choose' else kids=='Yes',
+                                     ai_disclosure_required=None if ai=='Choose' else ai=='Yes',
+-                                    editorial_review_path=editorial_review.strip() or None))
++                                    editorial_review_path=editorial_review.strip() or None,
++                                    acknowledge_duplicate_warning=dup_ack))
+         except Exception as error:
+             st.error(str(error))
+     when = st.text_input('Optional local reminder: future ISO time with timezone',placeholder='2026-10-05T18:00:00+05:30')
+diff -ruN a/engine/delivery_duplicates.py b/engine/delivery_duplicates.py
+--- a/engine/delivery_duplicates.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/delivery_duplicates.py	2026-10-20 05:29:08.490194433 +0000
+@@ -0,0 +1,217 @@
++"""Cross-channel duplicate guard for approved manual-upload deliveries.
++
++Two checks run when a delivery is approved or scheduled for an account:
++
++* Identical bytes (same SHA-256) already approved or scheduled for a different
++  non-empty account are blocked. The same file cannot be cleared for two channels.
++* A near-duplicate (same content after re-encoding) is a warning. It needs an
++  explicit acknowledgment that names the matching release records.
++
++Near-duplicate test (a proposal, tune with real data): sample 8 frames across the
++video, reduce each to a 9x8 grayscale difference hash (64 bits), and compare the
++mean Hamming distance. Matching requires a mean at or below NEAR_MAX_MEAN_BITS
++and durations within DURATION_TOLERANCE.
++
++Fingerprints are cached in a sidecar next to each video. The release JSON is not
++changed, so existing approval fingerprints stay valid.
++"""
++from pathlib import Path
++import json
++import os
++import subprocess
++
++from .production import digest, read
++
++FRAME_SAMPLES = 8
++HASH_WIDTH, HASH_HEIGHT = 9, 8          # 8 comparisons per row x 8 rows = 64 bits
++NEAR_MAX_MEAN_BITS = 10                 # proposed threshold, mean per frame (of 64)
++DURATION_TOLERANCE = 0.02               # 2 %, same tolerance as delivery export
++ACTIVE_STATES = ('APPROVED_FOR_MANUAL_UPLOAD', 'SCHEDULED_MANUAL_REMINDER')
++DEFAULT_ROOTS = ('outputs',)
++CACHE_SUFFIX = '.duplicate-fingerprint.json'
++
++
++def _duration(path):
++    from .render.ffmpeg_renderer import _probe_av_durations
++    measured = _probe_av_durations(str(path))
++    value = measured.get('video') or measured.get('format')
++    if not value or value <= 0:
++        raise ValueError('Cannot read video duration for the duplicate check: ' + Path(path).name)
++    return float(value)
++
++
++def _frame_hash(ffmpeg, path, seconds):
++    command = [ffmpeg, '-v', 'error', '-ss', f'{seconds:.3f}', '-i', str(path),
++               '-frames:v', '1', '-vf', f'scale={HASH_WIDTH}:{HASH_HEIGHT}:flags=area,format=gray',
++               '-f', 'rawvideo', '-pix_fmt', 'gray', '-']
++    result = subprocess.run(command, capture_output=True, timeout=120)
++    pixels = result.stdout
++    if result.returncode or len(pixels) != HASH_WIDTH * HASH_HEIGHT:
++        raise ValueError('Cannot decode a frame for the duplicate check: ' + Path(path).name)
++    value = 0
++    for y in range(HASH_HEIGHT):
++        row = y * HASH_WIDTH
++        for x in range(HASH_WIDTH - 1):
++            value = (value << 1) | (1 if pixels[row + x] > pixels[row + x + 1] else 0)
++    return value
++
++
++def _file_identity(path):
++    stat = Path(path).stat()
++    return stat.st_size, stat.st_mtime_ns
++
++
++def fingerprint(path, *, use_cache=True):
++    """Return {'sha256','size','duration','frames'} for one delivery video."""
++    from .render.ffmpeg_renderer import ffmpeg_exe
++    path = Path(path).resolve()
++    if not path.is_file():
++        raise ValueError('Delivery video is missing: ' + path.name)
++    sha = digest(path)
++    size, mtime_ns = _file_identity(path)
++    cache_path = path.with_name(path.name + CACHE_SUFFIX)
++    cached = read(cache_path) if use_cache else None
++    if (isinstance(cached, dict) and cached.get('sha256') == sha and cached.get('size') == size
++            and cached.get('mtime_ns') == mtime_ns and len(cached.get('frames') or []) == FRAME_SAMPLES):
++        return {'sha256': sha, 'size': size, 'duration': cached['duration'],
++                'frames': [int(v, 16) for v in cached['frames']]}
++    duration = _duration(path)
++    ffmpeg = ffmpeg_exe()
++    frames = [_frame_hash(ffmpeg, path, duration * (i + 0.5) / FRAME_SAMPLES) for i in range(FRAME_SAMPLES)]
++    result = {'sha256': sha, 'size': size, 'duration': duration, 'frames': frames}
++    try:  # The cache is an optimisation; a failed write must not block a review.
++        tmp = cache_path.with_suffix(cache_path.suffix + '.tmp')
++        tmp.write_text(json.dumps({'sha256': sha, 'size': size, 'mtime_ns': mtime_ns,
++                                   'duration': duration, 'frames': [f'{v:016x}' for v in frames]}),
++                       encoding='utf-8')
++        os.replace(tmp, cache_path)
++    except OSError:
++        pass
++    return result
++
++
++def mean_hamming(a, b):
++    if len(a) != FRAME_SAMPLES or len(b) != FRAME_SAMPLES:
++        raise ValueError('Fingerprints must have the same frame count')
++    return sum(bin(x ^ y).count('1') for x, y in zip(a, b)) / FRAME_SAMPLES
++
++
++def candidate_releases(roots=DEFAULT_ROOTS, *, extra_dirs=(), exclude=None):
++    """Release JSON files under the roots (recursive) and the given folders (flat)."""
++    seen, paths = set(), []
++    excluded = Path(exclude).resolve() if exclude else None
++    found = []
++    for root in roots:
++        base = Path(root)
++        if base.is_dir():
++            found.extend(base.rglob('*.release.json'))
++    for folder in extra_dirs:
++        base = Path(folder)
++        if base.is_dir():
++            found.extend(base.glob('*.release.json'))
++    for path in found:
++        if path.is_symlink() or not path.is_file():
++            continue
++        resolved = path.resolve()
++        if resolved == excluded or resolved in seen:
++            continue
++        seen.add(resolved)
++        paths.append(resolved)
++    return sorted(paths)
++
++
++def _describe(path, record, match, **extra):
++    row = {'release': str(path), 'id': record.get('id', path.stem), 'account_id': record.get('account_id', ''),
++           'destination': record.get('destination', ''), 'state': record.get('state', ''), 'match': match}
++    row.update(extra)
++    return row
++
++
++def check(record, release_path, *, account_id, roots=DEFAULT_ROOTS):
++    """Compare this delivery with approved/scheduled releases on other accounts.
++
++    Returns {'blocked': [...], 'warnings': [...], 'skipped': [...]}. Raises ValueError
++    if this delivery's own video cannot be fingerprinted (fail closed).
++    """
++    account = str(account_id or '').strip()
++    release_path = Path(release_path).resolve()
++    result = {'blocked': [], 'warnings': [], 'skipped': []}
++    if not account:
++        return result
++    video = Path(record['video'])
++    current = fingerprint(video)
++    if current['sha256'] != record.get('sha256'):
++        raise ValueError('Delivery file is missing or changed; review the current render')
++    for path in candidate_releases(roots, extra_dirs=[release_path.parent], exclude=release_path):
++        other = read(path)
++        if not isinstance(other, dict):
++            result['skipped'].append({'release': str(path), 'reason': 'unreadable release record'})
++            continue
++        other_account = str(other.get('account_id') or '').strip()
++        if other.get('state') not in ACTIVE_STATES or not other_account or other_account == account:
++            continue
++        other_video = Path(str(other.get('video') or ''))
++        if not other_video.is_file():
++            result['skipped'].append({'release': str(path), 'reason': 'video file missing'})
++            continue
++        try:
++            other_fp = fingerprint(other_video)
++        except (OSError, ValueError, subprocess.SubprocessError) as error:
++            result['skipped'].append({'release': str(path), 'reason': str(error)[:200]})
++            continue
++        if other_fp['sha256'] == current['sha256']:
++            result['blocked'].append(_describe(path, other, 'identical_bytes'))
++            continue
++        distance = mean_hamming(current['frames'], other_fp['frames'])
++        delta = abs(current['duration'] - other_fp['duration']) / max(current['duration'], other_fp['duration'])
++        if distance <= NEAR_MAX_MEAN_BITS and delta <= DURATION_TOLERANCE:
++            result['warnings'].append(_describe(path, other, 'near_duplicate',
++                                                mean_hamming=round(distance, 2),
++                                                duration_delta=round(delta, 4)))
++    return result
++
++
++def acknowledged_paths(record):
++    review = record.get('duplicate_review')
++    if not isinstance(review, dict) or review.get('acknowledged') is not True:
++        return set()
++    return {row.get('release') for row in review.get('matches', []) if isinstance(row, dict)}
++
++
++def enforce(record, release_path, *, account_id, acknowledge, roots=DEFAULT_ROOTS):
++    """Raise on blocked duplicates; require acknowledgment for near-duplicates.
++
++    Returns the review note to store on the release record, or None when there is
++    nothing to report.
++    """
++    result = check(record, release_path, account_id=account_id, roots=roots)
++    if result['blocked']:
++        names = ', '.join(f"{row['id']} ({row['account_id']})" for row in result['blocked'])
++        raise ValueError('Identical video is already approved or scheduled for another account: '
++                         f'{names}. Nothing approved; choose one channel for this file.')
++    pending = [row for row in result['warnings'] if row['release'] not in acknowledged_paths(record)]
++    if pending and acknowledge is not True:
++        names = ', '.join(f"{row['id']} ({row['account_id']}, mean {row['mean_hamming']} bits)" for row in pending)
++        raise ValueError('Near-duplicate of approved or scheduled delivery: ' + names
++                         + '. Review the match and tick the acknowledgment to continue.')
++    if not result['warnings'] and not result['skipped']:
++        return None
++    return {'acknowledged': bool(result['warnings']) and (acknowledge is True or not pending),
++            'matches': result['warnings'], 'skipped': result['skipped'],
++            'threshold': {'mean_hamming_bits_max': NEAR_MAX_MEAN_BITS, 'duration_tolerance': DURATION_TOLERANCE}}
++
++
++def reverify_for_schedule(record, release_path, *, roots=DEFAULT_ROOTS):
++    """Scheduling re-check: no new blocking or unacknowledged matches are allowed.
++
++    Any new near-duplicate needs a fresh approval review, so the approval fingerprint
++    stays the record of what was reviewed.
++    """
++    result = check(record, release_path, account_id=record.get('account_id'), roots=roots)
++    if result['blocked']:
++        names = ', '.join(f"{row['id']} ({row['account_id']})" for row in result['blocked'])
++        raise ValueError('Identical video is now approved or scheduled for another account: '
++                         f'{names}. Re-review this delivery before scheduling.')
++    acknowledged = acknowledged_paths(record)
++    if any(row['release'] not in acknowledged for row in result['warnings']):
++        raise ValueError('A new near-duplicate delivery appeared since approval. Re-review and approve again.')
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/factory.py	2026-10-20 05:29:08.490194433 +0000
 @@ -4265,7 +4265,19 @@
              for fs in fallback_shots:
                  gf.write(f"- {fs.shot_id}: {fs.provider} -> {fs.actual_provider or fs.provider}: {fs.fallback_reason}\n")
@@ -512,9 +847,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/factory.py b/engine/factory.p
                  "captions": cap, "generation_summary": generation_summary,
                  "visual_diversity": diversity, "publish_readiness": publish_readiness,
                  "graphics": overlays if "overlays" in locals() else [],
-diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/finishing_studio.py
---- a/engine/finishing_studio.py	2026-10-20 04:46:23.241852686 +0000
-+++ b/engine/finishing_studio.py	2026-10-20 04:46:23.261852786 +0000
+diff -ruN a/engine/finishing_studio.py b/engine/finishing_studio.py
+--- a/engine/finishing_studio.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/finishing_studio.py	2026-10-20 05:29:08.490194433 +0000
 @@ -63,6 +63,21 @@
      return {'path': str(dest.resolve()), 'sha256': sha, 'duration': duration}
  
@@ -719,9 +1054,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_studio.py b/engine/
          if progress:progress(1.0)
          return dest
      finally:shutil.rmtree(tmp_dir,ignore_errors=True)
-diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/finishing_ui.py
---- a/engine/finishing_ui.py	2026-10-20 04:46:23.241852686 +0000
-+++ b/engine/finishing_ui.py	2026-10-20 04:46:23.261852786 +0000
+diff -ruN a/engine/finishing_ui.py b/engine/finishing_ui.py
+--- a/engine/finishing_ui.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/finishing_ui.py	2026-10-20 05:29:08.490194433 +0000
 @@ -48,6 +48,8 @@
      source=st.selectbox('Saved source', ['Enter local MP4 path']+[r['path'] for r in choices],
                         format_func=lambda p:next((r['label'] for r in choices if r['path']==p),p))
@@ -739,9 +1074,112 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/finishing_ui.py b/engine/fini
                    shared_music=row['path'] if row else None,
                    shared_music_license=(row['source_url']+' · '+row['license']) if row else '')
              st.session_state['finish-plan']=str(path);st.success('Draft plan saved: '+str(path))
-diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine/language_editions.py
+diff -ruN a/engine/flow_project_cleanup.py b/engine/flow_project_cleanup.py
+--- a/engine/flow_project_cleanup.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/flow_project_cleanup.py	2026-10-20 05:29:08.490194433 +0000
+@@ -26,11 +26,16 @@
+             if row.get('kind')!='image':item['blocked'].append('Video/recovery project retained');continue
+             if row.get('scope') not in SCOPES:item['blocked'].append('Not an isolated single-image project');continue
+             if not completed(output,row):item['blocked'].append('Image is pending, missing or changed');continue
+-            references_for(row)
++            refs=references_for(row)
+             record['media_sha256']=digest(output)
++            # The verified local image is the required evidence. A captured gallery
++            # inventory, when present, tightens the live check; it is not required.
+             signatures=row.get('capture_inventory') or []
+-            if not signatures:item['blocked'].append('Complete captured gallery inventory is missing');continue
+-            item['signatures'].extend(signatures)
++            if signatures:item['signatures'].extend(signatures)
++            else:item['inventory_complete']=False
++            # Upper bound on live images this request could have produced: its own
++            # output plus any uploaded references (see flow_image_transaction).
++            item['max_images']=item.get('max_images',0)+len(refs)+1
+         except (OSError,ValueError,RuntimeError,KeyError,TypeError,AttributeError):
+             unreadable=True
+     ledger_path=root/'.flow-project-cleanup.json'
+@@ -39,11 +44,14 @@
+     if not isinstance(ledger,dict):ledger={};unreadable=True
+     for url,item in grouped.items():
+         item['signatures']=sorted(set(item['signatures']))
++        # Exact matching only when every record carries a captured inventory.
++        item['exact']=bool(item['signatures']) and item.get('inventory_complete',True)
++        item.setdefault('max_images',0)
+         if unreadable:item['blocked'].append('An unreadable request journal needs reconciliation')
+         item['blocked']=sorted(set(item['blocked']))
+         item['remote_state']=ledger.get(url,{}).get('status','retained')
+         if item['remote_state'] in ('deleted','uncertain'):item['blocked'].append('Remote cleanup already '+item['remote_state'])
+-        item['eligible']=bool(item['records'] and item['signatures'] and not item['blocked'])
++        item['eligible']=bool(item['records'] and item['max_images'] and not item['blocked'])
+     return sorted(grouped.values(),key=lambda x:x['project_url'])
+ 
+ 
+@@ -74,7 +82,9 @@
+                 # result is never retried automatically after a browser interruption.
+                 ledger[url]={'status':'uncertain','records':row['records']};save(ledger_path,ledger)
+                 try:
+-                    verification=bridge.delete_exact_project(url,expected_signatures=row['signatures'])
++                    verification=bridge.delete_exact_project(
++                        url,expected_signatures=row['signatures'] if row.get('exact') else None,
++                        max_images=row.get('max_images'))
+                     if not isinstance(verification,dict) or verification.get('status')!='deleted':
+                         raise RuntimeError('Flow deletion was not independently confirmed')
+                     ledger[url]['status']='deleted';save(ledger_path,ledger)
+@@ -92,7 +102,7 @@
+ 
+ def panel(st,root):
+     with st.expander('Clean downloaded Flow image projects · optional'):
+-        st.caption('Retains all video projects, pending requests and changed/missing captures. Only isolated still projects with verified local media and a complete gallery inventory can be selected. Remote deletion loses the Flow copy; local media and resume records stay saved.')
++        st.caption('Retains every video project, pending request and changed or missing capture. An isolated image project can be selected once its image and request record are verified locally. Remote deletion removes the Flow copy; local media and resume records stay saved.')
+         if st.button('Review saved Flow projects',key='flow-project-review-action'):
+             st.session_state['flow-project-review-data']=inventory(root)
+         rows=st.session_state.get('flow-project-review-data',[])
+diff -ruN a/engine/flow_project_delete.py b/engine/flow_project_delete.py
+--- a/engine/flow_project_delete.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/flow_project_delete.py	2026-10-20 05:29:08.490194433 +0000
+@@ -3,11 +3,19 @@
+ import time
+ 
+ 
+-def delete(bridge,url,expected_signatures):
++def delete(bridge,url,expected_signatures=None,max_images=None):
++    """Delete one exact Flow project after its local image evidence is verified.
++
++    With a captured inventory, the live gallery must match it exactly. Without
++    one, the live project must hold only images and no more than max_images,
++    the number of images its verified local requests could have produced.
++    """
+     from .providers.flow_browser import FlowBrowser, FlowUIChanged, media_signature_matches
+     wanted=FlowBrowser.normalize_project_url(url)
+-    if not wanted or not expected_signatures:
+-        raise FlowUIChanged('Automatic Flow project deletion is disabled without a verified isolated-image inventory')
++    if not wanted:
++        raise FlowUIChanged('Flow project identity is invalid; nothing deleted')
++    if not expected_signatures and (type(max_images) is not int or max_images<1):
++        raise FlowUIChanged('Flow project deletion needs verified local image evidence; nothing deleted')
+     bridge.ensure_project('Reviewed image cleanup',project_url=wanted)
+     page=bridge._page
+     def bound():
+@@ -17,10 +25,13 @@
+     assets=bridge.media_assets()
+     if not assets or any(a.get('kind')!='image' for a in assets):
+         raise FlowUIChanged('Project contains non-image or unreadable assets; retained for review')
+-    actual=[a['sig'] for a in assets if a.get('sig')]
+-    if (len(actual)!=len(expected_signatures)
+-            or any(not any(media_signature_matches(sig,old) for old in expected_signatures) for sig in actual)):
+-        raise FlowUIChanged('Live project gallery differs from the saved captured inventory; retained')
++    if expected_signatures:
++        actual=[a['sig'] for a in assets if a.get('sig')]
++        if (len(actual)!=len(expected_signatures)
++                or any(not any(media_signature_matches(sig,old) for old in expected_signatures) for sig in actual)):
++            raise FlowUIChanged('Live project gallery differs from the saved captured inventory; retained')
++    elif len(assets)>max_images:
++        raise FlowUIChanged('Live project holds more images than its verified requests; retained for review')
+     menu=bridge._try_resolve('project_actions',timeout_ms=2000)
+     if menu is None:
+         # Observed Oct-16 UI: the project-title row has its own more_vert menu.
+diff -ruN a/engine/language_editions.py b/engine/language_editions.py
 --- a/engine/language_editions.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/engine/language_editions.py	2026-10-20 04:46:23.261852786 +0000
++++ b/engine/language_editions.py	2026-10-20 05:29:08.490194433 +0000
 @@ -0,0 +1,156 @@
 +"""Render the reviewed language editions of a finished production.
 +
@@ -899,9 +1337,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/language_editions.py b/engine
 +    _save_record(job_root, record)
 +    return {'status': overall, 'editions': record['editions'], 'record': str(_record_path(job_root)),
 +            'error': '; '.join(failures)}
-diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
---- a/engine/providers/flow_browser.py	2026-10-20 04:46:23.241852686 +0000
-+++ b/engine/providers/flow_browser.py	2026-10-20 04:46:23.261852786 +0000
+diff -ruN a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/providers/flow_browser.py	2026-10-20 05:29:08.490194433 +0000
 @@ -478,6 +478,33 @@
      pass
  
@@ -936,6 +1374,18 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/flow_browser.py b/e
  class FlowUIChanged(Exception):
      """A selector failed -> caller should switch to Assisted Flow Mode."""
      pass
+@@ -1495,9 +1522,9 @@
+             pass
+         return getattr(self, "_project_url", None) or ""
+ 
+-    def delete_exact_project(self, project_url, expected_signatures=None):
++    def delete_exact_project(self, project_url, expected_signatures=None, max_images=None):
+         from engine.flow_project_delete import delete
+-        return delete(self, project_url, expected_signatures)
++        return delete(self, project_url, expected_signatures, max_images=max_images)
+ 
+ 
+     def create_project(self, name: str):
 @@ -2764,6 +2791,7 @@
          if current.hostname != u.hostname or current.path != u.path:
              raise FlowUIChanged('Flow did not open the reviewed video editor; download was not attempted')
@@ -1032,9 +1482,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/flow_browser.py b/e
          with self._page.expect_download(timeout=self.ui["timeouts"]["download"] * 1000) as dl:
              self._resolve("download_button").click()
          d = dl.value
-diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/gemini_video.py b/engine/providers/gemini_video.py
---- a/engine/providers/gemini_video.py	2026-10-20 04:46:23.241852686 +0000
-+++ b/engine/providers/gemini_video.py	2026-10-20 04:46:23.261852786 +0000
+diff -ruN a/engine/providers/gemini_video.py b/engine/providers/gemini_video.py
+--- a/engine/providers/gemini_video.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/providers/gemini_video.py	2026-10-20 05:29:08.490194433 +0000
 @@ -50,6 +50,32 @@
      return {'duration':duration,'width':videos[0]['width'],'height':videos[0]['height']}
  
@@ -1086,9 +1536,63 @@ diff -ruN -x .pytest_cache -x __pycache__ a/engine/providers/gemini_video.py b/e
                      if ready:
                          self._download(session,tile,media)
                          info=video_info(media);row.update(status='downloaded',sha256=digest(media),**info);save(journal,row)
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v571_flow_recovery_ux.py b/tests/test_v571_flow_recovery_ux.py
---- a/tests/test_v571_flow_recovery_ux.py	2026-10-20 04:46:23.245852706 +0000
-+++ b/tests/test_v571_flow_recovery_ux.py	2026-10-20 04:46:23.269852826 +0000
+diff -ruN a/engine/publishing.py b/engine/publishing.py
+--- a/engine/publishing.py	2026-10-20 05:29:08.470194331 +0000
++++ b/engine/publishing.py	2026-10-20 05:29:08.490194433 +0000
+@@ -128,6 +128,8 @@
+             'ai_disclosure_required', 'rights_confirmed', 'facts_reviewed',
+             'language_reviewed', 'post_metadata', 'editorial_evidence')
+     payload = {key: record.get(key) for key in keys}
++    if 'duplicate_review' in record:  # Only records that carry the review are bound to it.
++        payload['duplicate_review'] = record['duplicate_review']
+     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+     return hashlib.sha256(encoded).hexdigest()
+ 
+@@ -282,7 +284,8 @@
+ 
+ 
+ def approve_release(path, *, account_id, rights_confirmed=False, facts_reviewed=False,
+-                    language_reviewed=False, made_for_kids=None, ai_disclosure_required=None, editorial_review_path=None):
++                    language_reviewed=False, made_for_kids=None, ai_disclosure_required=None, editorial_review_path=None,
++                    acknowledge_duplicate_warning=False, duplicate_roots=None):
+     record = read(path)
+     if not record or digest(record['video']) != record['sha256']:
+         raise ValueError('Delivery file is missing or changed; review the current render')
+@@ -313,12 +316,21 @@
+         record['editorial_evidence'] = {'path': str(Path(editorial_review_path).resolve()), 'sha256': digest(editorial_review_path)}
+     else:
+         record.pop('editorial_evidence', None)
++    # Cross-channel guard: identical bytes on another account block; near-duplicates need acknowledgment.
++    from . import delivery_duplicates
++    roots = duplicate_roots or delivery_duplicates.DEFAULT_ROOTS
++    note = delivery_duplicates.enforce(record, path, account_id=record['account_id'],
++                                       acknowledge=acknowledge_duplicate_warning is True, roots=roots)
++    if note is not None:
++        record['duplicate_review'] = note
++    else:
++        record.pop('duplicate_review', None)
+     record['approval_sha256'] = _approval_fingerprint(record)
+     _write_upload_packet(record, path)
+     return record
+ 
+ 
+-def schedule_release(path, publish_at):
++def schedule_release(path, publish_at, *, duplicate_roots=None):
+     from datetime import datetime, timezone
+     record = read(path)
+     approved = bool(
+@@ -332,6 +344,8 @@
+     evidence = record.get('editorial_evidence')
+     if evidence and (not Path(evidence['path']).is_file() or digest(evidence['path']) != evidence['sha256']):
+         raise ValueError('Attached editorial evidence changed; re-review before scheduling')
++    from . import delivery_duplicates
++    delivery_duplicates.reverify_for_schedule(record, path, roots=duplicate_roots or delivery_duplicates.DEFAULT_ROOTS)
+     when = datetime.fromisoformat(str(publish_at))
+     if when.tzinfo is None or when <= datetime.now(timezone.utc):
+         raise ValueError('Use a future timezone-aware ISO timestamp')
+diff -ruN a/tests/test_v571_flow_recovery_ux.py b/tests/test_v571_flow_recovery_ux.py
+--- a/tests/test_v571_flow_recovery_ux.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v571_flow_recovery_ux.py	2026-10-20 05:29:08.494194454 +0000
 @@ -98,6 +98,8 @@
      b._resolve = lambda action, timeout_ms=0: _Element("download", b._page)
      b._try_resolve = lambda action, timeout_ms=0: None
@@ -1107,9 +1611,22 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v571_flow_recovery_ux.py 
      b.return_to_project = lambda timeout_ms=0: True
      b.network_issue_detected = lambda err=None: False
  
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v609_flow_video_typed_recovery.py b/tests/test_v609_flow_video_typed_recovery.py
---- a/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 04:46:23.245852706 +0000
-+++ b/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 04:46:23.273852846 +0000
+diff -ruN a/tests/test_v600_delivery_clip_audio.py b/tests/test_v600_delivery_clip_audio.py
+--- a/tests/test_v600_delivery_clip_audio.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v600_delivery_clip_audio.py	2026-10-20 05:29:08.494194454 +0000
+@@ -70,7 +70,8 @@
+     assert Path(record['video']).is_file() and record['sha256']==digest(record['video'])
+ 
+ 
+-def test_release_needs_explicit_audience_rights_and_unchanged_file(tmp_path):
++def test_release_needs_explicit_audience_rights_and_unchanged_file(tmp_path, monkeypatch):
++    import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # placeholder video bytes; guard covered in test_v768_delivery_duplicates
+     video=tmp_path/'video.mp4';video.write_bytes(b'approved render')
+     path=tmp_path/'release.json';save(path,{'video':str(video),'sha256':digest(video),'state':'REVIEW_REQUIRED'})
+     with pytest.raises(ValueError):approve_release(path,account_id='my-channel')
+diff -ruN a/tests/test_v609_flow_video_typed_recovery.py b/tests/test_v609_flow_video_typed_recovery.py
+--- a/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v609_flow_video_typed_recovery.py	2026-10-20 05:29:08.494194454 +0000
 @@ -479,6 +479,8 @@
      browser._resolve = lambda action, timeout_ms=0: _Element()
      browser._try_resolve = lambda action, timeout_ms=0: None
@@ -1119,9 +1636,30 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v609_flow_video_typed_rec
      browser.return_to_project = lambda timeout_ms=0: True
      browser.network_issue_detected = lambda _error=None: False
  
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v702_flow_recovery.py b/tests/test_v702_flow_recovery.py
---- a/tests/test_v702_flow_recovery.py	2026-10-20 04:46:23.245852706 +0000
-+++ b/tests/test_v702_flow_recovery.py	2026-10-20 04:46:23.273852846 +0000
+diff -ruN a/tests/test_v700_content_studio.py b/tests/test_v700_content_studio.py
+--- a/tests/test_v700_content_studio.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v700_content_studio.py	2026-10-20 05:29:08.494194454 +0000
+@@ -39,6 +39,7 @@
+ 
+ 
+ def test_export_creates_manual_upload_packet_and_metadata_is_approval_locked(tmp_path, monkeypatch):
++    import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # fake encoder; guard covered in test_v768_delivery_duplicates
+     source = tmp_path / "master.mp4"
+     source.write_bytes(b"original master video")
+     import engine.render.ffmpeg_renderer as renderer
+@@ -76,7 +77,8 @@
+     assert publishing.schedule_release(release_path, "2099-01-01T10:00:00+05:30")["state"] == "SCHEDULED_MANUAL_REMINDER"
+ 
+ 
+-def test_upload_packet_or_caption_edit_requires_fresh_approval(tmp_path):
++def test_upload_packet_or_caption_edit_requires_fresh_approval(tmp_path, monkeypatch):
++    import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # placeholder video bytes; guard covered in test_v768_delivery_duplicates
+     video = tmp_path / "delivery.mp4"
+     video.write_bytes(b"approved render")
+     release = tmp_path / "delivery.release.json"
+diff -ruN a/tests/test_v702_flow_recovery.py b/tests/test_v702_flow_recovery.py
+--- a/tests/test_v702_flow_recovery.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v702_flow_recovery.py	2026-10-20 05:29:08.494194454 +0000
 @@ -105,6 +105,7 @@
      page=NS(url=url,goto=lambda target,**kw:calls.append(target),wait_for_timeout=lambda ms:None,
              keyboard=keyboard,get_by_role=lambda role,**kw:Controls([toolbar]),locator=lambda selector:Controls([]))
@@ -1130,9 +1668,21 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v702_flow_recovery.py b/t
      b._download_from_tile_button=lambda control,out:calls.append('asset download') or out
      assert b.download_reviewed_editor_video(url,str(tmp_path/'video.mp4'),'https://flow.google.com/project/saved').endswith('video.mp4')
      assert calls==[url,'Escape','asset download']
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v765_speech_gemini.py b/tests/test_v765_speech_gemini.py
---- a/tests/test_v765_speech_gemini.py	2026-10-20 04:46:23.249852726 +0000
-+++ b/tests/test_v765_speech_gemini.py	2026-10-20 04:46:23.273852846 +0000
+diff -ruN a/tests/test_v750_readiness.py b/tests/test_v750_readiness.py
+--- a/tests/test_v750_readiness.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v750_readiness.py	2026-10-20 05:29:08.494194454 +0000
+@@ -108,7 +108,7 @@
+ def test_unverified_remote_delete_is_disabled_before_any_mutation():
+     from engine.providers.flow_browser import FlowBrowser, FlowUIChanged
+     browser=FlowBrowser.__new__(FlowBrowser)
+-    with pytest.raises(FlowUIChanged,match='disabled'):browser.delete_exact_project('https://flow.google.com/project/example')
++    with pytest.raises(FlowUIChanged,match='nothing deleted'):browser.delete_exact_project('https://flow.google.com/project/example')
+ 
+ 
+ @pytest.mark.parametrize('count',[1,2])
+diff -ruN a/tests/test_v765_speech_gemini.py b/tests/test_v765_speech_gemini.py
+--- a/tests/test_v765_speech_gemini.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v765_speech_gemini.py	2026-10-20 05:29:08.494194454 +0000
 @@ -54,7 +54,7 @@
      root=tmp_path/'gemini-videos';root.mkdir();(root/'selection.json').write_text(json.dumps({'shots':['shot_001']}));calls=[]
      class Tile:
@@ -1150,9 +1700,418 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v765_speech_gemini.py b/t
      page=Page()
      class Send:
          def click(self,**kw):calls.append(('send',));page.url='https://gemini.google.com/app/exact123'
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_gemini_video_settle.py b/tests/test_v768_gemini_video_settle.py
+diff -ruN a/tests/test_v766_channel_desk.py b/tests/test_v766_channel_desk.py
+--- a/tests/test_v766_channel_desk.py	2026-10-20 05:29:08.478194372 +0000
++++ b/tests/test_v766_channel_desk.py	2026-10-20 05:29:08.498194474 +0000
+@@ -79,7 +79,8 @@
+  assert len(result['long_image_segments'])==1
+ 
+ 
+-def test_publishing_signoff_is_for_exact_delivery_and_evidence_cannot_change(tmp_path):
++def test_publishing_signoff_is_for_exact_delivery_and_evidence_cannot_change(tmp_path, monkeypatch):
++ import engine.delivery_duplicates as _dd; monkeypatch.setattr(_dd,'check',lambda *a,**k:{'blocked':[],'warnings':[],'skipped':[]})  # placeholder video bytes; guard covered in test_v768_delivery_duplicates
+  from engine.publishing import approve_release,schedule_release
+  media=tmp_path/'video.mp4';media.write_bytes(b'final fixture')
+  release=tmp_path/'a.release.json';review=tmp_path/'review.json'
+diff -ruN a/tests/test_v768_delivery_duplicates.py b/tests/test_v768_delivery_duplicates.py
+--- a/tests/test_v768_delivery_duplicates.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_delivery_duplicates.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,190 @@
++"""v7.0.68 cross-channel duplicate guard, exercised with generated synthetic videos.
++
++Identical bytes approved or scheduled for another account are blocked. Re-encoded
++near-duplicates need explicit acknowledgment. Scheduling re-checks both.
++"""
++import shutil
++import subprocess
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++
++import pytest
++
++pytestmark = pytest.mark.skipif(shutil.which('ffprobe') is None, reason='ffprobe unavailable')
++
++
++def _gen(path, source, *extra):
++    from engine.render.ffmpeg_renderer import ffmpeg_exe
++    subprocess.run([ffmpeg_exe(), '-y', '-v', 'error', '-f', 'lavfi', '-i', source, '-t', '4', '-an',
++                    *extra, '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'veryfast', str(path)],
++                   check=True, timeout=300)
++    return path
++
++
++@pytest.fixture
++def world(tmp_path, monkeypatch):
++    """Run inside a temp repo so 'outputs/' is isolated; provide three sources."""
++    monkeypatch.chdir(tmp_path)
++    src = {
++        'base': _gen(tmp_path / 'base.mp4', 'testsrc=size=540x960:rate=30'),
++        'reencoded': _gen(tmp_path / 'reencoded.mp4', 'testsrc=size=540x960:rate=30', '-crf', '40'),
++        'other': _gen(tmp_path / 'other.mp4', 'mandelbrot=size=540x960:rate=30'),
++    }
++    return src
++
++
++def _export(source, folder, title='Launch'):
++    from engine.publishing import export_delivery
++    return export_delivery(source, folder, 'youtube_short', language='en', title=title,
++                           caption='Caption', description='Description')
++
++
++def _approve(record_path, account, **kw):
++    from engine.publishing import approve_release
++    return approve_release(record_path, account_id=account, rights_confirmed=True, facts_reviewed=True,
++                           language_reviewed=True, made_for_kids=False, ai_disclosure_required=False, **kw)
++
++
++def _twin(record, folder, identifier):
++    """Identical bytes, separate release record: the same file uploaded from a second folder."""
++    from engine.production import save
++    from engine.publishing import _write_upload_packet
++    folder = Path(folder)
++    folder.mkdir(parents=True, exist_ok=True)
++    video = folder / (identifier + '.mp4')
++    shutil.copy(record['video'], video)
++    twin = dict(record, id=identifier, video=str(video), state='REVIEW_REQUIRED', account_id='')
++    for key in ('approval_sha256', 'duplicate_review', 'editorial_evidence', 'publish_at'):
++        twin.pop(key, None)
++    release = folder / (identifier + '.release.json')
++    save(release, twin)
++    _write_upload_packet(twin, release)
++    return release
++
++
++def _record_path(record):
++    return Path(record['video']).with_suffix('.release.json')
++
++
++def test_identical_bytes_for_another_account_are_blocked(world):
++    from engine.production import read
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    with pytest.raises(ValueError, match='Identical video is already approved or scheduled for another account'):
++        _approve(twin, 'channel-two')
++    assert read(twin)['state'] == 'REVIEW_REQUIRED'
++
++
++def test_identical_bytes_for_the_same_account_are_allowed(world):
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    assert _approve(twin, 'channel-one')['state'] == 'APPROVED_FOR_MANUAL_UPLOAD'
++
++
++def test_near_duplicate_needs_acknowledgment_then_is_recorded(world):
++    from engine.production import read
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    variant = _export(world['reencoded'], 'outputs/deliveries/b', title='Launch variant')
++    with pytest.raises(ValueError, match='Near-duplicate of approved or scheduled delivery'):
++        _approve(_record_path(variant), 'channel-two')
++    assert read(_record_path(variant))['state'] == 'REVIEW_REQUIRED'
++    approved = _approve(_record_path(variant), 'channel-two', acknowledge_duplicate_warning=True)
++    review = approved['duplicate_review']
++    assert review['acknowledged'] is True
++    assert [row['id'] for row in review['matches']] == [first['id']]
++    assert review['matches'][0]['mean_hamming'] <= 10
++    assert read(_record_path(variant))['duplicate_review']['acknowledged'] is True
++
++
++def test_unrelated_content_raises_no_warning(world):
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    other = _export(world['other'], 'outputs/deliveries/b', title='Different')
++    approved = _approve(_record_path(other), 'channel-two')
++    assert 'duplicate_review' not in approved
++
++
++def test_approval_without_matches_keeps_fingerprint_contract(world):
++    from engine.publishing import _approval_fingerprint, schedule_release
++    record = _approve(_record_path(_export(world['base'], 'outputs/deliveries/a')), 'channel-one')
++    assert _approval_fingerprint(record) == record['approval_sha256']
++    when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
++    assert schedule_release(_record_path(record), when)['state'] == 'SCHEDULED_MANUAL_REMINDER'
++
++
++def test_schedule_blocks_identical_bytes_that_appeared_after_approval(world):
++    from engine.production import read, save
++    from engine.publishing import schedule_release
++    first = _export(world['base'], 'outputs/deliveries/a')
++    approved = _approve(_record_path(first), 'channel-one')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    record = read(twin)
++    record.update(state='SCHEDULED_MANUAL_REMINDER', account_id='channel-two')
++    save(twin, record)  # a record written outside this approval path
++    when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
++    with pytest.raises(ValueError, match='Identical video is now approved or scheduled'):
++        schedule_release(_record_path(approved), when)
++
++
++def test_schedule_requires_review_for_a_new_near_duplicate(world):
++    from engine.production import read, save
++    from engine.publishing import schedule_release
++    first = _export(world['base'], 'outputs/deliveries/a')
++    approved = _approve(_record_path(first), 'channel-one')
++    variant = _export(world['reencoded'], 'outputs/deliveries/b', title='Variant')
++    record = read(_record_path(variant))
++    record.update(state='APPROVED_FOR_MANUAL_UPLOAD', account_id='channel-two')
++    save(_record_path(variant), record)  # appeared after the first approval
++    when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
++    with pytest.raises(ValueError, match='new near-duplicate delivery appeared'):
++        schedule_release(_record_path(approved), when)
++
++
++def test_candidate_outside_active_states_does_not_block(world):
++    from engine.production import read, save
++    first = _export(world['base'], 'outputs/deliveries/a')
++    twin = _twin(first, 'outputs/deliveries/b', 'twin')
++    record = read(twin)
++    record['account_id'] = 'channel-two'  # still REVIEW_REQUIRED: not approved, not scheduled
++    save(twin, record)
++    assert _approve(_record_path(first), 'channel-one')['state'] == 'APPROVED_FOR_MANUAL_UPLOAD'
++
++
++def test_missing_candidate_video_is_reported_and_does_not_block(world):
++    first = _export(world['base'], 'outputs/deliveries/a')
++    _approve(_record_path(first), 'channel-one')
++    Path(first['video']).unlink()
++    variant = _export(world['reencoded'], 'outputs/deliveries/b', title='Variant')
++    approved = _approve(_record_path(variant), 'channel-two')
++    assert approved['duplicate_review']['skipped'][0]['reason'] == 'video file missing'
++
++
++def test_fingerprint_cache_avoids_recomputing_frames(world, monkeypatch):
++    from engine import delivery_duplicates as dd
++    video = _export(world['base'], 'outputs/deliveries/a')['video']
++    first = dd.fingerprint(video)
++    def boom(*a, **kw):
++        raise AssertionError('frames recomputed despite a valid cache')
++    monkeypatch.setattr(dd, '_frame_hash', boom)
++    again = dd.fingerprint(video)
++    assert again['frames'] == first['frames'] and again['sha256'] == first['sha256']
++
++
++def test_changed_video_invalidates_the_cache(world):
++    from engine import delivery_duplicates as dd
++    video = Path(_export(world['base'], 'outputs/deliveries/a')['video'])
++    before = dd.fingerprint(video)
++    replacement = _gen(video.with_suffix('.replacement.mp4'), 'mandelbrot=size=540x960:rate=30')
++    shutil.copy(replacement, video)
++    after = dd.fingerprint(video)
++    assert after['sha256'] != before['sha256']
++    assert dd.mean_hamming(before['frames'], after['frames']) > 10
++
++
++def test_mean_hamming_rejects_mismatched_frame_counts():
++    from engine.delivery_duplicates import mean_hamming
++    with pytest.raises(ValueError):
++        mean_hamming([0, 0], [0, 0])
+diff -ruN a/tests/test_v768_flow_image_cleanup.py b/tests/test_v768_flow_image_cleanup.py
+--- a/tests/test_v768_flow_image_cleanup.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v768_flow_image_cleanup.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,198 @@
++"""v7.0.68: image-only Flow projects may be deleted once their local image and
++request record are verified; video projects and changed or pending captures stay."""
++import json
++from pathlib import Path
++from types import SimpleNamespace as NS
++
++import pytest
++
++URL = 'https://flow.google.com/project/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
++
++
++def _png(path, colour):
++    from PIL import Image
++    path.parent.mkdir(parents=True, exist_ok=True)
++    Image.new("RGB", (96, 96), colour).save(path, format='PNG')
++    return path
++
++
++def _record(root, name, *, kind='image', scope='isolated_image_v1', status='downloaded',
++            colour=(10, 20, 30), capture_inventory=None, project_url=URL):
++    from engine.isolated_frame_regeneration import sha
++    out = _png(Path(root) / 'images' / name, colour)
++    row = {'kind': kind, 'scope': scope, 'status': status, 'project_url': project_url,
++           'media_sha256': sha(out), 'reference_hashes': {}}
++    if capture_inventory is not None:
++        row['capture_inventory'] = capture_inventory
++    (Path(str(out) + '.flow-request.json')).write_text(json.dumps(row))
++    return out
++
++
++def _project(tmp_path, **kw):
++    root = tmp_path / 'job'
++    root.mkdir()
++    _record(root, 'frame-1.png', **kw)
++    return root
++
++
++def _rows(root):
++    from engine.flow_project_cleanup import inventory
++    return {r['project_url']: r for r in inventory(root)}
++
++
++# ---- eligibility -----------------------------------------------------------
++
++def test_image_project_without_captured_inventory_is_eligible(tmp_path):
++    row = _rows(_project(tmp_path))[URL]
++    assert row['eligible'] and row['max_images'] == 1 and not row['exact']
++
++
++def test_two_image_records_bound_is_their_sum(tmp_path):
++    root = _project(tmp_path)
++    _record(root, 'frame-2.png', colour=(90, 90, 90))
++    row = _rows(root)[URL]
++    assert row['eligible'] and row['max_images'] == 2
++
++
++def test_captured_inventory_is_used_for_exact_match_when_complete(tmp_path):
++    root = _project(tmp_path, capture_inventory=['sig-a'])
++    row = _rows(root)[URL]
++    assert row['eligible'] and row['exact'] and row['signatures'] == ['sig-a']
++
++
++def test_video_project_stays_protected(tmp_path):
++    row = _rows(_project(tmp_path, kind='video'))[URL]
++    assert not row['eligible'] and 'Video/recovery project retained' in row['blocked']
++
++
++def test_pending_image_stays_protected(tmp_path):
++    row = _rows(_project(tmp_path, status='pending'))[URL]
++    assert not row['eligible'] and any('pending' in b for b in row['blocked'])
++
++
++def test_changed_local_image_stays_protected(tmp_path):
++    root = _project(tmp_path)
++    _png(root / 'images' / 'frame-1.png', (1, 1, 1))  # bytes no longer match the journal
++    row = _rows(root)[URL]
++    assert not row['eligible']
++
++
++def test_one_video_record_blocks_the_whole_project(tmp_path):
++    root = _project(tmp_path)
++    _record(root, 'clip.png', kind='video', colour=(5, 5, 5))
++    assert not _rows(root)[URL]['eligible']
++
++
++# ---- live check at deletion ------------------------------------------------
++
++class Loc:
++    def __init__(self, text, actions, state):
++        self.text, self.actions, self.state = text, actions, state
++        self.first = self
++
++    def count(self):
++        return 0 if hasattr(self.text, 'pattern') and 'confirm' not in self.actions else 1
++
++    def is_visible(self, **kw):
++        return bool(self.count())
++
++    def click(self, **kw):
++        self.actions.append(self.text)
++
++    def inner_text(self, **kw):
++        return 'Delete this project?'
++
++    def get_by_role(self, *a, **kw):
++        return Loc('confirm', self.actions, self.state)
++
++    def wait_for(self, **kw):
++        if not self.state['toast']:
++            raise RuntimeError('No explicit success confirmation')
++
++
++def _bridge(assets, toast=True):
++    actions, state = [], {'toast': toast}
++    page = NS(url=URL, get_by_text=lambda *a, **kw: Loc(a[0], actions, state),
++              get_by_role=lambda *a, **kw: Loc('dialog', actions, state))
++    bridge = NS(_page=page, ensure_project=lambda *a, **kw: None,
++                media_assets=lambda: assets,
++                _try_resolve=lambda *a, **kw: Loc('project-menu', actions, state))
++    return bridge, actions
++
++
++def test_delete_without_inventory_accepts_images_within_bound():
++    from engine.flow_project_delete import delete
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'x'}])
++    assert delete(bridge, URL, None, max_images=1)['status'] == 'deleted'
++    assert actions == ['project-menu', 'Delete', 'confirm']
++
++
++def test_delete_without_inventory_refuses_a_video_asset_before_any_click():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'x'}, {'kind': 'video', 'sig': 'v'}])
++    with pytest.raises(FlowUIChanged, match='non-image'):
++        delete(bridge, URL, None, max_images=5)
++    assert not actions
++
++
++def test_delete_without_inventory_refuses_more_images_than_verified_requests():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': str(n)} for n in range(3)])
++    with pytest.raises(FlowUIChanged, match='more images'):
++        delete(bridge, URL, None, max_images=2)
++    assert not actions
++
++
++def test_delete_without_any_evidence_refuses_before_any_click():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'x'}])
++    with pytest.raises(FlowUIChanged, match='nothing deleted'):
++        delete(bridge, URL, None)
++    assert not actions
++
++
++def test_delete_with_inventory_still_requires_exact_match():
++    from engine.flow_project_delete import delete
++    from engine.providers.flow_browser import FlowUIChanged
++    bridge, actions = _bridge([{'kind': 'image', 'sig': 'extra'}])
++    with pytest.raises(FlowUIChanged, match='captured inventory'):
++        delete(bridge, URL, ['exact'], max_images=5)
++    assert not actions
++
++
++def test_delete_without_success_toast_is_not_reported_as_deleted():
++    from engine.flow_project_delete import delete
++    bridge, _ = _bridge([{'kind': 'image', 'sig': 'x'}], toast=False)
++    with pytest.raises(RuntimeError, match='success'):
++        delete(bridge, URL, None, max_images=1)
++
++
++# ---- cleanup dispatch ------------------------------------------------------
++
++def test_delete_selected_passes_bound_only_when_no_inventory(tmp_path):
++    from engine.flow_project_cleanup import delete_selected
++    calls = []
++
++    class Bridge:
++        def delete_exact_project(self, url, expected_signatures=None, max_images=None):
++            calls.append((expected_signatures, max_images))
++            return {'status': 'deleted'}
++
++    class Provider:
++        def _ensure(self):
++            return Bridge()
++
++    root = _project(tmp_path)
++    delete_selected(root, [_rows(root)[URL]], provider_factory=Provider, lock_held=True)
++    assert calls == [(None, 1)]
++
++
++def test_video_project_is_never_selectable_for_delete(tmp_path):
++    from engine.flow_project_cleanup import delete_selected
++    root = _project(tmp_path, kind='video')
++    with pytest.raises(ValueError):
++        delete_selected(root, [_rows(root)[URL]], provider_factory=lambda: pytest.fail('no browser'),
++                        lock_held=True)
+diff -ruN a/tests/test_v768_gemini_video_settle.py b/tests/test_v768_gemini_video_settle.py
 --- a/tests/test_v768_gemini_video_settle.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_gemini_video_settle.py	2026-10-20 04:46:23.273852846 +0000
++++ b/tests/test_v768_gemini_video_settle.py	2026-10-20 05:29:08.498194474 +0000
 @@ -0,0 +1,53 @@
 +"""v7.0.68: Gemini-web video downloads wait for a loaded, stable video tile."""
 +from engine.providers.gemini_video import GEMINI_VIDEO_READY_JS, VideoTileSettle
@@ -1207,9 +2166,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_gemini_video_settle.
 +def test_readiness_script_requires_decoded_video_not_metadata_only():
 +    assert 'readyState >= 3' in GEMINI_VIDEO_READY_JS
 +    assert 'readyState >= 1' not in GEMINI_VIDEO_READY_JS
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
+diff -ruN a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
 --- a/tests/test_v768_language_editions_render.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_language_editions_render.py	2026-10-20 04:46:23.273852846 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-20 05:29:08.498194474 +0000
 @@ -0,0 +1,215 @@
 +"""v7.0.68: every selected language edition is rendered from its own reviewed narration.
 +
@@ -1426,9 +2385,9 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_language_editions_re
 +    ui = (ROOT / 'engine' / 'finishing_ui.py').read_text(encoding='utf-8')
 +    assert "'Language spoken in this source video'" in ui
 +    assert 'source_language=source_language' in ui
-diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_media_load_before_download.py b/tests/test_v768_media_load_before_download.py
+diff -ruN a/tests/test_v768_media_load_before_download.py b/tests/test_v768_media_load_before_download.py
 --- a/tests/test_v768_media_load_before_download.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_v768_media_load_before_download.py	2026-10-20 04:46:23.273852846 +0000
++++ b/tests/test_v768_media_load_before_download.py	2026-10-20 05:29:08.498194474 +0000
 @@ -0,0 +1,124 @@
 +"""v7.0.68: Flow downloads wait until the image or video has fully loaded.
 +
@@ -1554,10 +2513,10 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tests/test_v768_media_load_before_do
 +    browser._looks_like_browser_closed_error = lambda exc: False
 +    with pytest.raises(FlowUIChanged, match="No visible image or video"):
 +        browser._wait_for_largest_media_ready(timeout_s=3)
-diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools/update_v767_to_v768.py
+diff -ruN a/tools/update_v767_to_v768.py b/tools/update_v767_to_v768.py
 --- a/tools/update_v767_to_v768.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tools/update_v767_to_v768.py	2026-10-20 04:46:23.285852906 +0000
-@@ -0,0 +1,139 @@
++++ b/tools/update_v767_to_v768.py	2026-10-20 05:29:08.498194474 +0000
+@@ -0,0 +1,169 @@
 +#!/usr/bin/env python3
 +"""Apply the v7.0.68 language-edition render update to a v7.0.67 installation.
 +
@@ -1581,30 +2540,60 @@ diff -ruN -x .pytest_cache -x __pycache__ a/tools/update_v767_to_v768.py b/tools
 +from pathlib import Path
 +
 +CHANGES = [
-+    'LANGUAGE_EDITIONS_RENDER_V7_0_68.md', 'README.md', 'VERSION', 'app.py', 'engine/factory.py',
-+    'engine/finishing_studio.py', 'engine/finishing_ui.py', 'engine/language_editions.py',
-+    'tests/test_v768_language_editions_render.py', 'tools/update_v767_to_v768.py',
-+    'engine/providers/flow_browser.py', 'tests/test_v571_flow_recovery_ux.py',
-+    'tests/test_v609_flow_video_typed_recovery.py', 'tests/test_v702_flow_recovery.py',
-+    'tests/test_v768_media_load_before_download.py', 'engine/providers/gemini_video.py',
-+    'tests/test_v768_gemini_video_settle.py', 'CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md',
++    'CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md',
++    'LANGUAGE_EDITIONS_RENDER_V7_0_68.md',
++    'README.md',
++    'VERSION',
++    'app.py',
++    'engine/delivery_duplicates.py',
++    'engine/factory.py',
++    'engine/finishing_studio.py',
++    'engine/finishing_ui.py',
++    'engine/flow_project_cleanup.py',
++    'engine/flow_project_delete.py',
++    'engine/language_editions.py',
++    'engine/providers/flow_browser.py',
++    'engine/providers/gemini_video.py',
++    'engine/publishing.py',
++    'tests/test_v571_flow_recovery_ux.py',
++    'tests/test_v600_delivery_clip_audio.py',
++    'tests/test_v609_flow_video_typed_recovery.py',
++    'tests/test_v700_content_studio.py',
++    'tests/test_v702_flow_recovery.py',
++    'tests/test_v750_readiness.py',
 +    'tests/test_v765_speech_gemini.py',
++    'tests/test_v766_channel_desk.py',
++    'tests/test_v768_delivery_duplicates.py',
++    'tests/test_v768_flow_image_cleanup.py',
++    'tests/test_v768_gemini_video_settle.py',
++    'tests/test_v768_language_editions_render.py',
++    'tests/test_v768_media_load_before_download.py',
++    'tools/update_v767_to_v768.py',
 +]
-+# Files that already exist in 7.0.67: the only hashes this updater will replace.
++# Files that already exist in 7.0.67 or in the earlier 7.0.68 build: the only hashes this updater will replace.
 +# A hash outside this list means local edits; the file is preserved and nothing is applied.
 +ALLOWED = {
++    'CHANNEL_MANAGER_SCALE_REVIEW_V7_0_68.md': ['5ae87fdc28c93566bbe44560d88a411626b6dfae7ddcba48d8cc9380ca1671f2'],
 +    'README.md': ['c715996256015f9b2ce5a97bf943f8884037fb4ef18aa48c70e335e78b65366b'],
 +    'VERSION': ['6448baf7e1324e84ccefd1993bab81c1f3e7f3f6a948e3014839f1698ccd1146'],
-+    'app.py': ['3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75'],
++    'app.py': ['3e037715e7b9fb5e713ca598f283cff49e676f685a8a21a2bcf9c02a3a224d75', 'ee0e97ff9e25f865b454a64a2fa4356d584957667ce9833cecad419ccc6541ad'],
 +    'engine/factory.py': ['34fa4a483bb18aeb472208c6408f25ebdb737c1c9c581770709874c7fbd5e22a'],
 +    'engine/finishing_studio.py': ['fd75959b452f8cfe5ea24afd92119aa018f255babfdef0b4ca0160c2f5cf6026'],
 +    'engine/finishing_ui.py': ['f52a733c16b7828dc30a084492b34a622a56bc94ba1bf4a5d96ee2927eb7f383'],
-+    'engine/providers/flow_browser.py': ['f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9'],
-+    'tests/test_v571_flow_recovery_ux.py': ['85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4'],
-+    'tests/test_v609_flow_video_typed_recovery.py': ['12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae'],
-+    'tests/test_v702_flow_recovery.py': ['28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9'],
++    'engine/flow_project_cleanup.py': ['d386855db0d8e39b449ae9bc4177ee9118f88e486c4aeef45336d227a449d247'],
++    'engine/flow_project_delete.py': ['443e108be47daed0300980ad82575ace78113fd9dcd8445cbbc1a3a9988c7867'],
++    'engine/providers/flow_browser.py': ['f0012f085ae7689c70571beef438dbe498e75ccd09edd02e1078442f479da7b9', '8d91e90f83121550dc20d980810b1117b20406562fa25991aca8c47aa831b869'],
 +    'engine/providers/gemini_video.py': ['d95343e99adebe1f21b66bda8a608b5b82782fe8e4f56f8c091a1c1e2b34e5bf'],
++    'engine/publishing.py': ['d7fe5de3cdc8a8fe6ebd6cf44927b03ad278191125c2333eaa4818eb184de488'],
++    'tests/test_v571_flow_recovery_ux.py': ['85de2dc6a27206988dde6dc9dea63a22fafa0494eb8936a69489bc42546263c4'],
++    'tests/test_v600_delivery_clip_audio.py': ['8a212b59731e8da722c2b1f39b3b3d9f9894f79aa1983d3057a0d1b0f3136572'],
++    'tests/test_v609_flow_video_typed_recovery.py': ['12510e1a0c5d4b4ddf5f19e1729e84519e52c903e8f78fe8473240f59ff9baae'],
++    'tests/test_v700_content_studio.py': ['4e440d64616f5daf2cfd701a584ee19c323afa3fad3a9adc2978f5a7c80b8150'],
++    'tests/test_v702_flow_recovery.py': ['28fe5bf801de48449c27d8f080b05dcd6bcef75c5ba70b44ee6a841edc5c7ef9'],
++    'tests/test_v750_readiness.py': ['64e8f0c8b354a81bf9411b93efcb963e544e76af3bd2e0289126382906276186'],
 +    'tests/test_v765_speech_gemini.py': ['826f47a7e7161ab81cf95384941ed8c559c098c13ae9c56f36461e3a84f9c5cb'],
++    'tests/test_v766_channel_desk.py': ['9c8181bcea756336a90459db239874e0d8e3eec54bed4abe52df4f23aee235d3'],
++    'tools/update_v767_to_v768.py': ['024dfe02095f382b6d034b0706821429cacc10ff19281a932decf0fb8beac6c2'],
 +}
 +ACCEPTED_INSTALLS = ('7.0.67', '7.0.68')  # 7.0.68 allows a safe re-run after success
 +

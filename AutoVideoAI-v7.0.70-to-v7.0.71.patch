@@ -1,0 +1,1963 @@
+diff -ruN a/FLOW_DUPLICATE_SPEND_GUARD_V7_0_71.md b/FLOW_DUPLICATE_SPEND_GUARD_V7_0_71.md
+--- a/FLOW_DUPLICATE_SPEND_GUARD_V7_0_71.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FLOW_DUPLICATE_SPEND_GUARD_V7_0_71.md	2026-10-21 00:21:05.330606943 +0000
+@@ -0,0 +1,71 @@
++# AutoVideoAI 7.0.71 — Flow duplicate-spend guard
++
++## What went wrong (7.0.70)
++
++The Flow job `20261020-112139-how-to-stop-overthinking-8715` (shot_026, take 1) was
++retried through automatic recovery and job restarts. Flow's chat showed the same
++generation request several times, and each one was charged. Code review of 7.0.70
++found these ways a Flow video prompt could be sent again:
++
++1. **Standard/legacy editor path had no request journal.** A submission there was
++   not recorded, so a later retry could not see that it had already been sent.
++2. **The factory's "no usable media" retry called the provider again** when the
++   provider returned an error dictionary instead of raising. Only the journal stopped
++   this, and the legacy path did not write one.
++3. **Nothing compared a new prompt with prompts already in the Flow chat.**
++4. **Approval clicks were not tied to a request the app had just sent.** With
++   "Always approve" selected, Flow approves each card, so a repeated prompt is paid
++   for at once.
++5. **Resume reconciled image replacement by default** (`--replace-unresolved-images`
++   defaulted to on), which can start a second credit-bearing image request.
++
++The exact number of repeated sends per shot is not confirmed by the logs in this
++release. The fixes below cover every path listed above.
++
++## What 7.0.71 changes
++
++* **Write-ahead submit ledger, per take** (`<take>.mp4.submit-ledger.jsonl`). An
++  `intent` line is fsynced before the Send action, and `submitted` after it. Any
++  `intent`, `submitted` or unreadable line blocks every later submission for that
++  take file, including after a restart. A saved `.flow-request.json` also blocks.
++* **Per-job ledger and cap** (`flow_submission_ledger.jsonl`). Default cap: 20 intents
++  per job. To raise it, run `python3 cli.py v3 resume <job_id> --flow-submission-cap N`.
++  The new value is written to `flow_submission_cap.json` and logged.
++* **Check mode.** `engine/flow_submit_guard.check_only()` is process-wide. While it
++  is active, no new video prompt is sent and no approval card is clicked.
++* **Single gate before any browser action.** Every video request is checked first.
++  A take that has a recorded or unknown submission is recovered by download only.
++* **Duplicate-prompt check.** If the exact instruction is already visible in the Flow
++  chat and this job has no ledger record of that prompt, nothing is sent. The saved
++  request must be inspected instead. Sibling takes of the same shot, which share a
++  prompt, are still allowed because the job ledger already accounts for them.
++  A different job that reuses the same project and prompt text is blocked; clear the
++  chat or use a different project to continue.
++* **Approval only for the request the app sent.** A card is clicked only while that
++  request is awaiting approval, and each click is logged in the take ledger.
++* **Factory retries** run only when the take has never started a submission.
++* **Image replacement is off during resume.** Any job with saved Flow requests has
++  its replacement permission cleared when `run_job` starts. `--replace-unresolved-images`
++  on resume is ignored with a notice. Resume recovery never sets replacement on.
++* **Recovering a saved request never reaches the send step.** The recovery branch
++  returns the file or raises; it has no path to a new prompt.
++
++## What it does not do
++
++* It does not restart, edit or re-download the saved shot_026 request. Recovery of
++  that take is a separate, explicit step, and it requires the local Flow session.
++* It cannot prove that Flow's own "Always approve" setting will not approve a card
++  that the app did not send. The guard prevents the app from sending the request in
++  the first place. Turning "Always approve" off is a separate user decision.
++* It has no live Flow test in this environment. Behaviour is covered by the fake-bridge
++  tests in `tests/test_v771_flow_submit_guard.py`.
++
++## Install
++
++From the 7.0.70 installation folder, after extracting the 7.0.71 zip beside it:
++
++    python3 ../AutoVideoAI-v7.0.71/tools/update_v770_to_v771.py .            # dry run
++    python3 ../AutoVideoAI-v7.0.71/tools/update_v770_to_v771.py . --apply
++
++Stop the dashboard before `--apply`. Only code and this document are replaced.
++Outputs, saved jobs, browser profiles and channel profiles are never touched.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-20 12:02:12.000000000 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-21 00:27:30.008477249 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.70",
+-  "built_at": "2026-10-20T12:02:12+00:00",
++  "version": "7.0.71",
++  "built_at": "2026-10-21T00:27:29+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -8,11 +8,6 @@
+       "sha256": "a75f8f9d191e336e02eed524151bb8308b4a2134add5f3ff7b315ecef1e39a01"
+     },
+     {
+-      "path": ".github/workflows/tests.yml",
+-      "bytes": 1054,
+-      "sha256": "c28f472339dd199d9b276e64555d7a449abcf8b106a90af2cd52ea3f57fcbda4"
+-    },
+-    {
+       "path": ".gitignore",
+       "bytes": 232,
+       "sha256": "0bb1f4e2b91315f481348a6f3428a4232fbc334e78a609c00267c30a8dc36d64"
+@@ -168,6 +163,11 @@
+       "sha256": "36a6ca78a4ad51dcb5e65c6290121aff299e65bf416cc0db495d9f2c5da05283"
+     },
+     {
++      "path": "FLOW_DUPLICATE_SPEND_GUARD_V7_0_71.md",
++      "bytes": 4320,
++      "sha256": "98175a275d6ca5b46d8bb805efcdbb779b81baaae534a2b2c372f23ec1382733"
++    },
++    {
+       "path": "FLOW_DURABLE_RECOVERY_V7_0_13.md",
+       "bytes": 3269,
+       "sha256": "42da73004234d02484405cb429a367c6216ad6ba1dbd10605bda9b4b3c9bd15f"
+@@ -825,7 +825,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "dd57f8676b5a5946446dc72bde7dfd5e58d0a56501db54e3a8a06a87357fe8f3"
++      "sha256": "8cb8d863f222948be19976fe70adfc7273081102023bc6da2d681cf633aaac80"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -873,6 +873,96 @@
+       "sha256": "755cb485cd8a76cc079d6b2058cc9edde9cfd75444f6149bf5c68097fbc962b2"
+     },
+     {
++      "path": "autovideo_runner.py",
++      "bytes": 48891,
++      "sha256": "e7f73a5a04bb567a2416ca85d6628dfa105d3eee833971d34522718c8534472a"
++    },
++    {
++      "path": "check-cdp.bat",
++      "bytes": 869,
++      "sha256": "ec3375fa78196ba74502529ff42e93d3d4ccc696333a973e2cb29380bbdc8818"
++    },
++    {
++      "path": "chrome-debug.bat",
++      "bytes": 1579,
++      "sha256": "7d9dc4a6d1189d46e6544ff66a20e6be9c3dbf050486e5115d2a2a30a1909633"
++    },
++    {
++      "path": "chrome-debug.sh",
++      "bytes": 545,
++      "sha256": "8fec26c5641bb89021c206e01eb5bfaf7ca26f5d3005cc4a3f770099c2b9026c"
++    },
++    {
++      "path": "cli.py",
++      "bytes": 75116,
++      "sha256": "122604d17b6fb6ccb76b618797f17f26c4365a26ecaf77a5771532e946379269"
++    },
++    {
++      "path": "clip_config.yaml",
++      "bytes": 2236,
++      "sha256": "cd59d53ec65165f74a61fba88bd7d7dae2062a0f62d1695378d0422c8a761fcf"
++    },
++    {
++      "path": "dashboard.bat",
++      "bytes": 54,
++      "sha256": "b08060c15e040f050dc36a7af175ab2417fdbe783e92e2e3c4cdc97772bf5c25"
++    },
++    {
++      "path": "dashboard.sh",
++      "bytes": 97,
++      "sha256": "e0c7139cc0eec8a691598da500cd238e4662e7969dddd3898a9ee40e00e3ea0b"
++    },
++    {
++      "path": "requirements-test.txt",
++      "bytes": 614,
++      "sha256": "21e023fe284e9379ed429df4a6e53058e285d2885ed7a6f3d17a97df100c9f97"
++    },
++    {
++      "path": "requirements.txt",
++      "bytes": 1322,
++      "sha256": "ecfd8717d555ed3c1fc749b2ead2bb8362a93f9e703ab889fd9dc88bb6a72105"
++    },
++    {
++      "path": "run.sh",
++      "bytes": 244,
++      "sha256": "7b7dd022aebb1fece0af93c4c803523a9af85b31993f04a287fd8eecea56d43e"
++    },
++    {
++      "path": "run_flow_companion_windows.bat",
++      "bytes": 328,
++      "sha256": "07d7a9c88d64e82c74000379bbde9c9b20e5933945580db7c64bab79d58c94f3"
++    },
++    {
++      "path": "run_windows.bat",
++      "bytes": 209,
++      "sha256": "baf0adf88b38db09b57b2164cfcc5cd11e9b428d3afdc757f207180351e990a9"
++    },
++    {
++      "path": "setup_mac_linux.sh",
++      "bytes": 1907,
++      "sha256": "dc565fe4c7e9520925101fe4086e3cb4f4a97efd90ab1285c889d7d1fdf79a23"
++    },
++    {
++      "path": "setup_windows.bat",
++      "bytes": 1283,
++      "sha256": "190b0ae5f407406f688f1750dddd77bffdb05afba6c8dd455df71c587ee2a7be"
++    },
++    {
++      "path": "topics.csv",
++      "bytes": 467,
++      "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
++    },
++    {
++      "path": "video_config.yaml",
++      "bytes": 2687,
++      "sha256": "4c73c8b06211fc22937950c4477b64db1468b06b5c72c9571f8c619089c1c76b"
++    },
++    {
++      "path": ".github/workflows/tests.yml",
++      "bytes": 1054,
++      "sha256": "c28f472339dd199d9b276e64555d7a449abcf8b106a90af2cd52ea3f57fcbda4"
++    },
++    {
+       "path": "assets/flow_clips/README.txt",
+       "bytes": 744,
+       "sha256": "3ebb3409f6ca878d6fe4cb38b41c6a47d4222b6adee2cb91fa64d2584c405c8d"
+@@ -928,26 +1018,6 @@
+       "sha256": "ae448c47abba6203cc8a1681edd900fc9a89fc848149385af29b3bdf74f71b82"
+     },
+     {
+-      "path": "autovideo_runner.py",
+-      "bytes": 48891,
+-      "sha256": "e7f73a5a04bb567a2416ca85d6628dfa105d3eee833971d34522718c8534472a"
+-    },
+-    {
+-      "path": "check-cdp.bat",
+-      "bytes": 869,
+-      "sha256": "ec3375fa78196ba74502529ff42e93d3d4ccc696333a973e2cb29380bbdc8818"
+-    },
+-    {
+-      "path": "chrome-debug.bat",
+-      "bytes": 1579,
+-      "sha256": "7d9dc4a6d1189d46e6544ff66a20e6be9c3dbf050486e5115d2a2a30a1909633"
+-    },
+-    {
+-      "path": "chrome-debug.sh",
+-      "bytes": 545,
+-      "sha256": "8fec26c5641bb89021c206e01eb5bfaf7ca26f5d3005cc4a3f770099c2b9026c"
+-    },
+-    {
+       "path": "chrome_extension/content.css",
+       "bytes": 633,
+       "sha256": "386d4bf15d5693bcd22db9e90bae84771e614a2aff819674be86fb332b2e20fa"
+@@ -978,26 +1048,11 @@
+       "sha256": "913383f0102b2f59525e932fcaf9d0b3be5f0bb440b15b9ea443c873518ab96e"
+     },
+     {
+-      "path": "cli.py",
+-      "bytes": 74538,
+-      "sha256": "24af6ff6539193d8ef24ff21052c58070f9f61ec363e8463fdad282553c8d660"
+-    },
+-    {
+-      "path": "clip_config.yaml",
+-      "bytes": 2236,
+-      "sha256": "cd59d53ec65165f74a61fba88bd7d7dae2062a0f62d1695378d0422c8a761fcf"
+-    },
+-    {
+       "path": "config/chatgpt_ui.yaml",
+       "bytes": 202,
+       "sha256": "79f360ce6ad5862f981bfa70e2c8107e112dd3dea8cc39184c2c3505af897a94"
+     },
+     {
+-      "path": "config/examples/rain-dance-30s-music-only.json",
+-      "bytes": 1870,
+-      "sha256": "0e8efa447fa73c3972f7885ee13764d61fc8e6b3475cc40a42f128f56d29bc53"
+-    },
+-    {
+       "path": "config/flow_models.yaml",
+       "bytes": 5151,
+       "sha256": "f5e210ee74860b01e7d1aad8903ced1df5968d4cc98aedc9d49115426f522139"
+@@ -1018,6 +1073,21 @@
+       "sha256": "b15f0fd85e5bf0c0490307e916dd35780143750bf40c5f7690eceeee061422e5"
+     },
+     {
++      "path": "config/user_settings.yaml.example",
++      "bytes": 3592,
++      "sha256": "58ee73e5ea6e3713cbe968dc949753a33e7b0fa4b4b33b52b427254fce07ee02"
++    },
++    {
++      "path": "config/voices.yaml",
++      "bytes": 853,
++      "sha256": "2c4b280a705fe01f53fb30835afac4d73eb706e55dd18fa0036907a3c1587855"
++    },
++    {
++      "path": "config/examples/rain-dance-30s-music-only.json",
++      "bytes": 1870,
++      "sha256": "0e8efa447fa73c3972f7885ee13764d61fc8e6b3475cc40a42f128f56d29bc53"
++    },
++    {
+       "path": "config/presets/cartoon_story.yaml",
+       "bytes": 1124,
+       "sha256": "5680c230a138d4f79ef95d4beb92e2efdc65a82c4fed5c45cfa527aeb7b5e525"
+@@ -1043,26 +1113,6 @@
+       "sha256": "baba8aa652f7fb586ec8e5a0329e5ce3c9de2aef7008386468d9b0d67dd10b68"
+     },
+     {
+-      "path": "config/user_settings.yaml.example",
+-      "bytes": 3592,
+-      "sha256": "58ee73e5ea6e3713cbe968dc949753a33e7b0fa4b4b33b52b427254fce07ee02"
+-    },
+-    {
+-      "path": "config/voices.yaml",
+-      "bytes": 853,
+-      "sha256": "2c4b280a705fe01f53fb30835afac4d73eb706e55dd18fa0036907a3c1587855"
+-    },
+-    {
+-      "path": "dashboard.bat",
+-      "bytes": 54,
+-      "sha256": "b08060c15e040f050dc36a7af175ab2417fdbe783e92e2e3c4cdc97772bf5c25"
+-    },
+-    {
+-      "path": "dashboard.sh",
+-      "bytes": 97,
+-      "sha256": "e0c7139cc0eec8a691598da500cd238e4662e7969dddd3898a9ee40e00e3ea0b"
+-    },
+-    {
+       "path": "engine/__init__.py",
+       "bytes": 625,
+       "sha256": "2036795d68d4f1585597dfe451515653b91e472c48c6d75003ec8d1a2cd2830a"
+@@ -1073,66 +1123,6 @@
+       "sha256": "86bc9e9f8c033eafa28abab89be8bba2772ef3ff50a967f80f31face57c85c0a"
+     },
+     {
+-      "path": "engine/audio/__init__.py",
+-      "bytes": 219,
+-      "sha256": "268f9c47f0e30dc61c061eb67a3310054e90b61826f5a1b4d682bbdca8be224e"
+-    },
+-    {
+-      "path": "engine/audio/commons_music.py",
+-      "bytes": 3883,
+-      "sha256": "f3b2a44b708ad6c93afe128d05e56ea9807bb13463b0ccc549aa4da225b4bbe3"
+-    },
+-    {
+-      "path": "engine/audio/hooks.py",
+-      "bytes": 6302,
+-      "sha256": "1501749f8cc16bc77a67944c9de50e33098e5c0513492e81d7d221559852a9e7"
+-    },
+-    {
+-      "path": "engine/audio/job_music.py",
+-      "bytes": 1764,
+-      "sha256": "41e8d32a66c64bed134023832cfa5cd479d5c537b9e4bdb31c25391827554e29"
+-    },
+-    {
+-      "path": "engine/audio/music_brief.py",
+-      "bytes": 2151,
+-      "sha256": "2fac10aae54ae047a9acbb94c94da321d5ab0e61654a8a903454ccfcc45310ae"
+-    },
+-    {
+-      "path": "engine/audio/music_library.py",
+-      "bytes": 4044,
+-      "sha256": "7bad1fe5aa481d399588f1aa7c57c6070c498bce59b4679af089ef68b83d5e70"
+-    },
+-    {
+-      "path": "engine/audio/music_overlay.py",
+-      "bytes": 5124,
+-      "sha256": "b730bad9bc784da931a481d677cda87fdd55ab4e5d4a19c404ba187015439adb"
+-    },
+-    {
+-      "path": "engine/audio/music_provider.py",
+-      "bytes": 9422,
+-      "sha256": "2fc4de1302980f7e94ec41f632477ac16bc328e096b0db702d4fecf741e1e794"
+-    },
+-    {
+-      "path": "engine/audio/music_ui.py",
+-      "bytes": 2044,
+-      "sha256": "074c6854da9652da24d36e2fc20fcf73850152e2eaa546af9c317924d84be2e1"
+-    },
+-    {
+-      "path": "engine/audio/procedural_music.py",
+-      "bytes": 1774,
+-      "sha256": "ec4b773e046a02a86bad42fe45047c8001755f2a71e0be425503aec36a75d6a7"
+-    },
+-    {
+-      "path": "engine/audio/sound_design.py",
+-      "bytes": 2793,
+-      "sha256": "698715b646148f8a5d587b2ebb45dc344f64759a4931965865eb91dd7c472163"
+-    },
+-    {
+-      "path": "engine/audio/tts.py",
+-      "bytes": 26744,
+-      "sha256": "290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2"
+-    },
+-    {
+       "path": "engine/auto_resume.py",
+       "bytes": 6557,
+       "sha256": "e25b9eb2e5fd4225434f2603406cbadb9cbf2e1d83a6df0aca0fe99b1697e3e3"
+@@ -1153,16 +1143,6 @@
+       "sha256": "7cdf50c401eff52785bbb52185a2859790f7cc47ed2496d040309899981f12b6"
+     },
+     {
+-      "path": "engine/bridge/__init__.py",
+-      "bytes": 54,
+-      "sha256": "cc99f457e775a069bcf7d092bfbfed7763a5fd40a8d0652f9bb87713c7ab956d"
+-    },
+-    {
+-      "path": "engine/bridge/server.py",
+-      "bytes": 5543,
+-      "sha256": "bfae559a9128bca99f732b928b0b73b6d4408836d3fd9d2c4c8bcfaeb2531d4e"
+-    },
+-    {
+       "path": "engine/broll.py",
+       "bytes": 74236,
+       "sha256": "746bc3c689bf062f7d986b6dae70fc810b4cd1997e40996496e8b3aa086c5054"
+@@ -1249,8 +1229,8 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 276479,
+-      "sha256": "6c70724da25eddb55bda5540037d643e8a674a844e6f995d6ecc860d810e3f98"
++      "bytes": 278347,
++      "sha256": "2eb15d004ab492dca8badc70166219453b7badaff59229ed902b5a81370898f4"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+@@ -1324,8 +1304,8 @@
+     },
+     {
+       "path": "engine/flow_resume_recovery.py",
+-      "bytes": 6955,
+-      "sha256": "7d7a14b85643ba9cd80b521002680ea7945cfd571021377d1db50bf7615c7bed"
++      "bytes": 6842,
++      "sha256": "1cd00db0e8e3da08dbdac5d45464023eabb7206b60e5b1cb456bccc35549c2ec"
+     },
+     {
+       "path": "engine/flow_resume_safety.py",
+@@ -1338,6 +1318,11 @@
+       "sha256": "733f4bed5133bcb42bb85bee0eb39c41a09f7f49b4d3961d592cae3122d013c6"
+     },
+     {
++      "path": "engine/flow_submit_guard.py",
++      "bytes": 7085,
++      "sha256": "7003bafad2bd21f4784deaf73074dbb555ae9fe741955d3c73b54119b165bea7"
++    },
++    {
+       "path": "engine/flow_ui_blob.py",
+       "bytes": 4174,
+       "sha256": "d5d0bf27f862e83c026a8c5aae827ceb69f824c6816a3ca436f3605892f97ec2"
+@@ -1428,6 +1413,211 @@
+       "sha256": "d467003fd568f499a44f43e1b55be20802c10c52380272775117598a6e3d8384"
+     },
+     {
++      "path": "engine/presentation.py",
++      "bytes": 3640,
++      "sha256": "0cdeb36d587c8872ab9719a54ec809d9b6327b111a09628bae7bdc0624ee0f01"
++    },
++    {
++      "path": "engine/production.py",
++      "bytes": 21526,
++      "sha256": "1ac81c1872ceb91479f64bbfb100ccdbb4d14d9e467fdeba108d186a36afc14f"
++    },
++    {
++      "path": "engine/production_lock.py",
++      "bytes": 2174,
++      "sha256": "7e591047c52ac169b36a4c42faec69749dc70f8419ed12dee9dadaf5117a81f1"
++    },
++    {
++      "path": "engine/progress.py",
++      "bytes": 1670,
++      "sha256": "42d08ce6154ce83959c83501db361477c6eb49cb0e3edadc8e09ceb5ea5ff7a4"
++    },
++    {
++      "path": "engine/publishing.py",
++      "bytes": 19338,
++      "sha256": "f849f322155310a5a6fcc49abd69993d43908f8d82ac2f3fa4ccc27f8b5ae465"
++    },
++    {
++      "path": "engine/quiet_browser.py",
++      "bytes": 5098,
++      "sha256": "4af98b6abdcac81955e5e3019647ae60514fc387f56c38665922f53f09f36ac1"
++    },
++    {
++      "path": "engine/reference_manager.py",
++      "bytes": 3695,
++      "sha256": "8ab45913ef0b351baee266358e61950ab55cc5de141f7b5edf86bdee38dcf930"
++    },
++    {
++      "path": "engine/review_lock.py",
++      "bytes": 1339,
++      "sha256": "e11cb059a6a50a4eba27cb11bf6ff2b17d40608476d23c1281d9fb6d270d3a1f"
++    },
++    {
++      "path": "engine/reviewed_cards.py",
++      "bytes": 2598,
++      "sha256": "a9bc381d1f7262d20a1893ff0023162bbd6daa4e2a0af35214f32c1cdb82be49"
++    },
++    {
++      "path": "engine/runtime_log.py",
++      "bytes": 1400,
++      "sha256": "5d690cad631de79bac94323d4ebd4f72d9588841fefa6e4e0bba1ec8066fb1f5"
++    },
++    {
++      "path": "engine/script_generator.py",
++      "bytes": 11414,
++      "sha256": "585cdce98b54ec9c84ebbfaa5d95db0a65af694cadfc160963704cc870fa08e5"
++    },
++    {
++      "path": "engine/source_inbox.py",
++      "bytes": 7391,
++      "sha256": "3c6e3fe9487c4a7ef08beb72efbb97610eed3420e1386c6875800f21550e87c8"
++    },
++    {
++      "path": "engine/speech_cards.py",
++      "bytes": 19840,
++      "sha256": "2dcdd578e5c099d4a1b5d3c94e873b0c6907eb3c100eacfeb65b39634c3180ce"
++    },
++    {
++      "path": "engine/stock_video.py",
++      "bytes": 8585,
++      "sha256": "acf4d1773a738db5b0bb3e339ab6892a9c32ddce66511036d15c393e0ca245bb"
++    },
++    {
++      "path": "engine/storage_manager.py",
++      "bytes": 20765,
++      "sha256": "0617f02d4b32b0b621ffd9060815fc7b036fbdcfe39eed99769f3e56dccf919e"
++    },
++    {
++      "path": "engine/studio.css",
++      "bytes": 7865,
++      "sha256": "bbf53f8b124b39911cd4f744bbbdfbfd05e61bb65d8bf1120bf1a7933359a180"
++    },
++    {
++      "path": "engine/studio_config.py",
++      "bytes": 11827,
++      "sha256": "a3ccbb414072c9dd8c5e23fee308f91161c9cbb8c68530a70f1131bdac110246"
++    },
++    {
++      "path": "engine/studio_review.py",
++      "bytes": 13334,
++      "sha256": "f684dcb381ba1b94de90c8ec9a01ca142da2fd421a9964ea5cd5dbd585874603"
++    },
++    {
++      "path": "engine/studio_ui.py",
++      "bytes": 2885,
++      "sha256": "918691ece7d57d8f5d6ca58197ab317cf2e0b94588a7fbde6ca88975fbefff05"
++    },
++    {
++      "path": "engine/studio_widgets.py",
++      "bytes": 15301,
++      "sha256": "bff5ee5b72750d25e2375a9bf9ce7dd008b0e96f6c17ef6ab4885f850ff97cd7"
++    },
++    {
++      "path": "engine/support_report.py",
++      "bytes": 10188,
++      "sha256": "d23add27974eba8903a44211af6a61c7ef8d63147f9c7af7beb5d067f4d932c8"
++    },
++    {
++      "path": "engine/task_pulse.py",
++      "bytes": 734,
++      "sha256": "c209ad26f3ff3ecb78273308a392dbd40c1041ded3c67c7bf5221ca9ee958e04"
++    },
++    {
++      "path": "engine/version.py",
++      "bytes": 301,
++      "sha256": "4bb343059799e0ae4876530b79eec717efb5ba18ac42f4c8f88bff80835f63bc"
++    },
++    {
++      "path": "engine/video_builder.py",
++      "bytes": 20107,
++      "sha256": "e469aa726b292d4cd0c61a9e07a8c1cbd38203a50f95e5f412510ba0c07e0dcc"
++    },
++    {
++      "path": "engine/visual_plan.py",
++      "bytes": 5582,
++      "sha256": "44af932786e752ae4dd1b68d84306f15ee64daeb2fe9d55b9d051a45ae8b6997"
++    },
++    {
++      "path": "engine/visuals.py",
++      "bytes": 5695,
++      "sha256": "6bd3937b40f1d5ff0156165978d9679b638562a2e3d4c793e12f8458d087c44b"
++    },
++    {
++      "path": "engine/voiceover.py",
++      "bytes": 3504,
++      "sha256": "7626b3b6053dbce47c0624214474ecf308ea05947e758277e23090ecc796f169"
++    },
++    {
++      "path": "engine/audio/__init__.py",
++      "bytes": 219,
++      "sha256": "268f9c47f0e30dc61c061eb67a3310054e90b61826f5a1b4d682bbdca8be224e"
++    },
++    {
++      "path": "engine/audio/commons_music.py",
++      "bytes": 3883,
++      "sha256": "f3b2a44b708ad6c93afe128d05e56ea9807bb13463b0ccc549aa4da225b4bbe3"
++    },
++    {
++      "path": "engine/audio/hooks.py",
++      "bytes": 6302,
++      "sha256": "1501749f8cc16bc77a67944c9de50e33098e5c0513492e81d7d221559852a9e7"
++    },
++    {
++      "path": "engine/audio/job_music.py",
++      "bytes": 1764,
++      "sha256": "41e8d32a66c64bed134023832cfa5cd479d5c537b9e4bdb31c25391827554e29"
++    },
++    {
++      "path": "engine/audio/music_brief.py",
++      "bytes": 2151,
++      "sha256": "2fac10aae54ae047a9acbb94c94da321d5ab0e61654a8a903454ccfcc45310ae"
++    },
++    {
++      "path": "engine/audio/music_library.py",
++      "bytes": 4044,
++      "sha256": "7bad1fe5aa481d399588f1aa7c57c6070c498bce59b4679af089ef68b83d5e70"
++    },
++    {
++      "path": "engine/audio/music_overlay.py",
++      "bytes": 5124,
++      "sha256": "b730bad9bc784da931a481d677cda87fdd55ab4e5d4a19c404ba187015439adb"
++    },
++    {
++      "path": "engine/audio/music_provider.py",
++      "bytes": 9422,
++      "sha256": "2fc4de1302980f7e94ec41f632477ac16bc328e096b0db702d4fecf741e1e794"
++    },
++    {
++      "path": "engine/audio/music_ui.py",
++      "bytes": 2044,
++      "sha256": "074c6854da9652da24d36e2fc20fcf73850152e2eaa546af9c317924d84be2e1"
++    },
++    {
++      "path": "engine/audio/procedural_music.py",
++      "bytes": 1774,
++      "sha256": "ec4b773e046a02a86bad42fe45047c8001755f2a71e0be425503aec36a75d6a7"
++    },
++    {
++      "path": "engine/audio/sound_design.py",
++      "bytes": 2793,
++      "sha256": "698715b646148f8a5d587b2ebb45dc344f64759a4931965865eb91dd7c472163"
++    },
++    {
++      "path": "engine/audio/tts.py",
++      "bytes": 26744,
++      "sha256": "290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2"
++    },
++    {
++      "path": "engine/bridge/__init__.py",
++      "bytes": 54,
++      "sha256": "cc99f457e775a069bcf7d092bfbfed7763a5fd40a8d0652f9bb87713c7ab956d"
++    },
++    {
++      "path": "engine/bridge/server.py",
++      "bytes": 5543,
++      "sha256": "bfae559a9128bca99f732b928b0b73b6d4408836d3fd9d2c4c8bcfaeb2531d4e"
++    },
++    {
+       "path": "engine/planning/__init__.py",
+       "bytes": 306,
+       "sha256": "8477df2d8628725cc7b08919db51a54a11db30747d4f06f4b9e9842ee673f170"
+@@ -1468,26 +1658,6 @@
+       "sha256": "df2f2bb51619d53c97e8a4b2a39d4f2d5591c7721ec406fec2b7942c6504375f"
+     },
+     {
+-      "path": "engine/presentation.py",
+-      "bytes": 3640,
+-      "sha256": "0cdeb36d587c8872ab9719a54ec809d9b6327b111a09628bae7bdc0624ee0f01"
+-    },
+-    {
+-      "path": "engine/production.py",
+-      "bytes": 21526,
+-      "sha256": "1ac81c1872ceb91479f64bbfb100ccdbb4d14d9e467fdeba108d186a36afc14f"
+-    },
+-    {
+-      "path": "engine/production_lock.py",
+-      "bytes": 2174,
+-      "sha256": "7e591047c52ac169b36a4c42faec69749dc70f8419ed12dee9dadaf5117a81f1"
+-    },
+-    {
+-      "path": "engine/progress.py",
+-      "bytes": 1670,
+-      "sha256": "42d08ce6154ce83959c83501db361477c6eb49cb0e3edadc8e09ceb5ea5ff7a4"
+-    },
+-    {
+       "path": "engine/project/__init__.py",
+       "bytes": 283,
+       "sha256": "e297bb4e8b3bcaabee6887d11b670049f317a7594ae40344de92a0d69da058ba"
+@@ -1529,8 +1699,8 @@
+     },
+     {
+       "path": "engine/providers/flow_browser.py",
+-      "bytes": 306571,
+-      "sha256": "f0e963159c7261698fdd8d656391c458fa2a81f9e1506f771949a3933009d96c"
++      "bytes": 312948,
++      "sha256": "e65365b4ec54af59ce110cf83f72e3024bae2f4b9a2205de372f9551de185564"
+     },
+     {
+       "path": "engine/providers/flow_extension.py",
+@@ -1573,11 +1743,6 @@
+       "sha256": "6fc77001775eeba0c31ab3ace82bbcdbcdf87439d3e67d78a917f8649368e422"
+     },
+     {
+-      "path": "engine/publishing.py",
+-      "bytes": 19338,
+-      "sha256": "f849f322155310a5a6fcc49abd69993d43908f8d82ac2f3fa4ccc27f8b5ae465"
+-    },
+-    {
+       "path": "engine/qc/__init__.py",
+       "bytes": 222,
+       "sha256": "bcd7ecdf24a4c2aa8e0bcb7052e65cfaef4b1fbfd032988d9e846ee46d20dd5b"
+@@ -1593,16 +1758,6 @@
+       "sha256": "c14c251fdc5b3701af0f58ad7e328846995700ac35250f23834b957f86aa4893"
+     },
+     {
+-      "path": "engine/quiet_browser.py",
+-      "bytes": 5098,
+-      "sha256": "4af98b6abdcac81955e5e3019647ae60514fc387f56c38665922f53f09f36ac1"
+-    },
+-    {
+-      "path": "engine/reference_manager.py",
+-      "bytes": 3695,
+-      "sha256": "8ab45913ef0b351baee266358e61950ab55cc5de141f7b5edf86bdee38dcf930"
+-    },
+-    {
+       "path": "engine/render/__init__.py",
+       "bytes": 384,
+       "sha256": "e860e4de4ff9174478d10cb1505c9eb8a0e8579755644e1c07e784a0da7562f0"
+@@ -1658,16 +1813,6 @@
+       "sha256": "e400e21c25d0a3d3696c7f19cdaba3b22f2734aad53e06a9d239a2d5a2518f67"
+     },
+     {
+-      "path": "engine/review_lock.py",
+-      "bytes": 1339,
+-      "sha256": "e11cb059a6a50a4eba27cb11bf6ff2b17d40608476d23c1281d9fb6d270d3a1f"
+-    },
+-    {
+-      "path": "engine/reviewed_cards.py",
+-      "bytes": 2598,
+-      "sha256": "a9bc381d1f7262d20a1893ff0023162bbd6daa4e2a0af35214f32c1cdb82be49"
+-    },
+-    {
+       "path": "engine/routing/__init__.py",
+       "bytes": 254,
+       "sha256": "5606ccaba7a47327df0e9c4deca78e91ea532e9407645e388b8814c19d7eb843"
+@@ -1683,131 +1828,6 @@
+       "sha256": "60088a1718a782ab1b35d833e6080096d1d4c70520427ea1087ab45024d3c442"
+     },
+     {
+-      "path": "engine/runtime_log.py",
+-      "bytes": 1400,
+-      "sha256": "5d690cad631de79bac94323d4ebd4f72d9588841fefa6e4e0bba1ec8066fb1f5"
+-    },
+-    {
+-      "path": "engine/script_generator.py",
+-      "bytes": 11414,
+-      "sha256": "585cdce98b54ec9c84ebbfaa5d95db0a65af694cadfc160963704cc870fa08e5"
+-    },
+-    {
+-      "path": "engine/source_inbox.py",
+-      "bytes": 7391,
+-      "sha256": "3c6e3fe9487c4a7ef08beb72efbb97610eed3420e1386c6875800f21550e87c8"
+-    },
+-    {
+-      "path": "engine/speech_cards.py",
+-      "bytes": 19840,
+-      "sha256": "2dcdd578e5c099d4a1b5d3c94e873b0c6907eb3c100eacfeb65b39634c3180ce"
+-    },
+-    {
+-      "path": "engine/stock_video.py",
+-      "bytes": 8585,
+-      "sha256": "acf4d1773a738db5b0bb3e339ab6892a9c32ddce66511036d15c393e0ca245bb"
+-    },
+-    {
+-      "path": "engine/storage_manager.py",
+-      "bytes": 20765,
+-      "sha256": "0617f02d4b32b0b621ffd9060815fc7b036fbdcfe39eed99769f3e56dccf919e"
+-    },
+-    {
+-      "path": "engine/studio.css",
+-      "bytes": 7865,
+-      "sha256": "bbf53f8b124b39911cd4f744bbbdfbfd05e61bb65d8bf1120bf1a7933359a180"
+-    },
+-    {
+-      "path": "engine/studio_config.py",
+-      "bytes": 11827,
+-      "sha256": "a3ccbb414072c9dd8c5e23fee308f91161c9cbb8c68530a70f1131bdac110246"
+-    },
+-    {
+-      "path": "engine/studio_review.py",
+-      "bytes": 13334,
+-      "sha256": "f684dcb381ba1b94de90c8ec9a01ca142da2fd421a9964ea5cd5dbd585874603"
+-    },
+-    {
+-      "path": "engine/studio_ui.py",
+-      "bytes": 2885,
+-      "sha256": "918691ece7d57d8f5d6ca58197ab317cf2e0b94588a7fbde6ca88975fbefff05"
+-    },
+-    {
+-      "path": "engine/studio_widgets.py",
+-      "bytes": 15301,
+-      "sha256": "bff5ee5b72750d25e2375a9bf9ce7dd008b0e96f6c17ef6ab4885f850ff97cd7"
+-    },
+-    {
+-      "path": "engine/support_report.py",
+-      "bytes": 10188,
+-      "sha256": "d23add27974eba8903a44211af6a61c7ef8d63147f9c7af7beb5d067f4d932c8"
+-    },
+-    {
+-      "path": "engine/task_pulse.py",
+-      "bytes": 734,
+-      "sha256": "c209ad26f3ff3ecb78273308a392dbd40c1041ded3c67c7bf5221ca9ee958e04"
+-    },
+-    {
+-      "path": "engine/version.py",
+-      "bytes": 301,
+-      "sha256": "4bb343059799e0ae4876530b79eec717efb5ba18ac42f4c8f88bff80835f63bc"
+-    },
+-    {
+-      "path": "engine/video_builder.py",
+-      "bytes": 20107,
+-      "sha256": "e469aa726b292d4cd0c61a9e07a8c1cbd38203a50f95e5f412510ba0c07e0dcc"
+-    },
+-    {
+-      "path": "engine/visual_plan.py",
+-      "bytes": 5582,
+-      "sha256": "44af932786e752ae4dd1b68d84306f15ee64daeb2fe9d55b9d051a45ae8b6997"
+-    },
+-    {
+-      "path": "engine/visuals.py",
+-      "bytes": 5695,
+-      "sha256": "6bd3937b40f1d5ff0156165978d9679b638562a2e3d4c793e12f8458d087c44b"
+-    },
+-    {
+-      "path": "engine/voiceover.py",
+-      "bytes": 3504,
+-      "sha256": "7626b3b6053dbce47c0624214474ecf308ea05947e758277e23090ecc796f169"
+-    },
+-    {
+-      "path": "requirements-test.txt",
+-      "bytes": 614,
+-      "sha256": "21e023fe284e9379ed429df4a6e53058e285d2885ed7a6f3d17a97df100c9f97"
+-    },
+-    {
+-      "path": "requirements.txt",
+-      "bytes": 1322,
+-      "sha256": "ecfd8717d555ed3c1fc749b2ead2bb8362a93f9e703ab889fd9dc88bb6a72105"
+-    },
+-    {
+-      "path": "run.sh",
+-      "bytes": 244,
+-      "sha256": "7b7dd022aebb1fece0af93c4c803523a9af85b31993f04a287fd8eecea56d43e"
+-    },
+-    {
+-      "path": "run_flow_companion_windows.bat",
+-      "bytes": 328,
+-      "sha256": "07d7a9c88d64e82c74000379bbde9c9b20e5933945580db7c64bab79d58c94f3"
+-    },
+-    {
+-      "path": "run_windows.bat",
+-      "bytes": 209,
+-      "sha256": "baf0adf88b38db09b57b2164cfcc5cd11e9b428d3afdc757f207180351e990a9"
+-    },
+-    {
+-      "path": "setup_mac_linux.sh",
+-      "bytes": 1907,
+-      "sha256": "dc565fe4c7e9520925101fe4086e3cb4f4a97efd90ab1285c889d7d1fdf79a23"
+-    },
+-    {
+-      "path": "setup_windows.bat",
+-      "bytes": 1283,
+-      "sha256": "190b0ae5f407406f688f1750dddd77bffdb05afba6c8dd455df71c587ee2a7be"
+-    },
+-    {
+       "path": "tests/__init__.py",
+       "bytes": 0,
+       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+@@ -1818,21 +1838,6 @@
+       "sha256": "4d7e6636d620837f88b4c050587cc81b751f84ef78b570bbb04d8b4849966022"
+     },
+     {
+-      "path": "tests/fixtures/debanshi_prompt_recovery.json",
+-      "bytes": 7751,
+-      "sha256": "ce2267c0a91ccea7f1f4479aa84b3967d49760f947c3d336ac08055b26778104"
+-    },
+-    {
+-      "path": "tests/fixtures/debanshi_shot004_reviewed.json",
+-      "bytes": 5531,
+-      "sha256": "c194a7d1cc47f8a3f60ef81ece8aaa82ea887eb0c1982ba4726aa2a4701139dc"
+-    },
+-    {
+-      "path": "tests/fixtures/flow_gallery_dom.js",
+-      "bytes": 1636,
+-      "sha256": "238407f7957beac493142fd6e1b16bc65241b20953db4c5b5102c74c5c4dbbdf"
+-    },
+-    {
+       "path": "tests/test_audio_mix_quality.py",
+       "bytes": 4681,
+       "sha256": "1d1f1901abbfd0ae88d4a473c193d8e0caab57b1c118a0e5f06f1ae3787a5b19"
+@@ -2693,6 +2698,11 @@
+       "sha256": "e07baa1067ee2f31bbb3f216acd347c6b9e2939b300372a84b80384c227191d4"
+     },
+     {
++      "path": "tests/test_v771_flow_submit_guard.py",
++      "bytes": 15525,
++      "sha256": "ec8df2d2f779757cc3b33a6ff3b5d713f4a7f1e74fb1e5848b2e2b6027d700e1"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2708,6 +2718,21 @@
+       "sha256": "6bec3f0f7c2fb1b0a8b29589099b6ab30f6bd4b311257f6a0d4e16a2cf267840"
+     },
+     {
++      "path": "tests/fixtures/debanshi_prompt_recovery.json",
++      "bytes": 7751,
++      "sha256": "ce2267c0a91ccea7f1f4479aa84b3967d49760f947c3d336ac08055b26778104"
++    },
++    {
++      "path": "tests/fixtures/debanshi_shot004_reviewed.json",
++      "bytes": 5531,
++      "sha256": "c194a7d1cc47f8a3f60ef81ece8aaa82ea887eb0c1982ba4726aa2a4701139dc"
++    },
++    {
++      "path": "tests/fixtures/flow_gallery_dom.js",
++      "bytes": 1636,
++      "sha256": "238407f7957beac493142fd6e1b16bc65241b20953db4c5b5102c74c5c4dbbdf"
++    },
++    {
+       "path": "tools/__init__.py",
+       "bytes": 53,
+       "sha256": "b281d1365a82e9bbf86e85c56c58445de1d3c4feb59b8c8baacf32ca2771742d"
+@@ -2948,14 +2973,9 @@
+       "sha256": "f2103e95daabbe2876b49ee140594d6fae9b56faf923dbb96dc0cc2a1e529551"
+     },
+     {
+-      "path": "topics.csv",
+-      "bytes": 467,
+-      "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
+-    },
+-    {
+-      "path": "video_config.yaml",
+-      "bytes": 2687,
+-      "sha256": "4c73c8b06211fc22937950c4477b64db1468b06b5c72c9571f8c619089c1c76b"
++      "path": "tools/update_v770_to_v771.py",
++      "bytes": 6294,
++      "sha256": "b1632b6a4e9aa88b0a85cf5cb7842566a6ae22c378c5633a63bcd15806cc9401"
+     }
+   ]
+ }
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-20 12:02:00.000000000 +0000
++++ b/VERSION	2026-10-21 00:09:22.091874767 +0000
+@@ -1 +1 @@
+-7.0.70
++7.0.71
+diff -ruN a/cli.py b/cli.py
+--- a/cli.py	2026-10-20 11:06:08.000000000 +0000
++++ b/cli.py	2026-10-21 00:13:36.739761002 +0000
+@@ -221,6 +221,8 @@
+     r.add_argument('--replace-unresolved-images', action=argparse.BooleanOptionalAction, default=None,
+                    help='After three download-only image recovery retries, allow one replacement per image; saved across Resume. Videos stay protected.')
+     r.add_argument('--image-replacement-limit',type=int,default=None,help='Whole-job replacement cap, 1–100; default 30')
++    r.add_argument('--flow-submission-cap', type=int, default=None,
++                   help='v7.0.71: explicitly confirm a per-job cap on new Flow prompts (1–500; default 20). Written to the job and logged.')
+     r.add_argument('--local-closing-fallback', action=argparse.BooleanOptionalAction, default=None,
+                    help='Persist permission to reuse a shot opening image when its closing image cannot recover. Keeps the Flow journal; no replacement image request.')
+     r.add_argument("--continue-on-unresolved-frames", action=argparse.BooleanOptionalAction, default=None,
+@@ -726,10 +728,16 @@
+             sys.executable, "-m", "streamlit", "run", os.path.join(os.path.dirname(__file__), "app.py"),
+             "--server.port", str(args.port)]))
+     elif args.cmd == "resume":
++        if args.flow_submission_cap is not None:
++            from engine.flow_submit_guard import write_job_cap
++            write_job_cap(f.pm.job_dir(args.job_id), args.flow_submission_cap, confirmed_by='cli-resume')
++            print(f'Flow submission cap confirmed for this job: {args.flow_submission_cap}')
++        if args.replace_unresolved_images:
++            print('Image replacement is not available during Resume in v7.0.71; the request is recovered without a replacement image.')
+         if args.replace_unresolved_images is not None or args.image_replacement_limit is not None:
+             cfg=f._settings(args.job_id)
+             f.set_flow_image_replacement(args.job_id,
+-                args.replace_unresolved_images if args.replace_unresolved_images is not None else cfg.get('flow_replace_unresolved_images',True),
++                False,
+                 args.image_replacement_limit if args.image_replacement_limit is not None else cfg.get('flow_image_replacement_limit',30))
+         if args.local_closing_fallback is not None:
+             f.set_flow_local_closing_fallback(args.job_id, args.local_closing_fallback)
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-20 11:15:34.000000000 +0000
++++ b/engine/factory.py	2026-10-21 00:13:36.735760941 +0000
+@@ -808,12 +808,39 @@
+         _save_json(path, settings)
+         return policy
+ 
++    def _disable_image_replacement_for_resume(self, job_id: str) -> None:
++        """v7.0.71: a job with saved Flow requests is a resume. Replacement stays off.
++
++        Replacement creates a second credit-bearing image request for a slot whose
++        first request may still be rendering. Resume must recover the recorded
++        request only, so the persisted permission is cleared before any work runs.
++        """
++        root = self.pm.job_dir(job_id)
++        has_saved_request = False
++        for _dir, _names, files in os.walk(root):
++            if any(name.endswith(".flow-request.json") for name in files):
++                has_saved_request = True
++                break
++        if not has_saved_request:
++            return
++        try:
++            settings = self._settings(job_id)
++        except Exception:
++            return
++        if settings.get("flow_replace_unresolved_images"):
++            limit = int(settings.get("flow_image_replacement_limit", 30) or 30)
++            self.set_flow_image_replacement(job_id, False, limit)
++            self.pm.log(job_id, "flow_image_replacement_disabled_for_resume", {
++                "reason": "saved Flow requests exist; resume recovers them without replacement"})
++            print("[Flow] Image replacement disabled for this resume (saved requests exist).")
++
+     def run_job(self, job_id: str, progress_cb=None, auto_render: bool = True) -> dict:
+         # Multiple tabs may watch jobs; shared browser profiles and process-wide
+         # provider settings require serialized production across tabs/installations.
+         from .production_lock import production_slot
+         from .automatic_recovery import run_with_recovery
+         with production_slot(self.pm.job_dir(job_id)):
++            self._disable_image_replacement_for_resume(job_id)
+             # Safe by default across CLI, Streamlit, control center, and automation.
+             # Never infer from a missing local file that a remote Flow request
+             # failed; remote assets may already exist and consume credits.
+@@ -3433,9 +3460,13 @@
+                             # start another full recovery timer here; v5.3.2 could
+                             # stack multiple 179s waits for one shot. A browser-
+                             # closed retry gets only an immediate session rebuild.
++                            # v7.0.71: retry only when this take never started a Flow
++                            # submission. A recorded/unknown submission is recovered, never re-sent.
++                            from .flow_submit_guard import may_retry as _flow_may_retry
+                             if (current_prov == "flow" and m.profile == "STORYBOARD_ECONOMY"
+                                     and flow_attempt < flow_video_retries
+-                                    and not isinstance(e, FlowReferenceUnavailable)):
++                                    and not isinstance(e, FlowReferenceUnavailable)
++                                    and _flow_may_retry(take_path)):
+                                 flow_attempt += 1
+                                 prog(f"🔁 {s.shot_id}: Flow video attempt failed; retrying once "
+                                      f"({flow_attempt}/{flow_video_retries}) before image-motion fallback...", min(82, pct))
+@@ -3464,9 +3495,11 @@
+                             if bound:
+                                 compiled["movieflow_project_url"] = bound
+ 
++                        from .flow_submit_guard import may_retry as _flow_may_retry
+                         if (current_prov == "flow" and m.profile == "STORYBOARD_ECONOMY"
+                                 and not dry and not res.get("path")
+-                                and flow_attempt < flow_video_retries):
++                                and flow_attempt < flow_video_retries
++                                and _flow_may_retry(take_path)):
+                             # Provider.generate() already exhausted exactly one
+                             # bounded recovery window. Never add another recovery
+                             # wait at the factory layer. The next provider call has
+diff -ruN a/engine/flow_resume_recovery.py b/engine/flow_resume_recovery.py
+--- a/engine/flow_resume_recovery.py	2026-10-20 11:06:08.000000000 +0000
++++ b/engine/flow_resume_recovery.py	2026-10-21 00:15:22.045368065 +0000
+@@ -37,9 +37,8 @@
+                     'max_generation_credits': 0,
+                     'reference_paths': list(request.get('reference_hashes', {})),
+                     'flow_image_replacement_root': str(root),
+-                    'flow_replace_unresolved_images': (settings.get('flow_replace_unresolved_images', False)
+-                        and not request.get('replacement_request')
+-                        and not Path(output).name.endswith('.replacement-01.jpg')),
++                    # v7.0.71: resume never starts image replacement (recovery only).
++                    'flow_replace_unresolved_images': False,
+                     'flow_image_replacement_limit': settings.get('flow_image_replacement_limit', 30)}
+                 # Same request hash and saved project; preparing means no Send
+                 # was attempted. Uncertain/submitted phases are download-only.
+diff -ruN a/engine/flow_submit_guard.py b/engine/flow_submit_guard.py
+--- a/engine/flow_submit_guard.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/flow_submit_guard.py	2026-10-21 00:12:13.730494165 +0000
+@@ -0,0 +1,183 @@
++"""v7.0.71 Flow duplicate-spend guard.
++
++Every credit-bearing Flow video submission must pass through this module.
++
++* Check mode: while a saved request is being checked or downloaded, no new
++  prompt may be sent and no approval card may be clicked. ``check_only()`` is
++  process-wide, so a nested or concurrent caller cannot re-enable submission.
++* Per-take ledger (``<take>.mp4.submit-ledger.jsonl``): an ``intent`` line is
++  appended and fsynced *before* the Send/Enter action, and a ``submitted`` line
++  after it returns. Any ``intent``/``submitted``/unreadable line blocks every
++  later submission for that exact take file, including after a process restart,
++  a factory retry or a job restart. A saved ``.flow-request.json`` also blocks.
++* Per-job ledger (``<job>/flow_submission_ledger.jsonl``) with a cap on the
++  number of intents. Exceeding the cap requires an explicit, logged
++  confirmation file written by the user through ``cli.py resume
++  --flow-submission-cap N``.
++
++Blocking raises ``SubmissionBlocked``. Providers convert it to a pending
++(non-retried) Flow error so the factory never silently spends again.
++"""
++from __future__ import annotations
++
++import contextlib
++import json
++import os
++import threading
++import time
++import uuid
++
++LEDGER_SUFFIX = ".submit-ledger.jsonl"
++JOB_LEDGER_NAME = "flow_submission_ledger.jsonl"
++JOB_CAP_NAME = "flow_submission_cap.json"
++DEFAULT_JOB_CAP = 20
++STARTED_EVENTS = frozenset({"intent", "submitted", "unreadable"})
++
++_LOCK = threading.RLock()
++_CHECK_DEPTH = 0
++
++
++class SubmissionBlocked(RuntimeError):
++    """A new Flow submission is refused. Nothing was sent."""
++
++
++@contextlib.contextmanager
++def check_only(reason: str = "check"):
++    """Forbid every new Flow submission and approval click inside the block."""
++    global _CHECK_DEPTH
++    with _LOCK:
++        _CHECK_DEPTH += 1
++    try:
++        yield reason
++    finally:
++        with _LOCK:
++            _CHECK_DEPTH -= 1
++
++
++def check_mode_active() -> bool:
++    return _CHECK_DEPTH > 0
++
++
++def _append(path: str, record: dict) -> None:
++    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
++    with open(path, "a", encoding="utf-8") as handle:
++        handle.write(json.dumps(record, sort_keys=True) + "\n")
++        handle.flush()
++        os.fsync(handle.fileno())
++
++
++def read_events(path: str) -> list[dict]:
++    if not os.path.isfile(path):
++        return []
++    events: list[dict] = []
++    with open(path, encoding="utf-8") as handle:
++        for raw in handle:
++            raw = raw.strip()
++            if not raw:
++                continue
++            try:
++                events.append(json.loads(raw))
++            except ValueError:
++                events.append({"event": "unreadable"})
++    return events
++
++
++def take_ledger(out_path: str) -> str:
++    return out_path + LEDGER_SUFFIX
++
++
++def job_ledger_for(out_path: str) -> str | None:
++    """Return the job ledger for ``<job>/shots/<shot>/take.mp4``, if derivable."""
++    current = os.path.dirname(os.path.abspath(out_path))
++    while current and current != os.path.dirname(current):
++        if os.path.basename(current) == "shots":
++            return os.path.join(os.path.dirname(current), JOB_LEDGER_NAME)
++        current = os.path.dirname(current)
++    return None
++
++
++def submission_started(out_path: str) -> bool:
++    """True when this take already has (or may have) a sent Flow request."""
++    if os.path.exists(out_path + ".flow-request.json"):
++        return True
++    if os.path.exists(out_path + ".flow-request.before-regeneration.json"):
++        return True
++    return any(event.get("event") in STARTED_EVENTS
++               for event in read_events(take_ledger(out_path)))
++
++
++def job_cap(job_ledger: str | None) -> int:
++    if not job_ledger:
++        return DEFAULT_JOB_CAP
++    cap_path = os.path.join(os.path.dirname(job_ledger), JOB_CAP_NAME)
++    if os.path.isfile(cap_path):
++        try:
++            with open(cap_path, encoding="utf-8") as handle:
++                return max(1, int(json.load(handle).get("cap", DEFAULT_JOB_CAP)))
++        except (OSError, ValueError, AttributeError):
++            return DEFAULT_JOB_CAP
++    return DEFAULT_JOB_CAP
++
++
++def write_job_cap(job_dir: str, cap: int, confirmed_by: str = "cli") -> str:
++    """Record an explicit user confirmation for a higher per-job cap."""
++    cap = int(cap)
++    if cap < 1 or cap > 500:
++        raise ValueError("Flow submission cap must be between 1 and 500")
++    target = os.path.join(job_dir, JOB_CAP_NAME)
++    os.makedirs(job_dir, exist_ok=True)
++    with open(target + ".tmp", "w", encoding="utf-8") as handle:
++        json.dump({"cap": cap, "confirmed_by": confirmed_by, "at": time.time()}, handle, indent=2)
++        handle.flush()
++        os.fsync(handle.fileno())
++    os.replace(target + ".tmp", target)
++    return target
++
++
++def gate(out_path: str) -> str | None:
++    """Raise unless one new submission for ``out_path`` is allowed right now.
++
++    Returns the job ledger path (or None) for later ``record`` calls.
++    """
++    if check_mode_active():
++        raise SubmissionBlocked("check mode is active; no new Flow prompt or approval may be sent")
++    if submission_started(out_path):
++        raise SubmissionBlocked(
++            f"take {os.path.basename(out_path)} already has a recorded Flow submission; "
++            "download-only recovery applies and no second prompt will be sent")
++    job_ledger = job_ledger_for(out_path)
++    if job_ledger:
++        intents = sum(1 for e in read_events(job_ledger) if e.get("event") == "intent")
++        cap = job_cap(job_ledger)
++        if intents >= cap:
++            raise SubmissionBlocked(
++                f"job submission cap reached ({intents}/{cap}); confirm a higher cap with "
++                "`cli.py resume <job> --flow-submission-cap N` before any new Flow video is sent")
++    return job_ledger
++
++
++def record_intent(out_path: str, job_ledger: str | None, *, request_id: str = "", **fields) -> str:
++    """Write-ahead record immediately before the Send action.
++
++    Re-checks the take ledger so two paths cannot both pass the gate.
++    """
++    if check_mode_active():
++        raise SubmissionBlocked("check mode is active; no new Flow prompt may be sent")
++    if any(e.get("event") in STARTED_EVENTS for e in read_events(take_ledger(out_path))):
++        raise SubmissionBlocked(f"take {os.path.basename(out_path)} already has a Flow submission intent")
++    request_id = request_id or uuid.uuid4().hex
++    record(out_path, job_ledger, "intent", request_id=request_id, **fields)
++    return request_id
++
++
++def record(out_path: str, job_ledger: str | None, event: str, *, request_id: str = "", **fields) -> None:
++    entry = {"event": event, "take": os.path.basename(out_path), "out_path": os.path.abspath(out_path),
++             "request_id": request_id, "ts": time.time(), "pid": os.getpid(), **fields}
++    _append(take_ledger(out_path), entry)
++    if job_ledger:
++        _append(job_ledger, entry)
++
++
++def may_retry(out_path: str) -> bool:
++    """Factory retry predicate: a take that started submission is never re-submitted."""
++    return not submission_started(out_path) and not check_mode_active()
+diff -ruN a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-20 11:06:08.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-21 00:23:55.517204039 +0000
+@@ -3911,6 +3911,19 @@
+             self._resolve("generate_button", timeout_ms=10000).click()
+         self._set(FlowState.GENERATING)
+ 
++    def _log_approval_click(self, label) -> None:
++        journal = getattr(self, "_approval_journal", None)
++        if not journal or not str(journal).endswith(".flow-request.json"):
++            return
++        out_path = str(journal)[:-len(".flow-request.json")]
++        try:
++            from ..flow_submit_guard import job_ledger_for, record
++            record(out_path, job_ledger_for(out_path), "approval",
++                   request_id=getattr(self, "_awaiting_request_id", "") or "",
++                   label=str(label)[:80])
++        except OSError as error:
++            print(f"[Flow] Approval click could not be logged ({type(error).__name__}).")
++
+     def confirm_agent_generation(self, timeout_s: int = 12, approval: str = "once",
+                                  max_credits: int | None = None) -> bool:
+         """Approve only a *currently clickable* Flow credit card.
+@@ -3924,6 +3937,13 @@
+         """
+         self.last_agent_confirmation = {"approval": approval, "cost": None,
+                                         "clicked": None, "blocked": False}
++        from ..flow_submit_guard import check_mode_active
++        if check_mode_active():
++            self.last_agent_confirmation.update(blocked=True, reason="check mode: approval refused")
++            return False
++        if getattr(self, "_approval_journal", None) and not getattr(self, "_awaiting_request_id", None):
++            self.last_agent_confirmation.update(blocked=True, reason="no outstanding request; unsolicited approval refused")
++            return False
+         if approval == "manual":
+             self.last_agent_confirmation["blocked"] = True
+             self.last_agent_confirmation["reason"] = "manual approval requested"
+@@ -4073,6 +4093,7 @@
+                         except TypeError:
+                             loc.click()
+                         self.last_agent_confirmation["clicked"] = label
++                        self._log_approval_click(label)
+                         print(f"[Flow] Credit confirmation: clicked {label!r}"
+                               + (f" ({self.last_agent_confirmation.get('cost')} credits)"
+                                  if self.last_agent_confirmation.get('cost') is not None else ""))
+@@ -4113,6 +4134,7 @@
+                     try:
+                         if self._click_text_action(label, timeout_ms=450):
+                             self.last_agent_confirmation["clicked"] = label
++                            self._log_approval_click(label)
+                             print(f"[Flow] Credit confirmation: clicked nonsemantic {label!r}"
+                                   + (f" ({self.last_agent_confirmation.get('cost')} credits)"
+                                      if self.last_agent_confirmation.get('cost') is not None else ""))
+@@ -5519,10 +5541,78 @@
+ 
+     def _generate_video_once(self, shot, compiled: dict, refs: dict, out_path: str,
+                  vertical: bool, dry_run: bool = False) -> dict:
++        try:
++            return self._generate_video_body(shot, compiled, refs, out_path, vertical, dry_run)
++        finally:
++            # Approval clicks are valid only while this request is awaiting one.
++            self._set_awaiting(None)
++
++    def _submission_gate(self, out_path: str):
++        """v7.0.71: refuse before any browser action if this take may already have been sent."""
++        from ..flow_submit_guard import SubmissionBlocked, gate
++        try:
++            return gate(out_path)
++        except SubmissionBlocked as error:
++            raise FlowRequestPending(f"Flow video submission blocked, no prompt sent: {error}") from error
++
++    def _chat_duplicate_gate(self, bridge, instruction: str, job_ledger=None, prompt_sha: str = ""):
++        """v7.0.71: an unexplained identical prompt in the Flow chat blocks a send.
++
++        Sibling takes of one shot legitimately share a prompt, so when this job's
++        ledger already records that prompt the exact ledgers decide. Otherwise a
++        prompt already visible in the chat is treated as a possible prior send.
++        """
++        state_fn = getattr(bridge, "agent_submission_state", None)
++        if not callable(state_fn) or not instruction:
++            return
++        if job_ledger and prompt_sha:
++            from ..flow_submit_guard import read_events
++            if any(e.get("event") == "intent" and e.get("prompt_sha256") == prompt_sha
++                   for e in read_events(job_ledger)):
++                return
++        try:
++            occurrences = int((state_fn(instruction) or {}).get("prompt_occurrences", 0) or 0)
++        except Exception:
++            occurrences = 0
++        if occurrences > 0:
++            raise FlowRequestPending(
++                "Flow video submission blocked: this exact prompt is already in the Flow chat "
++                f"({occurrences}x). No prompt was sent; inspect the saved request instead of repeating it.")
++
++    def _record_intent(self, out_path: str, job_ledger, **fields) -> str:
++        from ..flow_submit_guard import SubmissionBlocked, record_intent
++        try:
++            request_id = record_intent(out_path, job_ledger, **fields)
++        except SubmissionBlocked as error:
++            raise FlowRequestPending(f"Flow video submission blocked, no prompt sent: {error}") from error
++        self._set_awaiting(request_id)
++        return request_id
++
++    def _set_awaiting(self, request_id) -> None:
++        """Mark the in-flight request on this provider and on its live bridge.
++
++        ``_ensure()`` returns a separate bridge instance, and the approval click
++        runs on that bridge, so the marker must be visible there.
++        """
++        self._awaiting_request_id = request_id
++        bridge = getattr(self, "bridge", None)
++        if bridge is not None and bridge is not self:
++            bridge._awaiting_request_id = request_id
++
++    def _record_submitted(self, out_path: str, job_ledger, request_id: str) -> None:
++        from ..flow_submit_guard import record
++        try:
++            record(out_path, job_ledger, "submitted", request_id=request_id)
++        except OSError as error:
++            print(f"[Flow] Could not write the submission ledger ({type(error).__name__}); the saved request journal still blocks resubmission.")
++
++    def _generate_video_body(self, shot, compiled: dict, refs: dict, out_path: str,
++                 vertical: bool, dry_run: bool = False) -> dict:
+         if dry_run:
+             return {"path": None, "provider": "flow", "model": shot.model, "seed": None,
+                     "credits": 0, "dry_run": True,
+                     "log": f"DRY RUN: would generate {shot.shot_id} via Flow/{shot.model} (no credits)"}
++        job_ledger = self._submission_gate(out_path)
+         b = self._ensure()
+         project = (compiled.get("project") or "AutoVideoAI").strip() or "AutoVideoAI"
+         project_url = FlowBrowser.normalize_project_url(compiled.get("project_url"))
+@@ -5601,7 +5691,10 @@
+                 if refs.get("end"):
+                     try: b.set_last_frame(refs["end"])
+                     except Exception: pass
++                request_id = self._record_intent(out_path, job_ledger, shot_id=str(getattr(shot, "shot_id", "")),
++                                                 strategy="compat")
+                 b.submit_prompt(compiled.get("prompt", shot.visual_goal))
++                self._record_submitted(out_path, job_ledger, request_id)
+                 if not b.wait_for_generation():
+                     return {"path": None, "provider": "flow", "model": shot.model, "error": "generation failed/rejected in Flow"}
+                 b.download_generation(0, out_path)
+@@ -5627,9 +5720,16 @@
+                 self._last_video_shot_id = str(getattr(shot, "shot_id", "") or "")
+                 b.fill_text_video_prompt(prompt, strategy, aspect=aspect,
+                                          model_label=model_label, duration=duration, count=1)
++                instruction = FlowBrowser._agent_video_instruction(prompt, aspect, model_label, duration, 1)
++                instruction_sha = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
++                self._chat_duplicate_gate(b, instruction, job_ledger, instruction_sha)
++                # Ledger intent first: a refused intent must never overwrite a saved request.
++                request_id = self._record_intent(out_path, job_ledger, shot_id=str(getattr(shot, "shot_id", "")),
++                                                 strategy=strategy, prompt_sha256=instruction_sha)
+                 self._record_submission(out_path, project_url, before_assets, "video",
+-                    submitted_prompt=FlowBrowser._agent_video_instruction(prompt, aspect, model_label, duration, 1))
++                    submitted_prompt=instruction)
+                 b.submit_prepared_text_video(strategy)
++                self._record_submitted(out_path, job_ledger, request_id)
+                 # First-use projects can take noticeably longer to display the
+                 # one-time credit approval card. Give the initial card a fair
+                 # window; wait_for_agent_generation also keeps probing safely.
+@@ -5732,7 +5832,19 @@
+                 except FlowUIChanged: pass
+             b.fill_text_video_prompt(prompt, strategy, aspect=aspect,
+                                      model_label=model_label, duration=duration, count=1)
++            try:
++                standard_baseline = set(b.media_asset_signatures())
++            except Exception:
++                standard_baseline = set()
++            self._last_video_baseline = standard_baseline
++            self._last_video_project_url = str(project_url or b.current_project_url() or "")
++            request_id = self._record_intent(out_path, job_ledger, shot_id=str(getattr(shot, "shot_id", "")),
++                                             strategy=strategy,
++                                             prompt_sha256=hashlib.sha256(str(prompt).encode("utf-8")).hexdigest())
++            self._record_submission(out_path, project_url, standard_baseline, "video",
++                                    submitted_prompt=prompt)
+             b.submit_prepared_text_video(strategy)
++            self._record_submitted(out_path, job_ledger, request_id)
+             ok = b.wait_for_generation()
+             if not ok:
+                 return {"path": None, "provider": "flow", "model": shot.model, "seed": None,
+diff -ruN a/tests/test_v771_flow_submit_guard.py b/tests/test_v771_flow_submit_guard.py
+--- a/tests/test_v771_flow_submit_guard.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v771_flow_submit_guard.py	2026-10-21 00:24:04.889347045 +0000
+@@ -0,0 +1,391 @@
++"""v7.0.71 Flow duplicate-spend guard.
++
++A fake Flow bridge counts every Send. No browser, network or credits are used.
++"""
++import json
++import os
++import sys
++from types import SimpleNamespace
++
++import pytest
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++if ROOT not in sys.path:
++    sys.path.insert(0, ROOT)
++
++from engine import flow_submit_guard as guard  # noqa: E402
++from engine.providers import flow_browser as fb  # noqa: E402
++from engine.providers.flow_browser import FlowBrowser, FlowBrowserProvider, FlowRequestPending  # noqa: E402
++
++
++PROJECT_URL = "https://flow.google.com/project/11111111-2222-3333-4444-555555555555"
++
++
++class FakeBridge:
++    """Counts credit-bearing actions. Each submit_prepared call is one Send."""
++
++    def __init__(self, prompt_occurrences=0, approval_label="Approve"):
++        self.sends = 0
++        self.approvals = 0
++        self.prompt_occurrences = prompt_occurrences
++        self.approval_label = approval_label
++        self.last_agent_confirmation = {}
++        self.last_agent_queue_observed = False
++        self.last_agent_failure = ""
++        self.last_generated_asset_signature = "sig-1"
++        self.fail_submit = False
++        self.bridge = None
++        self._page = None
++
++    # project and composer
++    def ensure_project(self, project, project_url=None):
++        return True
++
++    def current_project_url(self):
++        return PROJECT_URL
++
++    def prepare_text_video(self, aspect="9:16", model_label="", duration=8, count=1):
++        return "agent"
++
++    def media_asset_signatures(self):
++        return set()
++
++    def fill_text_video_prompt(self, prompt, strategy, **kwargs):
++        return True
++
++    def agent_submission_state(self, prompt):
++        return {"composer_matches": False, "composer_empty": True,
++                "prompt_occurrences": self.prompt_occurrences}
++
++    def submit_prepared_text_video(self, strategy):
++        if self.fail_submit:
++            raise RuntimeError("send button detached")
++        self.sends += 1
++
++    def confirm_agent_generation(self, timeout_s=12, approval="once", max_credits=None):
++        if not (getattr(self, "_approval_journal", None) and getattr(self, "_awaiting_request_id", None)):
++            # Mirrors the production refusal path for unsolicited cards.
++            self.last_agent_confirmation = {"approval": approval, "cost": None,
++                                            "clicked": None, "blocked": True,
++                                            "reason": "no outstanding request"}
++            return False
++        self.approvals += 1
++        self.last_agent_confirmation = {"approval": approval, "cost": 6, "clicked": self.approval_label,
++                                        "blocked": False}
++        # The production click path logs through the real bridge method.
++        FlowBrowser._log_approval_click(self, self.approval_label)
++        return True
++
++    def wait_for_agent_generation(self, **kwargs):
++        return True
++
++    def download_latest_asset(self, out_path, **kwargs):
++        with open(out_path, "wb") as handle:
++            handle.write(b"video")
++
++
++@pytest.fixture
++def provider(monkeypatch):
++    monkeypatch.setattr(FlowBrowserProvider, "_is_valid_video_file", staticmethod(lambda p: os.path.exists(p)))
++    monkeypatch.setattr(FlowBrowserProvider, "_asset_valid", lambda self, p, k: os.path.exists(p))
++    prov = FlowBrowserProvider.__new__(FlowBrowserProvider)
++    prov._last_video_shot_id = ""
++    prov._last_video_request_at = 0.0
++    prov._last_video_baseline = set()
++    prov._last_video_project_url = ""
++    prov._active_request_hash = "hash-test"
++    prov._awaiting_request_id = None
++    prov._fake = FakeBridge()
++    prov.bridge = prov._fake  # as in production: _ensure() returns self.bridge
++    prov._ensure = lambda: prov._fake
++    return prov
++
++
++def _shot():
++    return SimpleNamespace(shot_id="shot_026", model="omni_draft", gen_duration=8, visual_goal="goal")
++
++
++def _compiled(job_dir):
++    return {"prompt": "A calm dial gauge slowly settles", "project": "AutoVideoAI",
++            "project_url": PROJECT_URL, "approval": "always", "max_generation_credits": 10,
++            "flow_video_recovery_wait_seconds": 0, "flow_video_mode": "prompt"}
++
++
++def _take(job_dir, name="take_01.mp4"):
++    shot_dir = os.path.join(job_dir, "shots", "shot_026")
++    os.makedirs(shot_dir, exist_ok=True)
++    return os.path.join(shot_dir, name)
++
++
++def _run(provider, job_dir, out_path):
++    return provider._generate_video_once(_shot(), _compiled(job_dir), {}, out_path, True, False)
++
++
++def _events(path):
++    return [e["event"] for e in guard.read_events(path)]
++
++
++# ---------------------------------------------------------------- provider behaviour
++
++def test_first_request_sends_once_and_writes_write_ahead_ledger(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    result = _run(provider, job, out)
++    assert result["path"] == out
++    assert provider._fake.sends == 1
++    assert provider._fake.approvals == 1
++    assert _events(guard.take_ledger(out)) == ["intent", "submitted", "approval"]
++    job_events = [e["event"] for e in guard.read_events(os.path.join(job, guard.JOB_LEDGER_NAME))]
++    assert job_events.count("intent") == 1
++    # The awaiting marker is cleared once the request finishes.
++    assert provider._awaiting_request_id is None
++    assert provider._fake._awaiting_request_id is None
++
++
++def test_second_call_with_saved_journal_never_sends(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    _run(provider, job, out)
++    with pytest.raises(FlowRequestPending):
++        _run(provider, job, out)
++    assert provider._fake.sends == 1
++
++
++def test_ledger_alone_blocks_resubmission_when_journal_is_lost(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    _run(provider, job, out)
++    os.remove(out + ".flow-request.json")
++    with pytest.raises(FlowRequestPending):
++        _run(provider, job, out)
++    assert provider._fake.sends == 1
++
++
++def test_journal_alone_blocks_when_ledger_is_lost(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    _run(provider, job, out)
++    os.remove(guard.take_ledger(out))
++    with pytest.raises(FlowRequestPending):
++        _run(provider, job, out)
++    assert provider._fake.sends == 1
++
++
++def test_check_mode_sends_nothing_and_approves_nothing(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    with guard.check_only("test"):
++        with pytest.raises(FlowRequestPending):
++            _run(provider, job, out)
++        provider._approval_journal = out + ".flow-request.json"
++        provider._awaiting_request_id = "x"
++        assert provider._fake.confirm_agent_generation(timeout_s=1) is False
++    assert provider._fake.sends == 0
++    assert provider._fake.approvals == 0
++    assert not os.path.exists(guard.take_ledger(out))
++
++
++def test_check_mode_is_process_wide_and_nests(provider, tmp_path):
++    job = str(tmp_path / "job")
++    with guard.check_only("outer"):
++        with guard.check_only("inner"):
++            assert guard.check_mode_active()
++        assert guard.check_mode_active()
++    assert not guard.check_mode_active()
++    with pytest.raises(FlowRequestPending):
++        with guard.check_only("outer"):
++            _run(provider, job, _take(job))
++    assert provider._fake.sends == 0
++
++
++def test_identical_prompt_already_in_chat_is_not_sent_again(provider, tmp_path):
++    job = str(tmp_path / "job")
++    provider._fake.prompt_occurrences = 1
++    out = _take(job)
++    with pytest.raises(FlowRequestPending, match="already in the Flow chat"):
++        _run(provider, job, out)
++    assert provider._fake.sends == 0
++    assert not os.path.exists(guard.take_ledger(out))
++
++
++def test_failed_send_keeps_intent_and_blocks_later_retry(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    provider._fake.fail_submit = True
++    result = _run(provider, job, out)
++    assert result["path"] is None  # the body converts the Send error to a result
++    assert _events(guard.take_ledger(out)) == ["intent"]
++    provider._fake.fail_submit = False
++    with pytest.raises(FlowRequestPending):
++        _run(provider, job, out)
++    assert provider._fake.sends == 0
++
++
++def test_unsolicited_approval_card_is_refused(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    bridge = FlowBrowser.__new__(FlowBrowser)
++    bridge._approval_journal = out + ".flow-request.json"
++    bridge._awaiting_request_id = None
++    assert FlowBrowser.confirm_agent_generation(bridge, timeout_s=1, approval="always") is False
++    assert bridge.last_agent_confirmation.get("blocked") is True
++    assert "unsolicited" in bridge.last_agent_confirmation.get("reason", "")
++
++
++def test_approval_is_logged_against_the_request_that_was_sent(provider, tmp_path):
++    job = str(tmp_path / "job")
++    out = _take(job)
++    _run(provider, job, out)
++    approvals = [e for e in guard.read_events(guard.take_ledger(out)) if e["event"] == "approval"]
++    assert len(approvals) == 1
++    assert approvals[0]["label"] == "Approve"
++    assert approvals[0]["request_id"]
++    intents = [e for e in guard.read_events(guard.take_ledger(out)) if e["event"] == "intent"]
++    assert approvals[0]["request_id"] == intents[0]["request_id"]
++
++
++# ---------------------------------------------------------------- guard module
++
++def test_job_ledger_derived_from_shot_path(tmp_path):
++    out = str(tmp_path / "job" / "shots" / "shot_001" / "take_01.mp4")
++    assert guard.job_ledger_for(out) == str(tmp_path / "job" / guard.JOB_LEDGER_NAME)
++    assert guard.job_ledger_for(str(tmp_path / "loose" / "take.mp4")) is None
++
++
++def test_cap_refuses_until_explicitly_confirmed(tmp_path):
++    job = str(tmp_path / "job")
++    ledger = os.path.join(job, guard.JOB_LEDGER_NAME)
++    for i in range(guard.DEFAULT_JOB_CAP):
++        guard.record(str(tmp_path / f"job/shots/s{i}/take_01.mp4"), ledger, "intent", request_id=str(i))
++    with pytest.raises(guard.SubmissionBlocked, match="cap reached"):
++        guard.gate(str(tmp_path / "job/shots/shot_new/take_01.mp4"))
++    guard.write_job_cap(job, guard.DEFAULT_JOB_CAP + 5, confirmed_by="test")
++    assert guard.gate(str(tmp_path / "job/shots/shot_new/take_01.mp4")) == ledger
++
++
++def test_cap_bounds_are_validated(tmp_path):
++    with pytest.raises(ValueError):
++        guard.write_job_cap(str(tmp_path), 0)
++    with pytest.raises(ValueError):
++        guard.write_job_cap(str(tmp_path), 501)
++
++
++def test_retry_predicate_refuses_after_any_recorded_send(tmp_path):
++    out = str(tmp_path / "job" / "shots" / "shot_001" / "take_01.mp4")
++    assert guard.may_retry(out) is True
++    guard.record(out, None, "intent", request_id="r1")
++    assert guard.may_retry(out) is False
++
++
++def test_unreadable_ledger_line_counts_as_started(tmp_path):
++    out = str(tmp_path / "take_01.mp4")
++    with open(guard.take_ledger(out), "w", encoding="utf-8") as handle:
++        handle.write("{not json\n")
++    assert guard.submission_started(out) is True
++
++
++# ---------------------------------------------------------------- resume policy
++
++def test_resume_turns_image_replacement_off_when_requests_exist(tmp_path, monkeypatch):
++    from engine.factory import Factory
++    job_id = "job-x"
++    job_dir = tmp_path / job_id
++    (job_dir / "shots" / "shot_001").mkdir(parents=True)
++    (job_dir / "shots" / "shot_001" / "take_01.mp4.flow-request.json").write_text("{}")
++    calls = []
++    logs = []
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda j: str(job_dir),
++                                 log=lambda j, kind, data: logs.append(kind))
++    factory._settings = lambda j: {"flow_replace_unresolved_images": True, "flow_image_replacement_limit": 30}
++    factory.set_flow_image_replacement = lambda j, enabled, limit=30: calls.append((enabled, limit))
++    factory._disable_image_replacement_for_resume(job_id)
++    assert calls == [(False, 30)]
++    assert "flow_image_replacement_disabled_for_resume" in logs
++
++
++def test_fresh_job_without_requests_keeps_its_settings(tmp_path):
++    from engine.factory import Factory
++    job_dir = tmp_path / "fresh"
++    job_dir.mkdir()
++    calls = []
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda j: str(job_dir), log=lambda *a: None)
++    factory._settings = lambda j: {"flow_replace_unresolved_images": True}
++    factory.set_flow_image_replacement = lambda *a, **k: calls.append(a)
++    factory._disable_image_replacement_for_resume("fresh")
++    assert calls == []
++
++
++def test_resume_recovery_never_enables_replacement_source():
++    text = open(os.path.join(ROOT, "engine", "flow_resume_recovery.py"), encoding="utf-8").read()
++    assert "'flow_replace_unresolved_images': False" in text
++    assert "settings.get('flow_replace_unresolved_images', False)\n                        and not request" not in text
++
++
++def test_factory_retry_paths_consult_the_guard():
++    text = open(os.path.join(ROOT, "engine", "factory.py"), encoding="utf-8").read()
++    assert text.count("_flow_may_retry(take_path)") == 2
++
++
++def test_sibling_take_with_same_prompt_is_allowed_when_job_recorded_it(provider, tmp_path):
++    job = str(tmp_path / "job")
++    first = _take(job, "take_01.mp4")
++    _run(provider, job, first)
++    provider._fake.prompt_occurrences = 1  # the first send is visible in the chat
++    second = _take(job, "take_02.mp4")
++    result = _run(provider, job, second)
++    assert result["path"] == second
++    assert provider._fake.sends == 2
++
++
++def test_unexplained_prompt_in_chat_blocks_even_with_other_job_records(provider, tmp_path):
++    job = str(tmp_path / "job")
++    _run(provider, job, _take(job, "take_01.mp4"))
++    other = str(tmp_path / "job_other")
++    provider._fake.prompt_occurrences = 1
++    # A different prompt has never been recorded by this job: the visible repeat is unexplained.
++    shot = _shot()
++    compiled = _compiled(other)
++    compiled["prompt"] = "A different scene"
++    with pytest.raises(FlowRequestPending, match="already in the Flow chat"):
++        provider._generate_video_once(shot, compiled, {}, _take(other), True, False)
++    assert provider._fake.sends == 1
++
++
++class FakeStandardBridge(FakeBridge):
++    """Migrated editor cohort: no Agent composer, one Generate press per request."""
++
++    def prepare_text_video(self, aspect="9:16", model_label="", duration=8, count=1):
++        return "standard"
++
++    def wait_for_generation(self):
++        return True
++
++    def download_generation(self, index, out_path):
++        with open(out_path, "wb") as handle:
++            handle.write(b"video")
++
++
++def test_standard_editor_path_is_journaled_and_never_resent(monkeypatch, tmp_path):
++    monkeypatch.setattr(FlowBrowserProvider, "_is_valid_video_file", staticmethod(lambda p: os.path.exists(p)))
++    prov = FlowBrowserProvider.__new__(FlowBrowserProvider)
++    prov._last_video_shot_id = ""
++    prov._last_video_request_at = 0.0
++    prov._last_video_baseline = set()
++    prov._last_video_project_url = ""
++    prov._active_request_hash = "hash-standard"
++    prov._awaiting_request_id = None
++    prov._fake = FakeStandardBridge()
++    prov.bridge = prov._fake
++    prov._ensure = lambda: prov._fake
++    job = str(tmp_path / "job")
++    out = _take(job)
++    first = _run(prov, job, out)
++    assert first["path"] == out
++    assert prov._fake.sends == 1
++    assert os.path.isfile(out + ".flow-request.json")  # journal now exists on this path too
++    assert _events(guard.take_ledger(out)) == ["intent", "submitted"]
++    with pytest.raises(FlowRequestPending):
++        _run(prov, job, out)
++    assert prov._fake.sends == 1
+diff -ruN a/tools/update_v770_to_v771.py b/tools/update_v770_to_v771.py
+--- a/tools/update_v770_to_v771.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v770_to_v771.py	2026-10-21 00:16:13.222149093 +0000
+@@ -0,0 +1,134 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.71 update (Flow duplicate-spend guard) to a v7.0.70 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.71 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.71/tools/update_v770_to_v771.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.71/tools/update_v770_to_v771.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'FLOW_DUPLICATE_SPEND_GUARD_V7_0_71.md',
++    'VERSION',
++    'cli.py',
++    'engine/factory.py',
++    'engine/flow_resume_recovery.py',
++    'engine/flow_submit_guard.py',
++    'engine/providers/flow_browser.py',
++    'tests/test_v771_flow_submit_guard.py',
++    'tools/update_v770_to_v771.py',
++]
++# Files as they exist in 7.0.70: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['dd57f8676b5a5946446dc72bde7dfd5e58d0a56501db54e3a8a06a87357fe8f3'],
++    'cli.py': ['24af6ff6539193d8ef24ff21052c58070f9f61ec363e8463fdad282553c8d660'],
++    'engine/factory.py': ['6c70724da25eddb55bda5540037d643e8a674a844e6f995d6ecc860d810e3f98'],
++    'engine/flow_resume_recovery.py': ['7d7a14b85643ba9cd80b521002680ea7945cfd571021377d1db50bf7615c7bed'],
++    'engine/providers/flow_browser.py': ['f0e963159c7261698fdd8d656391c458fa2a81f9e1506f771949a3933009d96c'],
++}
++ACCEPTED_INSTALLS = ('7.0.70', '7.0.71')  # 7.0.71 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.70 (found ' + current + '). '
++                         'For 7.0.69 run ../AutoVideoAI-v7.0.70/tools/update_v769_to_v770.py first.')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.71 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.71 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.70-to-v7.0.71-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.71. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

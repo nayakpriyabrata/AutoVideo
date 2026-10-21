@@ -1,0 +1,666 @@
+diff -ruN a/HOOKS_V7_0_76.md b/HOOKS_V7_0_76.md
+--- a/HOOKS_V7_0_76.md	1970-01-01 00:00:00.000000000 +0000
++++ b/HOOKS_V7_0_76.md	2026-10-21 17:00:43.863431494 +0000
+@@ -0,0 +1,40 @@
++# AutoVideoAI v7.0.76: Gemini Web hooks
++
++## What changed
++
++- **Hooks are drafted by Gemini Web** after the narration words and text cards are ready. The
++  draft runs in the prepare stage and is saved to `production/hooks.json`. The raw reply is kept in
++  `production/hooks-draft.json`.
++- **Opt-in.** Create has a new checkbox, "Add Gemini Web hooks where the narration needs them".
++  It is off by default and needs a voiceover. The setting is `hooks_enabled`.
++- **Limits.** At most 6 hooks. Each is at most 60 characters on one line. Each is shown for
++  2.5 to 3.5 seconds (3.0 seconds by default, clipped at the end of the video). Hooks are at least
++  10 seconds apart. Each is anchored to a spoken word, so it appears when the narrator reaches that
++  moment.
++- **Placement.** A hook is a pop pill near the top centre of the frame. A hook that would cover a
++  text card, a points series or any other non-watermark overlay is dropped and logged as
++  `hooks_dropped_overlap`.
++- **Failure handling.** If Gemini Web is not signed in or returns an invalid draft, the job logs
++  `hooks_skipped` and continues without hooks. The render also logs `hooks_render_skipped` and
++  continues if the saved hooks no longer match the narration.
++- **Staleness.** Hooks are cached by a fingerprint over the voice audio, the words, the script,
++  the topic and the language. If any of these change, the saved hooks are refused until the
++  job is resumed and hooks are redrafted.
++
++## Files
++
++- `engine/video_hooks.py`: prompt, validation, drafting, cache, render-time placement.
++- `engine/render/hook_cards.py`: pill PNG renderer (fits text to two lines, portrait and landscape).
++- `engine/factory.py`: draft step after speech cards; overlay step before `graphics_plan.json` is saved.
++- `engine/studio_config.py`, `app.py`: `hooks_enabled` setting and checkbox.
++- `tests/test_v776_hooks.py`: 23 offline tests.
++
++## Install
++
++Install from 7.0.75 with `tools/update_v775_to_v776.py` (dry run first, then `--apply`). Stop the
++dashboard before `--apply`. Outputs, saved jobs and browser profiles are never touched.
++
++## Not yet verified
++
++- A live Gemini Web hook draft has not been run in this build.
++- A full job render with hooks on the user's footage has not been run.
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-21 11:36:08.000000000 +0000
++++ b/VERSION	2026-10-21 17:00:43.863431494 +0000
+@@ -1 +1 @@
+-7.0.75
++7.0.76
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-21 11:33:54.000000000 +0000
++++ b/app.py	2026-10-21 16:54:17.265478809 +0000
+@@ -695,6 +695,8 @@
+         tts_provider = st.selectbox('TTS provider for the selected language batch', ['auto','gemini','gemini-lite','groq','elevenlabs','kokoro','edge','gtts'], key='studio-batch-tts', disabled=not studio_voice_on)
+         st.write('Edition languages: ' + ', '.join(LANGUAGES[x].label for x in batch_languages))
+         speech_cards_enabled = st.checkbox('Use speech-timed Gemini cards in this production', value=False, key='studio-speech-cards', disabled=not studio_voice_on)
++        hooks_enabled = st.checkbox('Add Gemini Web hooks where the narration needs them', value=False, key='studio-hooks-enabled', disabled=not studio_voice_on,
++            help='Gemini Web drafts up to 6 short hook lines after the narration words and text cards are ready. Each is a pop pill near the top and never covers a text card. Needs a voiceover.')
+         prepare_language_audio = st.checkbox('Also prepare every selected language automatically during production', value=False, key='studio-all-language-audio', disabled=not studio_voice_on,
+             help='If you prepare and approve the batch below, its saved audio/cards are reused instead of resubmitting TTS.')
+         if not studio_voice_on:
+@@ -931,6 +933,7 @@
+                 cfg['watermark'] = True
+             cfg['character_ids'] = studio_cast
+             cfg['card_draft_provider'] = str(st.session_state.get('studio-draft-provider') or 'gemini-web')
++            cfg['hooks_enabled'] = bool(studio_voice_on and st.session_state.get('studio-hooks-enabled', False))
+             cfg.update(studio_broll)
+             kwargs = config_to_factory_kwargs(cfg)
+             job_id = F.create_job(topic=cfg["topic"], video_type=cfg["video_type"],
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-21 11:33:48.000000000 +0000
++++ b/engine/factory.py	2026-10-21 16:54:17.261478788 +0000
+@@ -240,7 +240,8 @@
+                    broll_count: int = 0, broll_duration: float = 2.0, broll_max_uses: int = 1,
+                    broll_query_hint: str = "", broll_auto: bool = False, external_video_mode: bool = False,
+                    speech_cards_enabled: bool = False, gemini_video_count: int = 0,
+-                   flow_auto_cleanup_images: bool = False, card_draft_provider: str = "gemini-web") -> str:
++                   flow_auto_cleanup_images: bool = False, card_draft_provider: str = "gemini-web",
++                   hooks_enabled: bool = False) -> str:
+         if type(gemini_video_count) is not int or not 0 <= gemini_video_count <= 4:
+             raise ValueError("Gemini video count must be between zero and four")
+         from .broll import validate_broll_options
+@@ -344,6 +345,7 @@
+                     "speech_cards_enabled": bool(speech_cards_enabled), "gemini_video_count": gemini_video_count,
+                     "flow_auto_cleanup_images": bool(flow_auto_cleanup_images),
+                     "card_draft_provider": str(card_draft_provider or "gemini-web"),
++                    "hooks_enabled": bool(hooks_enabled),
+                     "channel_name": str(channel_name or ""),
+                     "channel_logo": str(channel_logo or ""), "channel_logo_size": channel_logo_size,
+                     "graphics_overlays": bool(graphics_overlays),
+@@ -1253,6 +1255,17 @@
+                     educational=is_educational(m.content_type, getattr(m, "preset", "")),
+                     topic=m.topic, provider=settings.get("card_draft_provider") or "gemini-web")
+ 
++        if settings.get('hooks_enabled') and presentation.voiceover and not dry and words:
++            # 7.0.76: Gemini Web hooks after narration words and text cards exist. A failed draft
++            # is logged and the job continues without hooks.
++            from .video_hooks import draft_hooks
++            prog('Drafting Gemini Web hooks from saved narration words', 17)
++            try:
++                draft_hooks(D['root'], voice_path, words, plan.get('narration', ''), narration_dur,
++                            m.language, topic=m.topic, cleanup=settings.get('gemini_chat_cleanup', 'keep'))
++            except Exception as hook_error:
++                self.pm.log(job_id, 'hooks_skipped', {'error': str(hook_error)[:300]})
++
+         # ---- 3. bible + director ----
+         if m.status in ("created", "scripted", "narrated") or not m.shots:
+             prog("📖 Building story bible + shot plan...", 18)
+@@ -4121,6 +4134,19 @@
+             if reviewed is not None:
+                 overlays = [e for e in overlays if e.get('kind') == 'watermark'] + reviewed
+ 
++        if settings.get('hooks_enabled') and voice and words:
++            # 7.0.76: hook pills are placed after cards, and any hook covering another overlay is dropped.
++            from .video_hooks import build_hook_overlays
++            try:
++                hook_overlays, dropped_hooks = build_hook_overlays(
++                    D['root'], voice, words, script_text, ndur, m.width, m.height, card_style,
++                    overlays, topic=m.topic, language=m.language)
++                if dropped_hooks:
++                    self.pm.log(job_id, 'hooks_dropped_overlap', {'dropped': dropped_hooks})
++                overlays = [e for e in overlays if e.get('kind') != 'hook'] + hook_overlays
++            except Exception as hook_error:
++                self.pm.log(job_id, 'hooks_render_skipped', {'error': str(hook_error)[:300]})
++
+         # Always update the plan, so a disabled overlay is not resurrected by
+         # stale PNGs or a previous graphics_plan on a later render.
+         _save_json(os.path.join(D["root"], "graphics_plan.json"), overlays)
+diff -ruN a/engine/render/hook_cards.py b/engine/render/hook_cards.py
+--- a/engine/render/hook_cards.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/render/hook_cards.py	2026-10-21 16:53:40.865295004 +0000
+@@ -0,0 +1,42 @@
++"""Hook pills (7.0.76): one short attention line, drawn as a centred pill.
++
++Each hook PNG is a full-canvas transparent frame. The pill rectangle is returned as
++``box`` so the FFmpeg renderer can pop it open and closed (anim='pop').
++"""
++from __future__ import annotations
++
++from pathlib import Path
++
++from PIL import Image, ImageDraw
++
++INK = (12, 20, 35, 255)
++
++
++def render_hook_png(hook: dict, path, width: int, height: int, style: str = "bold") -> dict:
++    from .typography import resolve_style, PALETTES, fit, draw_text
++    style = resolve_style(style)
++    palette = PALETTES[style]
++    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
++    d = ImageDraw.Draw(img)
++    vertical = height > width
++    scale = min(width, height) / 1080.0
++    max_w = int(width * (.84 if vertical else .60))
++    pad_x, pad_y = int(34 * scale), int(20 * scale)
++    stroke = max(1, int(2 * scale))
++    layout = fit(d, hook["text"], max_w - 2 * pad_x, int(height * .14), size=64 * scale, minimum=40 * scale,
++                 style=style, bold=True, headline=True, max_lines=2, stroke=stroke)
++    box_w = min(max_w, layout.width + 2 * pad_x)
++    box_h = layout.height + 2 * pad_y
++    left = (width - box_w) // 2
++    top = int(height * (.07 if vertical else .09))
++    d.rounded_rectangle((left, top, left + box_w, top + box_h), radius=box_h // 2,
++                        fill=palette["accent"], outline=(255, 255, 255, 90), width=max(1, int(2 * scale)))
++    text_box = draw_text(d, layout, (left + pad_x, top + pad_y, left + box_w - pad_x, top + pad_y + layout.height),
++                         INK, align="center")
++    Path(path).parent.mkdir(parents=True, exist_ok=True)
++    img.save(path)
++    return {"kind": "hook", "path": str(path), "start": hook["start"], "end": hook["end"], "title": hook["text"],
++            "anchor": "top-center", "opacity": 1, "box": [left, top, box_w, box_h], "anim": "pop",
++            "fade_in": .18, "fade_out": .18,
++            "layout": {"style": style, "font_sizes": [layout.size], "text_boxes": [text_box],
++                       "canvas": [width, height]}}
+diff -ruN a/engine/studio_config.py b/engine/studio_config.py
+--- a/engine/studio_config.py	2026-10-21 11:33:54.000000000 +0000
++++ b/engine/studio_config.py	2026-10-21 16:54:17.245478708 +0000
+@@ -32,6 +32,7 @@
+     "voice": "en-IN-PrabhatNeural",
+     "script_provider": "auto",
+     "card_draft_provider": "gemini-web",
++    "hooks_enabled": False,
+     "script_model": "auto",
+     "script_quality": "publish",
+     "gemini_chat_cleanup": "delete-after-read",
+diff -ruN a/engine/video_hooks.py b/engine/video_hooks.py
+--- a/engine/video_hooks.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/video_hooks.py	2026-10-21 16:54:27.469530372 +0000
+@@ -0,0 +1,139 @@
++"""Hooks drafted with Gemini Web (7.0.76).
++
++Hooks are short attention lines (at most 60 characters) placed where the narration
++needs them: the opening when it is weak, and points where energy drops or a new
++section starts. Gemini Web drafts them after the narration words and the text
++cards exist. Each hook is anchored to a spoken word, so it appears when the
++narrator reaches that moment.
++
++Rules enforced here:
++* at most 6 hooks; at least 10 seconds between hooks; each shown 2.5-3.5 seconds;
++* a hook never covers a text card, a points series, or any other overlay; hooks
++  that would are dropped at render time and counted in the log;
++* if Gemini Web is unavailable, the job continues without hooks.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import math
++from pathlib import Path
++
++MAX_HOOKS = 6
++MIN_GAP_SECONDS = 10.0
++HOLD_SECONDS = 3.0
++MIN_VISIBLE_SECONDS = 2.5
++MAX_CHARS = 60
++VARIANT = "hooks-v1"
++
++
++def hook_prompt(topic, language) -> str:
++    return (
++        "You are a senior short-form video editor. "
++        f"The video topic is: {' '.join(str(topic or '').split())}. "
++        f"Target language: {language}. "
++        "Write attention hooks: short on-screen lines that stop a viewer from scrolling away. "
++        'Return JSON {"hooks":[{"text":"...","start_word":0}]}. '
++        "Choose at most 6 moments in the narration where a hook is genuinely needed: the opening if it is weak, "
++        "and places where the narration loses energy or a new section begins. Spread them out; no two closer than "
++        "10 seconds apart. Each text is at most 60 characters, in the target language, and echoes the narration as "
++        "a question, a contrast, a surprising angle or a clear promise. Use exact zero-based word IDs from the "
++        "supplied words. Do not invent facts, statistics or numbers, and do not repeat the narration word for word. "
++        "An empty list is allowed if no hook is needed.")
++
++
++def _fingerprint(audio, words, script, topic, language) -> str:
++    h = hashlib.sha256()
++    with Path(audio).open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            h.update(chunk)
++    h.update(json.dumps(words, sort_keys=True, ensure_ascii=False).encode())
++    h.update(str(script).encode())
++    h.update(f"{VARIANT}|{' '.join(str(topic or '').split())}|{language}".encode())
++    return h.hexdigest()
++
++
++def anchor_hooks(draft, words, duration):
++    """Validate Gemini's hooks and convert word IDs to timed windows."""
++    from .speech_cards import validate_words
++    validate_words(words, duration)
++    rows = draft.get("hooks") if isinstance(draft, dict) else None
++    if rows is None:
++        rows = []
++    if not isinstance(rows, list) or len(rows) > MAX_HOOKS:
++        raise ValueError(f"Gemini must return at most {MAX_HOOKS} hooks")
++    hooks = []
++    for row in rows:
++        if not isinstance(row, dict):
++            raise ValueError("Each hook must be an object")
++        first = row.get("start_word")
++        text = row.get("text")
++        if type(first) is not int or not 0 <= first < len(words):
++            raise ValueError("A hook refers to an invalid speech word index")
++        if not isinstance(text, str) or not 1 <= len(text.strip()) <= MAX_CHARS or "\n" in text:
++            raise ValueError(f"Each hook must be one line of at most {MAX_CHARS} characters")
++        start = float(words[first]["start"])
++        end = min(float(duration), start + HOLD_SECONDS)
++        if not math.isfinite(start) or end - start < MIN_VISIBLE_SECONDS:
++            raise ValueError("A hook falls too close to the end of the video to be read")
++        hooks.append({"text": text.strip(), "start_word": first, "start": round(start, 3), "end": round(end, 3)})
++    hooks.sort(key=lambda h: h["start"])
++    for before, after in zip(hooks, hooks[1:]):
++        if after["start"] - before["start"] < MIN_GAP_SECONDS:
++            raise ValueError("Hooks must be at least 10 seconds apart")
++    return hooks
++
++
++def draft_hooks(root, audio, words, script, duration, language, *, topic="", cleanup="keep"):
++    """Ask Gemini Web for hooks and save production/hooks.json. Cached by fingerprint."""
++    from .production import save
++    from .speech_cards import validate_words
++    from .planning.script_engine import _extract_json
++    from .studio_review import _draft_generate
++    root = Path(root)
++    target = root / "production" / "hooks.json"
++    key = _fingerprint(audio, words, script, topic, language)
++    if target.is_file():
++        prior = json.loads(target.read_text(encoding="utf-8"))
++        if prior.get("fingerprint") == key:
++            return prior
++    validate_words(words, duration)
++    indexed = [{"id": i, "word": w["word"], "start": w["start"], "end": w["end"]} for i, w in enumerate(words)]
++    user = (f"Duration: {float(duration):.3f}s\nReviewed script:\n{script}\n"
++            "Timed narration words:\n" + json.dumps(indexed, ensure_ascii=False))
++    raw = _draft_generate('gemini-web', hook_prompt(topic, language), user, cleanup=cleanup)
++    save(target.with_name("hooks-draft.json"), {"response": raw, "fingerprint": key})
++    hooks = anchor_hooks(_extract_json(raw), words, duration)
++    result = {"schema_version": 1, "source": "gemini-web-hooks", "fingerprint": key, "duration": float(duration),
++              "language": language, "topic": str(topic or ""), "hooks": hooks}
++    save(target, result)
++    return result
++
++
++def load_hooks(root, audio, words, script, duration, language, *, topic=""):
++    """Saved hooks for the current narration, or None. A stale draft is refused, not reused."""
++    path = Path(root) / "production" / "hooks.json"
++    if not path.is_file():
++        return None
++    data = json.loads(path.read_text(encoding="utf-8"))
++    if data.get("fingerprint") != _fingerprint(audio, words, script, topic, language):
++        raise ValueError("Narration, timings or topic changed after hook drafting. Resume the job to refresh hooks.")
++    return anchor_hooks(data, words, duration)
++
++
++def build_hook_overlays(root, audio, words, script, duration, width, height, style, existing,
++                        *, topic="", language="en"):
++    """Render hook pills and drop any that would cover another overlay. Returns (overlays, dropped)."""
++    from .render.hook_cards import render_hook_png
++    hooks = load_hooks(root, audio, words, script, duration, language, topic=topic)
++    if not hooks:
++        return [], 0
++    blocked = [(float(e["start"]), float(e["end"])) for e in existing if e.get("kind") != "watermark"]
++    overlays, dropped = [], 0
++    for index, hook in enumerate(hooks):
++        if any(hook["start"] < end and start < hook["end"] for start, end in blocked):
++            dropped += 1
++            continue
++        target = Path(root) / "render" / "graphics" / f"hook-{index:02d}.png"
++        overlays.append(render_hook_png(hook, target, int(width), int(height), style=style))
++    return overlays, dropped
+diff -ruN a/tests/test_v776_hooks.py b/tests/test_v776_hooks.py
+--- a/tests/test_v776_hooks.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v776_hooks.py	2026-10-21 16:55:00.653697960 +0000
+@@ -0,0 +1,196 @@
++"""Hooks drafted with Gemini Web (7.0.76): validation, caching, placement, rendering, settings."""
++import inspect
++import json
++from pathlib import Path
++
++import pytest
++from PIL import Image
++
++from engine import video_hooks as VH
++from engine import studio_config
++from engine.render.hook_cards import render_hook_png
++
++DURATION = 40.0
++
++
++def words(n=80):
++    return [{'word': f'w{i}', 'start': i * .5, 'end': i * .5 + .4} for i in range(n)]
++
++
++def audio_file(tmp_path, data=b'voice-bytes'):
++    path = tmp_path / 'voice.mp3'
++    path.write_bytes(data)
++    return path
++
++
++def good_draft():
++    return {'hooks': [
++        {'text': 'Why does your mind race at night?', 'start_word': 0},
++        {'text': 'The one habit that changes everything', 'start_word': 24},
++    ]}
++
++
++def test_anchor_hooks_maps_word_ids_to_timed_windows():
++    hooks = VH.anchor_hooks(good_draft(), words(), DURATION)
++    assert [h['start_word'] for h in hooks] == [0, 24]
++    assert hooks[0]['start'] == 0.0 and hooks[0]['end'] == 3.0
++    assert hooks[1]['start'] == 12.0 and hooks[1]['end'] == 15.0
++
++
++def test_anchor_hooks_clips_to_video_end_and_refuses_unreadable_tail():
++    tail = {'hooks': [{'text': 'Late hook', 'start_word': 78}]}  # starts 39.0 s, 1.0 s left
++    with pytest.raises(ValueError, match='too close to the end'):
++        VH.anchor_hooks(tail, words(), DURATION)
++    edge = {'hooks': [{'text': 'Late but readable', 'start_word': 76}]}  # 38.0 s, 2.0 s left
++    with pytest.raises(ValueError, match='too close to the end'):
++        VH.anchor_hooks(edge, words(), DURATION)
++    ok = {'hooks': [{'text': 'Just readable', 'start_word': 75}]}  # 37.5 s, 2.5 s left
++    assert VH.anchor_hooks(ok, words(), DURATION)[0]['end'] == 40.0
++
++
++@pytest.mark.parametrize('draft, message', [
++    ({'hooks': [{'text': f'Hook {i}', 'start_word': i * 12} for i in range(7)]}, 'at most 6'),
++    ({'hooks': [{'text': 'x' * 61, 'start_word': 0}]}, 'at most 60'),
++    ({'hooks': [{'text': '   ', 'start_word': 0}]}, 'at most 60'),
++    ({'hooks': [{'text': 'Two\nlines', 'start_word': 0}]}, 'one line'),
++    ({'hooks': [{'text': 'Bad index', 'start_word': 999}]}, 'invalid speech word'),
++    ({'hooks': [{'text': 'Bool index', 'start_word': True}]}, 'invalid speech word'),
++    ({'hooks': [{'text': 'Too close', 'start_word': 0}, {'text': 'Second', 'start_word': 10}]}, 'at least 10 seconds'),
++    ({'hooks': 'nope'}, 'at most 6'),
++])
++def test_anchor_hooks_rejects_invalid_drafts(draft, message):
++    with pytest.raises(ValueError, match=message):
++        VH.anchor_hooks(draft, words(), DURATION)
++
++
++def test_anchor_hooks_accepts_empty_list_and_missing_key():
++    assert VH.anchor_hooks({'hooks': []}, words(), DURATION) == []
++    assert VH.anchor_hooks({}, words(), DURATION) == []
++
++
++def test_draft_hooks_writes_cache_and_reuses_it(tmp_path, monkeypatch):
++    audio = audio_file(tmp_path)
++    calls = []
++
++    def fake_draft(provider, system, user, cleanup='delete-after-read'):
++        calls.append((provider, cleanup))
++        assert 'at most 6' in system and '60 characters' in system
++        assert '"start_word"' in system
++        return json.dumps(good_draft())
++
++    import engine.studio_review as SR
++    monkeypatch.setattr(SR, '_draft_generate', fake_draft)
++    first = VH.draft_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep', cleanup='keep')
++    assert calls == [('gemini-web', 'keep')]
++    assert len(first['hooks']) == 2 and first['source'] == 'gemini-web-hooks'
++    saved = json.loads((tmp_path / 'production' / 'hooks.json').read_text(encoding='utf-8'))
++    assert saved['hooks'] == first['hooks']
++    assert (tmp_path / 'production' / 'hooks-draft.json').is_file()
++
++    again = VH.draft_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep')
++    assert len(calls) == 1 and again['fingerprint'] == first['fingerprint']
++
++
++def test_draft_hooks_failure_propagates_so_factory_can_skip(tmp_path, monkeypatch):
++    import engine.studio_review as SR
++
++    def broken(*args, **kwargs):
++        raise RuntimeError('Gemini Web is not signed in')
++
++    monkeypatch.setattr(SR, '_draft_generate', broken)
++    with pytest.raises(RuntimeError, match='not signed in'):
++        VH.draft_hooks(tmp_path, audio_file(tmp_path), words(), 'script', DURATION, 'en')
++    assert not (tmp_path / 'production' / 'hooks.json').exists()
++
++
++def test_changed_narration_refuses_stale_hooks(tmp_path, monkeypatch):
++    import engine.studio_review as SR
++    monkeypatch.setattr(SR, '_draft_generate', lambda *a, **k: json.dumps(good_draft()))
++    audio = audio_file(tmp_path)
++    VH.draft_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep')
++    assert VH.load_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep')
++    with pytest.raises(ValueError, match='changed after hook drafting'):
++        VH.load_hooks(tmp_path, audio, words(), 'edited script', DURATION, 'en', topic='Sleep')
++    with pytest.raises(ValueError, match='changed after hook drafting'):
++        VH.load_hooks(tmp_path, audio_file(tmp_path, b'other'), words(), 'script', DURATION, 'en', topic='Sleep')
++
++
++def test_load_hooks_without_draft_returns_none(tmp_path):
++    assert VH.load_hooks(tmp_path, audio_file(tmp_path), words(), 'script', DURATION, 'en') is None
++
++
++def _saved_hooks(tmp_path, monkeypatch, draft):
++    import engine.studio_review as SR
++    monkeypatch.setattr(SR, '_draft_generate', lambda *a, **k: json.dumps(draft))
++    audio = audio_file(tmp_path)
++    VH.draft_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep')
++    return audio
++
++
++def test_build_hook_overlays_drops_hooks_that_cover_a_card(tmp_path, monkeypatch):
++    audio = _saved_hooks(tmp_path, monkeypatch, good_draft())
++    # Card covers 1-4 s: the first hook (0-3 s) overlaps it and is dropped; the second (12-15 s) stays.
++    existing = [{'kind': 'keypoint', 'start': 1.0, 'end': 4.0}, {'kind': 'watermark', 'start': 0, 'end': 40}]
++    overlays, dropped = VH.build_hook_overlays(tmp_path, audio, words(), 'script', DURATION, 1080, 1920,
++                                               'bold', existing, topic='Sleep', language='en')
++    assert dropped == 1
++    assert len(overlays) == 1 and overlays[0]['kind'] == 'hook'
++    assert overlays[0]['start'] == 12.0 and overlays[0]['end'] == 15.0
++    assert overlays[0]['anim'] == 'pop'
++    assert Path(overlays[0]['path']).is_file()
++
++
++def test_build_hook_overlays_ignores_watermark_only(tmp_path, monkeypatch):
++    audio = _saved_hooks(tmp_path, monkeypatch, good_draft())
++    existing = [{'kind': 'watermark', 'start': 0, 'end': 40}]
++    overlays, dropped = VH.build_hook_overlays(tmp_path, audio, words(), 'script', DURATION, 1920, 1080,
++                                               'bold', existing, topic='Sleep', language='en')
++    assert dropped == 0 and len(overlays) == 2
++
++
++def test_build_hook_overlays_without_hooks_returns_empty(tmp_path):
++    assert VH.build_hook_overlays(tmp_path, audio_file(tmp_path), words(), 'script', DURATION, 1080, 1920,
++                                  'bold', []) == ([], 0)
++
++
++def test_hook_pill_stays_inside_canvas_in_both_orientations(tmp_path):
++    hook = {'text': 'Why does your mind race at night, every single night?', 'start': 1.0, 'end': 4.0}
++    for width, height in ((1080, 1920), (1920, 1080)):
++        out = render_hook_png(hook, tmp_path / f'hook-{width}.png', width, height, style='bold')
++        left, top, bw, bh = out['box']
++        assert left >= 0 and top >= 0 and left + bw <= width and top + bh <= height
++        img = Image.open(out['path']).convert('RGBA')
++        assert img.size == (width, height)
++        assert img.getpixel((0, 0))[3] == 0
++        assert img.getpixel((left + bw // 2, top + bh // 2))[3] > 0
++        assert out['kind'] == 'hook' and out['anim'] == 'pop' and out['anchor'] == 'top-center'
++
++
++def test_hook_pill_text_fits_at_sixty_characters(tmp_path):
++    text = 'Here is the one habit that quietly changes how you sleep'
++    assert len(text) <= 60
++    out = render_hook_png({'text': text, 'start': 0, 'end': 3}, tmp_path / 'wide.png', 1080, 1920, style='bold')
++    assert out['box'][2] <= 1080 * .84 + 1
++
++
++def test_settings_default_off_and_factory_accepts_key():
++    assert studio_config.DEFAULTS['hooks_enabled'] is False
++    from engine import factory as F
++    params = inspect.signature(F.Factory.create_job).parameters
++    assert params['hooks_enabled'].default is False
++
++
++def test_hooks_setting_must_be_boolean(tmp_path):
++    from engine.studio_config import _validate_settings
++    cfg = dict(studio_config.DEFAULTS)
++    cfg['hooks_enabled'] = 'yes'
++    with pytest.raises(Exception):
++        _validate_settings(cfg)
++    cfg['hooks_enabled'] = True
++    _validate_settings(cfg)
++
++
++def test_prompt_states_the_limits():
++    text = VH.hook_prompt('How to sleep', 'en')
++    assert 'at most 6' in text and '60 characters' in text and '10 seconds' in text
++    assert 'How to sleep' in text and 'Target language: en' in text
+diff -ruN a/tools/update_v775_to_v776.py b/tools/update_v775_to_v776.py
+--- a/tools/update_v775_to_v776.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v775_to_v776.py	2026-10-21 17:00:43.863431494 +0000
+@@ -0,0 +1,133 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.76 update (Gemini Web hooks: opt-in short attention pills placed where the narration needs them) to a v7.0.75 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.76 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.76/tools/update_v775_to_v776.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.76/tools/update_v775_to_v776.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'HOOKS_V7_0_76.md',
++    'VERSION',
++    'app.py',
++    'engine/factory.py',
++    'engine/render/hook_cards.py',
++    'engine/studio_config.py',
++    'engine/video_hooks.py',
++    'tests/test_v776_hooks.py',
++    'tools/update_v775_to_v776.py',
++]
++# Files as they exist in 7.0.75: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['597d612d92ded15da7218f32554bbf5f4c831d9e2cd19e4ab7288d90a03a56e4'],
++    'app.py': ['ca8221b7edb2f086f14e3575f63183b7811ec4b7fb74e42241e20b2383519fcb'],
++    'engine/factory.py': ['ca491084a64336fc39936b95fce930d303185f01bce7593e0b889fc3ad4c51b1'],
++    'engine/studio_config.py': ['8467f77ec640bbd2d257b295da2c4e87a67d42b358cbc6c2d569ee83fcd736f2'],
++}
++ACCEPTED_INSTALLS = ('7.0.75', '7.0.76')  # 7.0.76 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.75 (found ' + current + '). '
++                         'Run ../AutoVideoAI-v7.0.75/tools/update_v774_to_v775.py first (7.0.70 to 7.0.71 to 7.0.72 to 7.0.73 to 7.0.74 to 7.0.75 to 7.0.76 is a chain).')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.76 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.76 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.75-to-v7.0.76-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.76. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

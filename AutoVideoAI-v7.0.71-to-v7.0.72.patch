@@ -1,0 +1,1584 @@
+diff -ruN a/POST_JOB_CLEANUP_V7_0_72.md b/POST_JOB_CLEANUP_V7_0_72.md
+--- a/POST_JOB_CLEANUP_V7_0_72.md	1970-01-01 00:00:00.000000000 +0000
++++ b/POST_JOB_CLEANUP_V7_0_72.md	2026-10-21 05:58:42.512576025 +0000
+@@ -0,0 +1,78 @@
++# Post-job cleanup · v7.0.72
++
++## Why
++
++v7.0.71 had cleanup only as whole-job deletion (Manage saved jobs & clips), which also deletes the final video. Nothing removed media that a finished video no longer needs. Two kinds of folder grew without limit:
++
++- **Generation jobs:** every Flow take (including unused takes), raw downloads, storyboard frames, references, narration and audio, stock copies, and any intermediate renders.
++- **Clip studio folders:** `_clip_work/<source>/` kept the downloaded source video and per-batch speech and frame files after each run finished.
++
++v7.0.72 adds a reviewed "Free space" step that keeps the finished video and removes only the media.
++
++## What is kept
++
++- Every validated final video in `render/` (`*final*.mp4`), and every finished clip output in a clip folder.
++- All JSON, text, subtitles, logs, reports, and Flow request journals (`*.flow-request.json`).
++- Symlinks, which are never followed or removed.
++
++## What is removed
++
++- **Generation job:** media files under the job folder (`.mp4`, `.mov`, `.jpg`, `.png`, `.mp3`, `.wav`, `.m4a`, and similar), plus any interrupted `render/.bounded-*` temp folders.
++- **Clip folder:** media files under `_clip_work/` (the downloaded source and batch work).
++
++Remote Google Flow media is never touched. Use the existing storage manager for that.
++
++## When it is blocked
++
++Nothing is deleted if any of these is true:
++
++- The job status is not `done`.
++- No final video in `render/` passes validation.
++- A Flow request is not `downloaded`.
++- `auto_resume.json` or `pause_state.json` shows an automatic resume that is running or waiting.
++- Production holds the job's `.production.lock`.
++- A clip run has no readable `highlights.json`.
++
++## How to use it (after the video is finished)
++
++1. Open the dashboard and go to **Manage saved jobs & clips**.
++2. Select the finished job or clip folder.
++3. Open **Free space after finishing**, then press **Review cleanup**.
++4. Check the category table and the kept video list.
++5. Tick the confirmation box, then press **Free space now**.
++
++The apply step recomputes the plan and refuses if anything changed since review.
++
++From the command line:
++
++```
++python3 cli.py v3 cleanup-plan <job_id>                 # preview, prints a digest
++python3 cli.py v3 cleanup-apply <job_id> --digest <d>   # delete exactly the reviewed set
++python3 cli.py v3 cleanup-plan --clip-folder <folder>
++python3 cli.py v3 cleanup-apply --clip-folder <folder> --digest <d>
++```
++
++Each applied cleanup writes `logs/post_job_cleanup_<time>.json` (clip folders: at the folder root) with the removed categories, bytes freed, and kept videos.
++
++## Trade-offs
++
++- After cleanup, source takes and narration cannot be used to re-render the job. Re-rendering a job would need new generation, which spends credits. Keep the final video.
++- A clip folder's source video must be downloaded again before its clips can be re-cut.
++- Cleanup is manual. Nothing is deleted automatically.
++
++## Not covered yet
++
++- Automatic cleanup on a schedule.
++- Remote Flow gallery cleanup (use the existing storage manager, which requires its own confirmation).
++- Live browser test of the Streamlit panel. The logic is covered by unit tests; please check the panel on your machine.
++
++## Install
++
++Stop the dashboard, then from the 7.0.71 installation folder:
++
++```
++python3 ../AutoVideoAI-v7.0.72/tools/update_v771_to_v772.py .            # dry run
++python3 ../AutoVideoAI-v7.0.72/tools/update_v771_to_v772.py . --apply
++```
++
++The updater replaces code and documentation only. Outputs, saved jobs, browser profiles, music, characters, and channel profiles are never copied, moved, or deleted.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-21 05:58:42.464575768 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-21 05:58:42.496575939 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.71",
+-  "built_at": "2026-10-21T00:27:29+00:00",
++  "version": "7.0.72",
++  "built_at": "2026-10-21T05:55:53+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -8,6 +8,11 @@
+       "sha256": "a75f8f9d191e336e02eed524151bb8308b4a2134add5f3ff7b315ecef1e39a01"
+     },
+     {
++      "path": ".github/workflows/tests.yml",
++      "bytes": 1054,
++      "sha256": "c28f472339dd199d9b276e64555d7a449abcf8b106a90af2cd52ea3f57fcbda4"
++    },
++    {
+       "path": ".gitignore",
+       "bytes": 232,
+       "sha256": "0bb1f4e2b91315f481348a6f3428a4232fbc334e78a609c00267c30a8dc36d64"
+@@ -288,6 +293,11 @@
+       "sha256": "e1024d1c533fcbd365c68cbe64267e88b7d78c3ba397427b772abf75728ba9aa"
+     },
+     {
++      "path": "POST_JOB_CLEANUP_V7_0_72.md",
++      "bytes": 3630,
++      "sha256": "e4618733c816ef1b4b786f03d60a5c236abf3e74bf17bcec638091b83f012c44"
++    },
++    {
+       "path": "PRODUCTION_REVIEW_V7_0_54.md",
+       "bytes": 7994,
+       "sha256": "32511a4f1df9cf2a356929b7940241ddf5242a45c720fe773aa8b8dd39b09238"
+@@ -825,7 +835,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "8cb8d863f222948be19976fe70adfc7273081102023bc6da2d681cf633aaac80"
++      "sha256": "df2e046c87f2dc9b86f1af20da505f87d8b112311ada4a9bbea3ce986e034cde"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -873,96 +883,6 @@
+       "sha256": "755cb485cd8a76cc079d6b2058cc9edde9cfd75444f6149bf5c68097fbc962b2"
+     },
+     {
+-      "path": "autovideo_runner.py",
+-      "bytes": 48891,
+-      "sha256": "e7f73a5a04bb567a2416ca85d6628dfa105d3eee833971d34522718c8534472a"
+-    },
+-    {
+-      "path": "check-cdp.bat",
+-      "bytes": 869,
+-      "sha256": "ec3375fa78196ba74502529ff42e93d3d4ccc696333a973e2cb29380bbdc8818"
+-    },
+-    {
+-      "path": "chrome-debug.bat",
+-      "bytes": 1579,
+-      "sha256": "7d9dc4a6d1189d46e6544ff66a20e6be9c3dbf050486e5115d2a2a30a1909633"
+-    },
+-    {
+-      "path": "chrome-debug.sh",
+-      "bytes": 545,
+-      "sha256": "8fec26c5641bb89021c206e01eb5bfaf7ca26f5d3005cc4a3f770099c2b9026c"
+-    },
+-    {
+-      "path": "cli.py",
+-      "bytes": 75116,
+-      "sha256": "122604d17b6fb6ccb76b618797f17f26c4365a26ecaf77a5771532e946379269"
+-    },
+-    {
+-      "path": "clip_config.yaml",
+-      "bytes": 2236,
+-      "sha256": "cd59d53ec65165f74a61fba88bd7d7dae2062a0f62d1695378d0422c8a761fcf"
+-    },
+-    {
+-      "path": "dashboard.bat",
+-      "bytes": 54,
+-      "sha256": "b08060c15e040f050dc36a7af175ab2417fdbe783e92e2e3c4cdc97772bf5c25"
+-    },
+-    {
+-      "path": "dashboard.sh",
+-      "bytes": 97,
+-      "sha256": "e0c7139cc0eec8a691598da500cd238e4662e7969dddd3898a9ee40e00e3ea0b"
+-    },
+-    {
+-      "path": "requirements-test.txt",
+-      "bytes": 614,
+-      "sha256": "21e023fe284e9379ed429df4a6e53058e285d2885ed7a6f3d17a97df100c9f97"
+-    },
+-    {
+-      "path": "requirements.txt",
+-      "bytes": 1322,
+-      "sha256": "ecfd8717d555ed3c1fc749b2ead2bb8362a93f9e703ab889fd9dc88bb6a72105"
+-    },
+-    {
+-      "path": "run.sh",
+-      "bytes": 244,
+-      "sha256": "7b7dd022aebb1fece0af93c4c803523a9af85b31993f04a287fd8eecea56d43e"
+-    },
+-    {
+-      "path": "run_flow_companion_windows.bat",
+-      "bytes": 328,
+-      "sha256": "07d7a9c88d64e82c74000379bbde9c9b20e5933945580db7c64bab79d58c94f3"
+-    },
+-    {
+-      "path": "run_windows.bat",
+-      "bytes": 209,
+-      "sha256": "baf0adf88b38db09b57b2164cfcc5cd11e9b428d3afdc757f207180351e990a9"
+-    },
+-    {
+-      "path": "setup_mac_linux.sh",
+-      "bytes": 1907,
+-      "sha256": "dc565fe4c7e9520925101fe4086e3cb4f4a97efd90ab1285c889d7d1fdf79a23"
+-    },
+-    {
+-      "path": "setup_windows.bat",
+-      "bytes": 1283,
+-      "sha256": "190b0ae5f407406f688f1750dddd77bffdb05afba6c8dd455df71c587ee2a7be"
+-    },
+-    {
+-      "path": "topics.csv",
+-      "bytes": 467,
+-      "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
+-    },
+-    {
+-      "path": "video_config.yaml",
+-      "bytes": 2687,
+-      "sha256": "4c73c8b06211fc22937950c4477b64db1468b06b5c72c9571f8c619089c1c76b"
+-    },
+-    {
+-      "path": ".github/workflows/tests.yml",
+-      "bytes": 1054,
+-      "sha256": "c28f472339dd199d9b276e64555d7a449abcf8b106a90af2cd52ea3f57fcbda4"
+-    },
+-    {
+       "path": "assets/flow_clips/README.txt",
+       "bytes": 744,
+       "sha256": "3ebb3409f6ca878d6fe4cb38b41c6a47d4222b6adee2cb91fa64d2584c405c8d"
+@@ -1018,6 +938,26 @@
+       "sha256": "ae448c47abba6203cc8a1681edd900fc9a89fc848149385af29b3bdf74f71b82"
+     },
+     {
++      "path": "autovideo_runner.py",
++      "bytes": 48891,
++      "sha256": "e7f73a5a04bb567a2416ca85d6628dfa105d3eee833971d34522718c8534472a"
++    },
++    {
++      "path": "check-cdp.bat",
++      "bytes": 869,
++      "sha256": "ec3375fa78196ba74502529ff42e93d3d4ccc696333a973e2cb29380bbdc8818"
++    },
++    {
++      "path": "chrome-debug.bat",
++      "bytes": 1579,
++      "sha256": "7d9dc4a6d1189d46e6544ff66a20e6be9c3dbf050486e5115d2a2a30a1909633"
++    },
++    {
++      "path": "chrome-debug.sh",
++      "bytes": 545,
++      "sha256": "8fec26c5641bb89021c206e01eb5bfaf7ca26f5d3005cc4a3f770099c2b9026c"
++    },
++    {
+       "path": "chrome_extension/content.css",
+       "bytes": 633,
+       "sha256": "386d4bf15d5693bcd22db9e90bae84771e614a2aff819674be86fb332b2e20fa"
+@@ -1048,11 +988,26 @@
+       "sha256": "913383f0102b2f59525e932fcaf9d0b3be5f0bb440b15b9ea443c873518ab96e"
+     },
+     {
++      "path": "cli.py",
++      "bytes": 77175,
++      "sha256": "833e47556113af25548f70c5a4e737367056da48d91e75375c9f51d912c108ff"
++    },
++    {
++      "path": "clip_config.yaml",
++      "bytes": 2236,
++      "sha256": "cd59d53ec65165f74a61fba88bd7d7dae2062a0f62d1695378d0422c8a761fcf"
++    },
++    {
+       "path": "config/chatgpt_ui.yaml",
+       "bytes": 202,
+       "sha256": "79f360ce6ad5862f981bfa70e2c8107e112dd3dea8cc39184c2c3505af897a94"
+     },
+     {
++      "path": "config/examples/rain-dance-30s-music-only.json",
++      "bytes": 1870,
++      "sha256": "0e8efa447fa73c3972f7885ee13764d61fc8e6b3475cc40a42f128f56d29bc53"
++    },
++    {
+       "path": "config/flow_models.yaml",
+       "bytes": 5151,
+       "sha256": "f5e210ee74860b01e7d1aad8903ced1df5968d4cc98aedc9d49115426f522139"
+@@ -1073,21 +1028,6 @@
+       "sha256": "b15f0fd85e5bf0c0490307e916dd35780143750bf40c5f7690eceeee061422e5"
+     },
+     {
+-      "path": "config/user_settings.yaml.example",
+-      "bytes": 3592,
+-      "sha256": "58ee73e5ea6e3713cbe968dc949753a33e7b0fa4b4b33b52b427254fce07ee02"
+-    },
+-    {
+-      "path": "config/voices.yaml",
+-      "bytes": 853,
+-      "sha256": "2c4b280a705fe01f53fb30835afac4d73eb706e55dd18fa0036907a3c1587855"
+-    },
+-    {
+-      "path": "config/examples/rain-dance-30s-music-only.json",
+-      "bytes": 1870,
+-      "sha256": "0e8efa447fa73c3972f7885ee13764d61fc8e6b3475cc40a42f128f56d29bc53"
+-    },
+-    {
+       "path": "config/presets/cartoon_story.yaml",
+       "bytes": 1124,
+       "sha256": "5680c230a138d4f79ef95d4beb92e2efdc65a82c4fed5c45cfa527aeb7b5e525"
+@@ -1113,6 +1053,26 @@
+       "sha256": "baba8aa652f7fb586ec8e5a0329e5ce3c9de2aef7008386468d9b0d67dd10b68"
+     },
+     {
++      "path": "config/user_settings.yaml.example",
++      "bytes": 3592,
++      "sha256": "58ee73e5ea6e3713cbe968dc949753a33e7b0fa4b4b33b52b427254fce07ee02"
++    },
++    {
++      "path": "config/voices.yaml",
++      "bytes": 853,
++      "sha256": "2c4b280a705fe01f53fb30835afac4d73eb706e55dd18fa0036907a3c1587855"
++    },
++    {
++      "path": "dashboard.bat",
++      "bytes": 54,
++      "sha256": "b08060c15e040f050dc36a7af175ab2417fdbe783e92e2e3c4cdc97772bf5c25"
++    },
++    {
++      "path": "dashboard.sh",
++      "bytes": 97,
++      "sha256": "e0c7139cc0eec8a691598da500cd238e4662e7969dddd3898a9ee40e00e3ea0b"
++    },
++    {
+       "path": "engine/__init__.py",
+       "bytes": 625,
+       "sha256": "2036795d68d4f1585597dfe451515653b91e472c48c6d75003ec8d1a2cd2830a"
+@@ -1123,6 +1083,66 @@
+       "sha256": "86bc9e9f8c033eafa28abab89be8bba2772ef3ff50a967f80f31face57c85c0a"
+     },
+     {
++      "path": "engine/audio/__init__.py",
++      "bytes": 219,
++      "sha256": "268f9c47f0e30dc61c061eb67a3310054e90b61826f5a1b4d682bbdca8be224e"
++    },
++    {
++      "path": "engine/audio/commons_music.py",
++      "bytes": 3883,
++      "sha256": "f3b2a44b708ad6c93afe128d05e56ea9807bb13463b0ccc549aa4da225b4bbe3"
++    },
++    {
++      "path": "engine/audio/hooks.py",
++      "bytes": 6302,
++      "sha256": "1501749f8cc16bc77a67944c9de50e33098e5c0513492e81d7d221559852a9e7"
++    },
++    {
++      "path": "engine/audio/job_music.py",
++      "bytes": 1764,
++      "sha256": "41e8d32a66c64bed134023832cfa5cd479d5c537b9e4bdb31c25391827554e29"
++    },
++    {
++      "path": "engine/audio/music_brief.py",
++      "bytes": 2151,
++      "sha256": "2fac10aae54ae047a9acbb94c94da321d5ab0e61654a8a903454ccfcc45310ae"
++    },
++    {
++      "path": "engine/audio/music_library.py",
++      "bytes": 4044,
++      "sha256": "7bad1fe5aa481d399588f1aa7c57c6070c498bce59b4679af089ef68b83d5e70"
++    },
++    {
++      "path": "engine/audio/music_overlay.py",
++      "bytes": 5124,
++      "sha256": "b730bad9bc784da931a481d677cda87fdd55ab4e5d4a19c404ba187015439adb"
++    },
++    {
++      "path": "engine/audio/music_provider.py",
++      "bytes": 9422,
++      "sha256": "2fc4de1302980f7e94ec41f632477ac16bc328e096b0db702d4fecf741e1e794"
++    },
++    {
++      "path": "engine/audio/music_ui.py",
++      "bytes": 2044,
++      "sha256": "074c6854da9652da24d36e2fc20fcf73850152e2eaa546af9c317924d84be2e1"
++    },
++    {
++      "path": "engine/audio/procedural_music.py",
++      "bytes": 1774,
++      "sha256": "ec4b773e046a02a86bad42fe45047c8001755f2a71e0be425503aec36a75d6a7"
++    },
++    {
++      "path": "engine/audio/sound_design.py",
++      "bytes": 2793,
++      "sha256": "698715b646148f8a5d587b2ebb45dc344f64759a4931965865eb91dd7c472163"
++    },
++    {
++      "path": "engine/audio/tts.py",
++      "bytes": 26744,
++      "sha256": "290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2"
++    },
++    {
+       "path": "engine/auto_resume.py",
+       "bytes": 6557,
+       "sha256": "e25b9eb2e5fd4225434f2603406cbadb9cbf2e1d83a6df0aca0fe99b1697e3e3"
+@@ -1143,6 +1163,16 @@
+       "sha256": "7cdf50c401eff52785bbb52185a2859790f7cc47ed2496d040309899981f12b6"
+     },
+     {
++      "path": "engine/bridge/__init__.py",
++      "bytes": 54,
++      "sha256": "cc99f457e775a069bcf7d092bfbfed7763a5fd40a8d0652f9bb87713c7ab956d"
++    },
++    {
++      "path": "engine/bridge/server.py",
++      "bytes": 5543,
++      "sha256": "bfae559a9128bca99f732b928b0b73b6d4408836d3fd9d2c4c8bcfaeb2531d4e"
++    },
++    {
+       "path": "engine/broll.py",
+       "bytes": 74236,
+       "sha256": "746bc3c689bf062f7d986b6dae70fc810b4cd1997e40996496e8b3aa086c5054"
+@@ -1413,211 +1443,6 @@
+       "sha256": "d467003fd568f499a44f43e1b55be20802c10c52380272775117598a6e3d8384"
+     },
+     {
+-      "path": "engine/presentation.py",
+-      "bytes": 3640,
+-      "sha256": "0cdeb36d587c8872ab9719a54ec809d9b6327b111a09628bae7bdc0624ee0f01"
+-    },
+-    {
+-      "path": "engine/production.py",
+-      "bytes": 21526,
+-      "sha256": "1ac81c1872ceb91479f64bbfb100ccdbb4d14d9e467fdeba108d186a36afc14f"
+-    },
+-    {
+-      "path": "engine/production_lock.py",
+-      "bytes": 2174,
+-      "sha256": "7e591047c52ac169b36a4c42faec69749dc70f8419ed12dee9dadaf5117a81f1"
+-    },
+-    {
+-      "path": "engine/progress.py",
+-      "bytes": 1670,
+-      "sha256": "42d08ce6154ce83959c83501db361477c6eb49cb0e3edadc8e09ceb5ea5ff7a4"
+-    },
+-    {
+-      "path": "engine/publishing.py",
+-      "bytes": 19338,
+-      "sha256": "f849f322155310a5a6fcc49abd69993d43908f8d82ac2f3fa4ccc27f8b5ae465"
+-    },
+-    {
+-      "path": "engine/quiet_browser.py",
+-      "bytes": 5098,
+-      "sha256": "4af98b6abdcac81955e5e3019647ae60514fc387f56c38665922f53f09f36ac1"
+-    },
+-    {
+-      "path": "engine/reference_manager.py",
+-      "bytes": 3695,
+-      "sha256": "8ab45913ef0b351baee266358e61950ab55cc5de141f7b5edf86bdee38dcf930"
+-    },
+-    {
+-      "path": "engine/review_lock.py",
+-      "bytes": 1339,
+-      "sha256": "e11cb059a6a50a4eba27cb11bf6ff2b17d40608476d23c1281d9fb6d270d3a1f"
+-    },
+-    {
+-      "path": "engine/reviewed_cards.py",
+-      "bytes": 2598,
+-      "sha256": "a9bc381d1f7262d20a1893ff0023162bbd6daa4e2a0af35214f32c1cdb82be49"
+-    },
+-    {
+-      "path": "engine/runtime_log.py",
+-      "bytes": 1400,
+-      "sha256": "5d690cad631de79bac94323d4ebd4f72d9588841fefa6e4e0bba1ec8066fb1f5"
+-    },
+-    {
+-      "path": "engine/script_generator.py",
+-      "bytes": 11414,
+-      "sha256": "585cdce98b54ec9c84ebbfaa5d95db0a65af694cadfc160963704cc870fa08e5"
+-    },
+-    {
+-      "path": "engine/source_inbox.py",
+-      "bytes": 7391,
+-      "sha256": "3c6e3fe9487c4a7ef08beb72efbb97610eed3420e1386c6875800f21550e87c8"
+-    },
+-    {
+-      "path": "engine/speech_cards.py",
+-      "bytes": 19840,
+-      "sha256": "2dcdd578e5c099d4a1b5d3c94e873b0c6907eb3c100eacfeb65b39634c3180ce"
+-    },
+-    {
+-      "path": "engine/stock_video.py",
+-      "bytes": 8585,
+-      "sha256": "acf4d1773a738db5b0bb3e339ab6892a9c32ddce66511036d15c393e0ca245bb"
+-    },
+-    {
+-      "path": "engine/storage_manager.py",
+-      "bytes": 20765,
+-      "sha256": "0617f02d4b32b0b621ffd9060815fc7b036fbdcfe39eed99769f3e56dccf919e"
+-    },
+-    {
+-      "path": "engine/studio.css",
+-      "bytes": 7865,
+-      "sha256": "bbf53f8b124b39911cd4f744bbbdfbfd05e61bb65d8bf1120bf1a7933359a180"
+-    },
+-    {
+-      "path": "engine/studio_config.py",
+-      "bytes": 11827,
+-      "sha256": "a3ccbb414072c9dd8c5e23fee308f91161c9cbb8c68530a70f1131bdac110246"
+-    },
+-    {
+-      "path": "engine/studio_review.py",
+-      "bytes": 13334,
+-      "sha256": "f684dcb381ba1b94de90c8ec9a01ca142da2fd421a9964ea5cd5dbd585874603"
+-    },
+-    {
+-      "path": "engine/studio_ui.py",
+-      "bytes": 2885,
+-      "sha256": "918691ece7d57d8f5d6ca58197ab317cf2e0b94588a7fbde6ca88975fbefff05"
+-    },
+-    {
+-      "path": "engine/studio_widgets.py",
+-      "bytes": 15301,
+-      "sha256": "bff5ee5b72750d25e2375a9bf9ce7dd008b0e96f6c17ef6ab4885f850ff97cd7"
+-    },
+-    {
+-      "path": "engine/support_report.py",
+-      "bytes": 10188,
+-      "sha256": "d23add27974eba8903a44211af6a61c7ef8d63147f9c7af7beb5d067f4d932c8"
+-    },
+-    {
+-      "path": "engine/task_pulse.py",
+-      "bytes": 734,
+-      "sha256": "c209ad26f3ff3ecb78273308a392dbd40c1041ded3c67c7bf5221ca9ee958e04"
+-    },
+-    {
+-      "path": "engine/version.py",
+-      "bytes": 301,
+-      "sha256": "4bb343059799e0ae4876530b79eec717efb5ba18ac42f4c8f88bff80835f63bc"
+-    },
+-    {
+-      "path": "engine/video_builder.py",
+-      "bytes": 20107,
+-      "sha256": "e469aa726b292d4cd0c61a9e07a8c1cbd38203a50f95e5f412510ba0c07e0dcc"
+-    },
+-    {
+-      "path": "engine/visual_plan.py",
+-      "bytes": 5582,
+-      "sha256": "44af932786e752ae4dd1b68d84306f15ee64daeb2fe9d55b9d051a45ae8b6997"
+-    },
+-    {
+-      "path": "engine/visuals.py",
+-      "bytes": 5695,
+-      "sha256": "6bd3937b40f1d5ff0156165978d9679b638562a2e3d4c793e12f8458d087c44b"
+-    },
+-    {
+-      "path": "engine/voiceover.py",
+-      "bytes": 3504,
+-      "sha256": "7626b3b6053dbce47c0624214474ecf308ea05947e758277e23090ecc796f169"
+-    },
+-    {
+-      "path": "engine/audio/__init__.py",
+-      "bytes": 219,
+-      "sha256": "268f9c47f0e30dc61c061eb67a3310054e90b61826f5a1b4d682bbdca8be224e"
+-    },
+-    {
+-      "path": "engine/audio/commons_music.py",
+-      "bytes": 3883,
+-      "sha256": "f3b2a44b708ad6c93afe128d05e56ea9807bb13463b0ccc549aa4da225b4bbe3"
+-    },
+-    {
+-      "path": "engine/audio/hooks.py",
+-      "bytes": 6302,
+-      "sha256": "1501749f8cc16bc77a67944c9de50e33098e5c0513492e81d7d221559852a9e7"
+-    },
+-    {
+-      "path": "engine/audio/job_music.py",
+-      "bytes": 1764,
+-      "sha256": "41e8d32a66c64bed134023832cfa5cd479d5c537b9e4bdb31c25391827554e29"
+-    },
+-    {
+-      "path": "engine/audio/music_brief.py",
+-      "bytes": 2151,
+-      "sha256": "2fac10aae54ae047a9acbb94c94da321d5ab0e61654a8a903454ccfcc45310ae"
+-    },
+-    {
+-      "path": "engine/audio/music_library.py",
+-      "bytes": 4044,
+-      "sha256": "7bad1fe5aa481d399588f1aa7c57c6070c498bce59b4679af089ef68b83d5e70"
+-    },
+-    {
+-      "path": "engine/audio/music_overlay.py",
+-      "bytes": 5124,
+-      "sha256": "b730bad9bc784da931a481d677cda87fdd55ab4e5d4a19c404ba187015439adb"
+-    },
+-    {
+-      "path": "engine/audio/music_provider.py",
+-      "bytes": 9422,
+-      "sha256": "2fc4de1302980f7e94ec41f632477ac16bc328e096b0db702d4fecf741e1e794"
+-    },
+-    {
+-      "path": "engine/audio/music_ui.py",
+-      "bytes": 2044,
+-      "sha256": "074c6854da9652da24d36e2fc20fcf73850152e2eaa546af9c317924d84be2e1"
+-    },
+-    {
+-      "path": "engine/audio/procedural_music.py",
+-      "bytes": 1774,
+-      "sha256": "ec4b773e046a02a86bad42fe45047c8001755f2a71e0be425503aec36a75d6a7"
+-    },
+-    {
+-      "path": "engine/audio/sound_design.py",
+-      "bytes": 2793,
+-      "sha256": "698715b646148f8a5d587b2ebb45dc344f64759a4931965865eb91dd7c472163"
+-    },
+-    {
+-      "path": "engine/audio/tts.py",
+-      "bytes": 26744,
+-      "sha256": "290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2"
+-    },
+-    {
+-      "path": "engine/bridge/__init__.py",
+-      "bytes": 54,
+-      "sha256": "cc99f457e775a069bcf7d092bfbfed7763a5fd40a8d0652f9bb87713c7ab956d"
+-    },
+-    {
+-      "path": "engine/bridge/server.py",
+-      "bytes": 5543,
+-      "sha256": "bfae559a9128bca99f732b928b0b73b6d4408836d3fd9d2c4c8bcfaeb2531d4e"
+-    },
+-    {
+       "path": "engine/planning/__init__.py",
+       "bytes": 306,
+       "sha256": "8477df2d8628725cc7b08919db51a54a11db30747d4f06f4b9e9842ee673f170"
+@@ -1658,6 +1483,31 @@
+       "sha256": "df2f2bb51619d53c97e8a4b2a39d4f2d5591c7721ec406fec2b7942c6504375f"
+     },
+     {
++      "path": "engine/post_job_cleanup.py",
++      "bytes": 10348,
++      "sha256": "69e230e560818373238e532a756c4b0c6919a6eceda446b94a16bd46bf97a80b"
++    },
++    {
++      "path": "engine/presentation.py",
++      "bytes": 3640,
++      "sha256": "0cdeb36d587c8872ab9719a54ec809d9b6327b111a09628bae7bdc0624ee0f01"
++    },
++    {
++      "path": "engine/production.py",
++      "bytes": 21526,
++      "sha256": "1ac81c1872ceb91479f64bbfb100ccdbb4d14d9e467fdeba108d186a36afc14f"
++    },
++    {
++      "path": "engine/production_lock.py",
++      "bytes": 2174,
++      "sha256": "7e591047c52ac169b36a4c42faec69749dc70f8419ed12dee9dadaf5117a81f1"
++    },
++    {
++      "path": "engine/progress.py",
++      "bytes": 1670,
++      "sha256": "42d08ce6154ce83959c83501db361477c6eb49cb0e3edadc8e09ceb5ea5ff7a4"
++    },
++    {
+       "path": "engine/project/__init__.py",
+       "bytes": 283,
+       "sha256": "e297bb4e8b3bcaabee6887d11b670049f317a7594ae40344de92a0d69da058ba"
+@@ -1743,6 +1593,11 @@
+       "sha256": "6fc77001775eeba0c31ab3ace82bbcdbcdf87439d3e67d78a917f8649368e422"
+     },
+     {
++      "path": "engine/publishing.py",
++      "bytes": 19338,
++      "sha256": "f849f322155310a5a6fcc49abd69993d43908f8d82ac2f3fa4ccc27f8b5ae465"
++    },
++    {
+       "path": "engine/qc/__init__.py",
+       "bytes": 222,
+       "sha256": "bcd7ecdf24a4c2aa8e0bcb7052e65cfaef4b1fbfd032988d9e846ee46d20dd5b"
+@@ -1758,6 +1613,16 @@
+       "sha256": "c14c251fdc5b3701af0f58ad7e328846995700ac35250f23834b957f86aa4893"
+     },
+     {
++      "path": "engine/quiet_browser.py",
++      "bytes": 5098,
++      "sha256": "4af98b6abdcac81955e5e3019647ae60514fc387f56c38665922f53f09f36ac1"
++    },
++    {
++      "path": "engine/reference_manager.py",
++      "bytes": 3695,
++      "sha256": "8ab45913ef0b351baee266358e61950ab55cc5de141f7b5edf86bdee38dcf930"
++    },
++    {
+       "path": "engine/render/__init__.py",
+       "bytes": 384,
+       "sha256": "e860e4de4ff9174478d10cb1505c9eb8a0e8579755644e1c07e784a0da7562f0"
+@@ -1813,6 +1678,16 @@
+       "sha256": "e400e21c25d0a3d3696c7f19cdaba3b22f2734aad53e06a9d239a2d5a2518f67"
+     },
+     {
++      "path": "engine/review_lock.py",
++      "bytes": 1339,
++      "sha256": "e11cb059a6a50a4eba27cb11bf6ff2b17d40608476d23c1281d9fb6d270d3a1f"
++    },
++    {
++      "path": "engine/reviewed_cards.py",
++      "bytes": 2598,
++      "sha256": "a9bc381d1f7262d20a1893ff0023162bbd6daa4e2a0af35214f32c1cdb82be49"
++    },
++    {
+       "path": "engine/routing/__init__.py",
+       "bytes": 254,
+       "sha256": "5606ccaba7a47327df0e9c4deca78e91ea532e9407645e388b8814c19d7eb843"
+@@ -1828,6 +1703,131 @@
+       "sha256": "60088a1718a782ab1b35d833e6080096d1d4c70520427ea1087ab45024d3c442"
+     },
+     {
++      "path": "engine/runtime_log.py",
++      "bytes": 1400,
++      "sha256": "5d690cad631de79bac94323d4ebd4f72d9588841fefa6e4e0bba1ec8066fb1f5"
++    },
++    {
++      "path": "engine/script_generator.py",
++      "bytes": 11414,
++      "sha256": "585cdce98b54ec9c84ebbfaa5d95db0a65af694cadfc160963704cc870fa08e5"
++    },
++    {
++      "path": "engine/source_inbox.py",
++      "bytes": 7391,
++      "sha256": "3c6e3fe9487c4a7ef08beb72efbb97610eed3420e1386c6875800f21550e87c8"
++    },
++    {
++      "path": "engine/speech_cards.py",
++      "bytes": 19840,
++      "sha256": "2dcdd578e5c099d4a1b5d3c94e873b0c6907eb3c100eacfeb65b39634c3180ce"
++    },
++    {
++      "path": "engine/stock_video.py",
++      "bytes": 8585,
++      "sha256": "acf4d1773a738db5b0bb3e339ab6892a9c32ddce66511036d15c393e0ca245bb"
++    },
++    {
++      "path": "engine/storage_manager.py",
++      "bytes": 23994,
++      "sha256": "f6dc269b87fa8c41078aea1063c696dfcda5f9526b2eaa68b05c30005565569b"
++    },
++    {
++      "path": "engine/studio.css",
++      "bytes": 7865,
++      "sha256": "bbf53f8b124b39911cd4f744bbbdfbfd05e61bb65d8bf1120bf1a7933359a180"
++    },
++    {
++      "path": "engine/studio_config.py",
++      "bytes": 11827,
++      "sha256": "a3ccbb414072c9dd8c5e23fee308f91161c9cbb8c68530a70f1131bdac110246"
++    },
++    {
++      "path": "engine/studio_review.py",
++      "bytes": 13334,
++      "sha256": "f684dcb381ba1b94de90c8ec9a01ca142da2fd421a9964ea5cd5dbd585874603"
++    },
++    {
++      "path": "engine/studio_ui.py",
++      "bytes": 2885,
++      "sha256": "918691ece7d57d8f5d6ca58197ab317cf2e0b94588a7fbde6ca88975fbefff05"
++    },
++    {
++      "path": "engine/studio_widgets.py",
++      "bytes": 15301,
++      "sha256": "bff5ee5b72750d25e2375a9bf9ce7dd008b0e96f6c17ef6ab4885f850ff97cd7"
++    },
++    {
++      "path": "engine/support_report.py",
++      "bytes": 10188,
++      "sha256": "d23add27974eba8903a44211af6a61c7ef8d63147f9c7af7beb5d067f4d932c8"
++    },
++    {
++      "path": "engine/task_pulse.py",
++      "bytes": 734,
++      "sha256": "c209ad26f3ff3ecb78273308a392dbd40c1041ded3c67c7bf5221ca9ee958e04"
++    },
++    {
++      "path": "engine/version.py",
++      "bytes": 301,
++      "sha256": "4bb343059799e0ae4876530b79eec717efb5ba18ac42f4c8f88bff80835f63bc"
++    },
++    {
++      "path": "engine/video_builder.py",
++      "bytes": 20107,
++      "sha256": "e469aa726b292d4cd0c61a9e07a8c1cbd38203a50f95e5f412510ba0c07e0dcc"
++    },
++    {
++      "path": "engine/visual_plan.py",
++      "bytes": 5582,
++      "sha256": "44af932786e752ae4dd1b68d84306f15ee64daeb2fe9d55b9d051a45ae8b6997"
++    },
++    {
++      "path": "engine/visuals.py",
++      "bytes": 5695,
++      "sha256": "6bd3937b40f1d5ff0156165978d9679b638562a2e3d4c793e12f8458d087c44b"
++    },
++    {
++      "path": "engine/voiceover.py",
++      "bytes": 3504,
++      "sha256": "7626b3b6053dbce47c0624214474ecf308ea05947e758277e23090ecc796f169"
++    },
++    {
++      "path": "requirements-test.txt",
++      "bytes": 614,
++      "sha256": "21e023fe284e9379ed429df4a6e53058e285d2885ed7a6f3d17a97df100c9f97"
++    },
++    {
++      "path": "requirements.txt",
++      "bytes": 1322,
++      "sha256": "ecfd8717d555ed3c1fc749b2ead2bb8362a93f9e703ab889fd9dc88bb6a72105"
++    },
++    {
++      "path": "run.sh",
++      "bytes": 244,
++      "sha256": "7b7dd022aebb1fece0af93c4c803523a9af85b31993f04a287fd8eecea56d43e"
++    },
++    {
++      "path": "run_flow_companion_windows.bat",
++      "bytes": 328,
++      "sha256": "07d7a9c88d64e82c74000379bbde9c9b20e5933945580db7c64bab79d58c94f3"
++    },
++    {
++      "path": "run_windows.bat",
++      "bytes": 209,
++      "sha256": "baf0adf88b38db09b57b2164cfcc5cd11e9b428d3afdc757f207180351e990a9"
++    },
++    {
++      "path": "setup_mac_linux.sh",
++      "bytes": 1907,
++      "sha256": "dc565fe4c7e9520925101fe4086e3cb4f4a97efd90ab1285c889d7d1fdf79a23"
++    },
++    {
++      "path": "setup_windows.bat",
++      "bytes": 1283,
++      "sha256": "190b0ae5f407406f688f1750dddd77bffdb05afba6c8dd455df71c587ee2a7be"
++    },
++    {
+       "path": "tests/__init__.py",
+       "bytes": 0,
+       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+@@ -1838,6 +1838,21 @@
+       "sha256": "4d7e6636d620837f88b4c050587cc81b751f84ef78b570bbb04d8b4849966022"
+     },
+     {
++      "path": "tests/fixtures/debanshi_prompt_recovery.json",
++      "bytes": 7751,
++      "sha256": "ce2267c0a91ccea7f1f4479aa84b3967d49760f947c3d336ac08055b26778104"
++    },
++    {
++      "path": "tests/fixtures/debanshi_shot004_reviewed.json",
++      "bytes": 5531,
++      "sha256": "c194a7d1cc47f8a3f60ef81ece8aaa82ea887eb0c1982ba4726aa2a4701139dc"
++    },
++    {
++      "path": "tests/fixtures/flow_gallery_dom.js",
++      "bytes": 1636,
++      "sha256": "238407f7957beac493142fd6e1b16bc65241b20953db4c5b5102c74c5c4dbbdf"
++    },
++    {
+       "path": "tests/test_audio_mix_quality.py",
+       "bytes": 4681,
+       "sha256": "1d1f1901abbfd0ae88d4a473c193d8e0caab57b1c118a0e5f06f1ae3787a5b19"
+@@ -2703,6 +2718,11 @@
+       "sha256": "ec8df2d2f779757cc3b33a6ff3b5d713f4a7f1e74fb1e5848b2e2b6027d700e1"
+     },
+     {
++      "path": "tests/test_v772_post_job_cleanup.py",
++      "bytes": 6180,
++      "sha256": "b0bf9c0415e8f774eb4723c97c909032dd653ddb8bfd2ca24320122d33db4517"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2718,21 +2738,6 @@
+       "sha256": "6bec3f0f7c2fb1b0a8b29589099b6ab30f6bd4b311257f6a0d4e16a2cf267840"
+     },
+     {
+-      "path": "tests/fixtures/debanshi_prompt_recovery.json",
+-      "bytes": 7751,
+-      "sha256": "ce2267c0a91ccea7f1f4479aa84b3967d49760f947c3d336ac08055b26778104"
+-    },
+-    {
+-      "path": "tests/fixtures/debanshi_shot004_reviewed.json",
+-      "bytes": 5531,
+-      "sha256": "c194a7d1cc47f8a3f60ef81ece8aaa82ea887eb0c1982ba4726aa2a4701139dc"
+-    },
+-    {
+-      "path": "tests/fixtures/flow_gallery_dom.js",
+-      "bytes": 1636,
+-      "sha256": "238407f7957beac493142fd6e1b16bc65241b20953db4c5b5102c74c5c4dbbdf"
+-    },
+-    {
+       "path": "tools/__init__.py",
+       "bytes": 53,
+       "sha256": "b281d1365a82e9bbf86e85c56c58445de1d3c4feb59b8c8baacf32ca2771742d"
+@@ -2976,6 +2981,21 @@
+       "path": "tools/update_v770_to_v771.py",
+       "bytes": 6294,
+       "sha256": "b1632b6a4e9aa88b0a85cf5cb7842566a6ae22c378c5633a63bcd15806cc9401"
++    },
++    {
++      "path": "tools/update_v771_to_v772.py",
++      "bytes": 5997,
++      "sha256": "438154927ee7353566fee62bd5a760c348d7fe1afe9921ed0380cdf1e4798870"
++    },
++    {
++      "path": "topics.csv",
++      "bytes": 467,
++      "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
++    },
++    {
++      "path": "video_config.yaml",
++      "bytes": 2687,
++      "sha256": "4c73c8b06211fc22937950c4477b64db1468b06b5c72c9571f8c619089c1c76b"
+     }
+   ]
+ }
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-21 05:58:42.464575768 +0000
++++ b/VERSION	2026-10-21 05:58:42.496575939 +0000
+@@ -1 +1 @@
+-7.0.71
++7.0.72
+diff -ruN a/cli.py b/cli.py
+--- a/cli.py	2026-10-21 05:58:42.468575789 +0000
++++ b/cli.py	2026-10-21 05:58:42.500575961 +0000
+@@ -256,6 +256,15 @@
+     support.add_argument("job_id")
+     support.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
+     support.add_argument("--output", help="New .json file; existing files are never overwritten")
++    cleanup_plan = sub.add_parser("cleanup-plan", help="Preview post-job cleanup: keeps the final video and all records")
++    cleanup_plan.add_argument("job_id", nargs="?", help="Saved job id (generation jobs)")
++    cleanup_plan.add_argument("--clip-folder", help="Clip output folder instead of a job")
++    cleanup_plan.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    cleanup_apply = sub.add_parser("cleanup-apply", help="Apply a reviewed cleanup; needs the digest from cleanup-plan")
++    cleanup_apply.add_argument("job_id", nargs="?", help="Saved job id (generation jobs)")
++    cleanup_apply.add_argument("--clip-folder", help="Clip output folder instead of a job")
++    cleanup_apply.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    cleanup_apply.add_argument("--digest", required=True, help="Digest printed by cleanup-plan")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -471,6 +480,28 @@
+         print("No browser opened and no generation submitted. Review this JSON before sharing; never send .env or browser profiles.")
+         return
+ 
++    if args.cmd in ("cleanup-plan", "cleanup-apply"):
++        import json as _json
++        from engine import post_job_cleanup as _pjc
++        from engine.support_report import resolve_job_dir
++        if bool(args.job_id) == bool(args.clip_folder):
++            raise SystemExit("Give exactly one of a job id or --clip-folder")
++        try:
++            if args.clip_folder:
++                target, kind = args.clip_folder, "clip"
++            else:
++                target, kind = resolve_job_dir(args.outputs_root, args.job_id), "job"
++            if args.cmd == "cleanup-plan":
++                plan = _pjc.plan_clip_folder(target) if kind == "clip" else _pjc.plan_job(target)
++                print(_json.dumps({k: v for k, v in plan.items() if k != "files"}, indent=2))
++                print(f"Reviewed digest: {plan['digest']}  (nothing deleted; run cleanup-apply with this digest)")
++                return
++            report = _pjc.apply_plan(target, args.digest, kind=kind)
++        except (ValueError, OSError) as exc:
++            raise SystemExit(f"Cleanup stopped: {exc}") from exc
++        print(_json.dumps(report, indent=2))
++        return
++
+     f = Factory()
+     from engine.runtime_log import timestamp_prefix
+     cb = lambda s, p, i="": print(f"{timestamp_prefix()} [{int(p):3d}%] {s} {i}".rstrip())
+diff -ruN a/engine/post_job_cleanup.py b/engine/post_job_cleanup.py
+--- a/engine/post_job_cleanup.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/post_job_cleanup.py	2026-10-21 05:58:42.504575982 +0000
+@@ -0,0 +1,260 @@
++"""Post-job cleanup: keep the finished video and its records, free regenerable media.
++
++Two targets:
++  * generation jobs  -> media under the job folder (Flow takes, downloads, storyboard
++                        frames, references, narration, stock, audio, intermediate renders)
++  * clip folders     -> `_clip_work/` (downloaded source video, batch speech/frames)
++
++Rules that apply to every plan:
++  * Preview first. `apply` recomputes the plan and refuses if it no longer matches the
++    digest the user reviewed, so nothing is deleted from a stale preview.
++  * Only media files are removed. JSON, text, subtitles, logs, reports and Flow request
++    journals are always kept, so the job stays auditable.
++  * The validated final video (`render/*final*.mp4`) is never removed.
++  * Symlinks are never followed or removed.
++  * A job with pending Flow requests, an unfinished status, a running resume, or an active
++    production lock is blocked. Nothing is deleted.
++
++Remote Google Flow media is never touched here; use the storage manager for that.
++"""
++import hashlib
++import json
++import os
++import time
++from pathlib import Path
++
++from .production_lock import acquire, release
++
++MEDIA_SUFFIXES = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v',
++                  '.jpg', '.jpeg', '.png', '.webp',
++                  '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.flac'}
++INTERRUPTED_PREFIX = '.bounded-'
++CLIP_WORK = '_clip_work'
++ACTIVE_RESUME_STATES = {'running', 'waiting'}
++
++
++def _default_validator(path):
++    from .providers.flow_browser import FlowBrowserProvider
++    return FlowBrowserProvider._is_valid_video_file(path)
++
++
++def _walk(root):
++    """Yield regular files below root without following symlinks."""
++    for directory, _dirs, files in os.walk(root, followlinks=False):
++        here = Path(directory)
++        for name in files:
++            item = here / name
++            if not item.is_symlink() and item.is_file():
++                yield item
++
++
++def _is_media(path):
++    return path.suffix.lower() in MEDIA_SUFFIXES
++
++
++def _lock_is_free(folder):
++    """True when no production run holds the folder lock right now."""
++    lock_path = Path(folder) / '.production.lock'
++    if lock_path.is_symlink():
++        return False
++    try:
++        handle = lock_path.open('a+b')
++    except OSError:
++        return False
++    try:
++        try:
++            acquire(handle, blocking=False)
++        except BlockingIOError:
++            return False
++        release(handle)
++        return True
++    finally:
++        handle.close()
++
++
++def _digest(files, blocked):
++    h = hashlib.sha256()
++    for item in files:
++        h.update(f"{item['path']}\0{item['bytes']}\n".encode('utf-8', 'replace'))
++    h.update(('|'.join(sorted(blocked))).encode('utf-8', 'replace'))
++    return h.hexdigest()[:24]
++
++
++def _summarise(job, kept, files, blocked):
++    categories = {}
++    for item in files:
++        slot = categories.setdefault(item['category'], {'files': 0, 'bytes': 0})
++        slot['files'] += 1
++        slot['bytes'] += item['bytes']
++    total = sum(item['bytes'] for item in files)
++    return {
++        'folder': str(job),
++        'kind': 'job',
++        'blocked': blocked,
++        'allowed': not blocked,
++        'kept_videos': kept,
++        'categories': categories,
++        'files': files,
++        'reclaimable_bytes': total,
++        'digest': _digest(files, blocked),
++    }
++
++
++def plan_job(job_directory, *, validate_final=None):
++    """Plan cleanup for one generation job. Read-only except the lock probe."""
++    job = Path(job_directory).absolute()
++    if job.is_symlink() or not job.is_dir():
++        raise ValueError('Use an existing real job folder')
++    blocked = []
++    try:
++        manifest = json.loads((job / 'production_manifest.json').read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        raise ValueError('Job manifest is unreadable; nothing changed')
++    if manifest.get('status') != 'done':
++        blocked.append('Job is not complete; finish or stop it before cleanup')
++
++    render = job / 'render'
++    validator = validate_final or _default_validator
++    finals = sorted(p for p in render.glob('*final*.mp4') if p.is_file() and not p.is_symlink()) \
++        if render.is_dir() and not render.is_symlink() else []
++    kept = [str(p.relative_to(job)) for p in finals if validator(str(p))]
++    if not kept:
++        blocked.append('No validated final video in render/. Cleanup would remove the only copy. '
++                       'If a final file exists, check that ffprobe is installed and the file plays.')
++
++    for name in ('auto_resume.json', 'pause_state.json'):
++        state_file = job / name
++        if state_file.is_file() and not state_file.is_symlink():
++            try:
++                state = str(json.loads(state_file.read_text(encoding='utf-8')).get('state', ''))
++            except (OSError, ValueError):
++                blocked.append(f'{name} is unreadable; resolve it first')
++                continue
++            if state in ACTIVE_RESUME_STATES:
++                blocked.append(f'{name} shows an automatic resume is {state}')
++
++    for record in _walk(job):
++        if not record.name.endswith('.flow-request.json'):
++            continue
++        try:
++            status = json.loads(record.read_text(encoding='utf-8')).get('status')
++        except (OSError, ValueError):
++            blocked.append(f'Unreadable Flow request journal: {record.relative_to(job)}')
++            continue
++        if status != 'downloaded':
++            blocked.append(f'Pending Flow request: {record.relative_to(job)}')
++
++    if not _lock_is_free(job):
++        blocked.append('Production is active for this job; wait for it to finish')
++
++    files = []
++    kept_set = set(kept)
++    for item in _walk(job):
++        rel = item.relative_to(job)
++        rel_text = str(rel)
++        parts = rel.parts
++        in_interrupted = len(parts) >= 2 and parts[0] == 'render' and parts[1].startswith(INTERRUPTED_PREFIX)
++        if rel_text in kept_set:
++            continue
++        if in_interrupted:
++            category = 'render/interrupted temp'
++        elif _is_media(item):
++            category = '/'.join(parts[:-1][:2]) if len(parts) > 1 else 'root'
++        else:
++            continue
++        files.append({'path': rel_text, 'category': category, 'bytes': item.stat().st_size})
++    files.sort(key=lambda x: (x['category'], x['path']))
++    return _summarise(job, kept, files, blocked)
++
++
++def plan_clip_folder(folder_path):
++    """Plan cleanup for one clip output folder: source downloads and batch work only."""
++    folder = Path(folder_path).absolute()
++    if folder.is_symlink() or not folder.is_dir():
++        raise ValueError('Use an existing real clip folder')
++    blocked = []
++    highlights = folder / 'highlights.json'
++    if not highlights.is_file() or highlights.is_symlink():
++        blocked.append('Clip run is not complete (no highlights.json)')
++    else:
++        try:
++            json.loads(highlights.read_text(encoding='utf-8'))
++        except (OSError, ValueError):
++            blocked.append('highlights.json is unreadable; resolve it first')
++    if not _lock_is_free(folder):
++        blocked.append('Clip production is active in this folder; wait for it to finish')
++    work = folder / CLIP_WORK
++    files = []
++    if work.is_dir() and not work.is_symlink():
++        for item in _walk(work):
++            if _is_media(item):
++                rel = item.relative_to(folder)
++                files.append({'path': str(rel), 'category': 'clip source & batch work',
++                              'bytes': item.stat().st_size})
++    files.sort(key=lambda x: x['path'])
++    kept = sorted(str(p.relative_to(folder)) for p in folder.glob('*.mp4')
++                  if p.is_file() and not p.is_symlink())
++    result = _summarise(folder, kept, files, blocked)
++    result['kind'] = 'clip'
++    return result
++
++
++def _remove_empty_dirs(root, candidates):
++    """Remove directories that became empty, deepest first, staying inside root."""
++    dirs = set()
++    for rel in candidates:
++        parent = (root / rel).parent
++        while parent != root and root in parent.parents:
++            dirs.add(parent)
++            parent = parent.parent
++    for directory in sorted(dirs, key=lambda p: len(p.parts), reverse=True):
++        try:
++            if directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()):
++                directory.rmdir()
++        except OSError:
++            continue
++
++
++def apply_plan(folder_path, reviewed_digest, *, kind='job', validate_final=None):
++    """Delete exactly the reviewed files. Refuses if the folder changed since review."""
++    folder = Path(folder_path).absolute()
++    fresh = plan_clip_folder(folder) if kind == 'clip' else plan_job(folder, validate_final=validate_final)
++    if fresh['blocked']:
++        raise ValueError('Cleanup blocked: ' + '; '.join(fresh['blocked']))
++    if fresh['digest'] != reviewed_digest:
++        raise ValueError('Folder changed since the review; review the cleanup again')
++    if not _lock_is_free(folder):
++        raise ValueError('Production started since review; nothing deleted')
++
++    removed, errors, freed = [], [], 0
++    for item in fresh['files']:
++        target = folder / item['path']
++        if target.is_symlink() or not target.is_file():
++            continue
++        try:
++            size = target.stat().st_size
++            target.unlink()
++            removed.append(item['path'])
++            freed += size
++        except OSError as error:
++            errors.append({'path': item['path'], 'error': type(error).__name__})
++    _remove_empty_dirs(folder, [p['path'] for p in fresh['files']])
++
++    report = {
++        'created_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
++        'kind': kind,
++        'freed_bytes': freed,
++        'removed_count': len(removed),
++        'kept_videos': fresh['kept_videos'],
++        'categories': fresh['categories'],
++        'errors': errors,
++    }
++    logs = folder / 'logs' if kind == 'job' else folder
++    if logs.is_dir() and not logs.is_symlink():
++        stamp = time.strftime('%Y%m%d-%H%M%S')
++        (logs / f'post_job_cleanup_{stamp}.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
++    for kept in fresh['kept_videos']:
++        if not (folder / kept).is_file():
++            errors.append({'path': kept, 'error': 'final video missing after cleanup'})
++    report['errors'] = errors
++    return report
+diff -ruN a/engine/storage_manager.py b/engine/storage_manager.py
+--- a/engine/storage_manager.py	2026-10-21 05:58:42.476575832 +0000
++++ b/engine/storage_manager.py	2026-10-21 05:58:42.504575982 +0000
+@@ -283,6 +283,56 @@
+             'flow_projects_deleted': remote_deleted if delete_flow_projects else []}
+ 
+ 
++def _cleanup_panel(st, selected, by_key):
++    """Free regenerable media after a video is finished. Keeps final videos and records.
++
++    Review first, then confirm; apply refuses if the folder changed since review.
++    """
++    from engine import post_job_cleanup as pjc
++    rows = [by_key[key] for key in selected if by_key[key]['kind'] in ('Job', 'Clip folder')]
++    if not rows:
++        return
++    with st.expander('Free space after finishing · keeps the final video and records', expanded=False):
++        st.caption('Removes regenerable media only. Jobs: Flow takes, downloads, storyboard frames, narration and audio, '
++                   'stock copies, interrupted render temp files. Clip folders: the downloaded source video and batch work. '
++                   'Final videos, JSON, subtitles, logs and Flow request journals stay. Blocked while a job is unfinished, '
++                   'a Flow request is pending, or production is active.')
++        for row in rows:
++            digest_key = 'cleanup-plan-' + hashlib.sha256(row['key'].encode()).hexdigest()[:16]
++            kind = 'clip' if row['kind'] == 'Clip folder' else 'job'
++            st.markdown(f"**{row['kind']} · {row['label']}**")
++            if st.button('Review cleanup', key='cleanup-review-' + digest_key):
++                try:
++                    st.session_state[digest_key] = (pjc.plan_clip_folder(row['path']) if kind == 'clip'
++                                                    else pjc.plan_job(row['path']))
++                except (OSError, ValueError) as error:
++                    st.session_state.pop(digest_key, None)
++                    st.error(str(error))
++            plan = st.session_state.get(digest_key)
++            if not plan:
++                continue
++            if plan['blocked']:
++                for reason in plan['blocked']:
++                    st.warning(reason)
++                st.caption('Cleanup is blocked for this item. Nothing will be deleted.')
++                continue
++            st.info(f"Would free {plan['reclaimable_bytes'] / 1024**3:.2f} GB. Kept: "
++                    + (', '.join(plan['kept_videos']) or 'none'))
++            st.dataframe([{'category': name, 'files': info['files'], 'MB': round(info['bytes'] / 1024**2, 1)}
++                          for name, info in sorted(plan['categories'].items())], hide_index=True)
++            confirmed = st.checkbox('I understand the listed media is removed and the final video is kept',
++                                    key='cleanup-confirm-' + digest_key + plan['digest'])
++            if st.button('Free space now', disabled=not confirmed, key='cleanup-apply-' + digest_key + plan['digest']):
++                try:
++                    report = pjc.apply_plan(row['path'], plan['digest'], kind=kind)
++                    st.session_state.pop(digest_key, None)
++                    st.success(f"Freed {report['freed_bytes'] / 1024**3:.2f} GB; removed {report['removed_count']} file(s).")
++                    for problem in report['errors']:
++                        st.error(f"Not removed: {problem['path']} ({problem['error']})")
++                except (OSError, ValueError) as error:
++                    st.error(str(error))
++
++
+ def storage_manager(st, factory, clip_roots=()):
+     st.subheader('Manage saved jobs & clips')
+     st.caption('Select whole jobs or clip output folders. Preview and download videos before deleting. A clip folder includes all batches saved there, its source cache, captions, QC, B-roll and reports. Shared character/music libraries, login profiles and sources outside the selected folders are retained.')
+@@ -320,6 +370,7 @@
+                 with path.open('rb') as handle:
+                     st.download_button('Download ' + path.name, handle, file_name=path.name,
+                         key='storage-download-' + hashlib.sha256(video.encode()).hexdigest()[:20])
++    _cleanup_panel(st, selected, by_key)
+     if st.button('Review complete deletion', disabled=not selected, key='storage-review-work'):
+         try:
+             st.session_state['storage-work-preview'] = preview_deletion(factory, selected, clip_roots)
+diff -ruN a/tests/test_v772_post_job_cleanup.py b/tests/test_v772_post_job_cleanup.py
+--- a/tests/test_v772_post_job_cleanup.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v772_post_job_cleanup.py	2026-10-21 05:58:42.512576025 +0000
+@@ -0,0 +1,149 @@
++"""v7.0.72 post-job cleanup: keep finished video and records, free regenerable media."""
++import json
++from pathlib import Path
++
++import pytest
++
++from engine import post_job_cleanup as pjc
++
++FINAL = 'job-final.mp4'
++
++
++def _job(root, status='done', pending=None, auto_state=None):
++    job = root / 'job-1'
++    (job / 'render').mkdir(parents=True)
++    (job / 'flow' / 'shots' / 'shot_001').mkdir(parents=True)
++    (job / 'downloads').mkdir()
++    (job / 'storyboard').mkdir()
++    (job / 'narration').mkdir()
++    (job / 'logs').mkdir()
++    (job / 'production_manifest.json').write_text(json.dumps({'status': status}))
++    (job / 'render' / FINAL).write_bytes(b'final-video')
++    (job / 'render' / 'render_stage_timings.json').write_text('{}')
++    (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').write_bytes(b'x' * 1000)
++    (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4.flow-request.json').write_text(
++        json.dumps({'status': pending or 'downloaded'}))
++    (job / 'downloads' / 'raw.png').write_bytes(b'x' * 500)
++    (job / 'storyboard' / 'shot_001.jpg').write_bytes(b'x' * 200)
++    (job / 'narration' / 'voice.mp3').write_bytes(b'x' * 300)
++    (job / 'logs' / 'run.log').write_text('kept log')
++    if auto_state:
++        (job / 'auto_resume.json').write_text(json.dumps({'state': auto_state}))
++    bounded = job / 'render' / '.bounded-abc'
++    bounded.mkdir()
++    (bounded / 'cut_0000.mp4').write_bytes(b'x' * 50)
++    return job
++
++
++def _valid(path):
++    return Path(path).read_bytes() == b'final-video'
++
++
++def test_plan_keeps_final_and_records_and_frees_media(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    assert plan['allowed'], plan['blocked']
++    assert plan['kept_videos'] == ['render/' + FINAL]
++    paths = {f['path'] for f in plan['files']}
++    assert 'flow/shots/shot_001/take_01.mp4' in paths
++    assert 'downloads/raw.png' in paths
++    assert 'storyboard/shot_001.jpg' in paths
++    assert 'narration/voice.mp3' in paths
++    assert 'render/.bounded-abc/cut_0000.mp4' in paths
++    assert not any(p.endswith(('.json', '.log')) for p in paths)
++    assert 'render/' + FINAL not in paths
++
++
++def test_apply_deletes_only_reviewed_media_and_writes_report(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    result = pjc.apply_plan(job, plan['digest'], validate_final=_valid)
++    assert result['errors'] == []
++    assert result['freed_bytes'] == plan['reclaimable_bytes']
++    assert (job / 'render' / FINAL).read_bytes() == b'final-video'
++    assert (job / 'logs' / 'run.log').exists()
++    assert (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4.flow-request.json').exists()
++    assert not (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').exists()
++    assert not (job / 'render' / '.bounded-abc').exists()
++    assert list((job / 'logs').glob('post_job_cleanup_*.json'))
++
++
++def test_stale_review_is_refused(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    (job / 'downloads' / 'new.png').write_bytes(b'new')
++    with pytest.raises(ValueError, match='changed since the review'):
++        pjc.apply_plan(job, plan['digest'], validate_final=_valid)
++    assert (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').exists()
++
++
++def test_unfinished_job_is_blocked(tmp_path):
++    job = _job(tmp_path, status='running')
++    plan = pjc.plan_job(job, validate_final=_valid)
++    assert not plan['allowed']
++    with pytest.raises(ValueError, match='blocked'):
++        pjc.apply_plan(job, plan['digest'], validate_final=_valid)
++    assert (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').exists()
++
++
++def test_pending_flow_request_blocks_cleanup(tmp_path):
++    job = _job(tmp_path, pending='pending')
++    plan = pjc.plan_job(job, validate_final=_valid)
++    assert not plan['allowed']
++    assert any('Pending Flow request' in reason for reason in plan['blocked'])
++
++
++def test_active_auto_resume_blocks_cleanup(tmp_path):
++    job = _job(tmp_path, auto_state='waiting')
++    plan = pjc.plan_job(job, validate_final=_valid)
++    assert not plan['allowed']
++    assert any('automatic resume' in reason for reason in plan['blocked'])
++
++
++def test_missing_validated_final_blocks_cleanup(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=lambda _p: False)
++    assert not plan['allowed']
++    assert any('No validated final video' in reason for reason in plan['blocked'])
++
++
++def test_symlinks_are_never_followed_or_removed(tmp_path):
++    outside = tmp_path / 'approved_stock.mp4'
++    outside.write_bytes(b'stock-asset')
++    job = _job(tmp_path)
++    (job / 'stock').mkdir()
++    (job / 'stock' / 'link.mp4').symlink_to(outside)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    assert 'stock/link.mp4' not in {f['path'] for f in plan['files']}
++    pjc.apply_plan(job, plan['digest'], validate_final=_valid)
++    assert outside.read_bytes() == b'stock-asset'
++
++
++def test_clip_folder_frees_source_work_and_keeps_outputs(tmp_path):
++    folder = tmp_path / 'clips'
++    work = folder / '_clip_work' / 'src1'
++    work.mkdir(parents=True)
++    (folder / 'highlights.json').write_text('{}')
++    (folder / 'headline_01.mp4').write_bytes(b'clip-output')
++    (folder / 'captions.srt').write_text('1')
++    (work / 'source.mp4').write_bytes(b'x' * 900)
++    (work / 'speech_001.mp3').write_bytes(b'x' * 100)
++    plan = pjc.plan_clip_folder(folder)
++    assert plan['allowed'], plan['blocked']
++    assert plan['kept_videos'] == ['headline_01.mp4']
++    result = pjc.apply_plan(folder, plan['digest'], kind='clip')
++    assert result['errors'] == []
++    assert (folder / 'headline_01.mp4').exists()
++    assert (folder / 'captions.srt').exists()
++    assert not (folder / '_clip_work').exists()
++
++
++def test_incomplete_clip_run_is_blocked(tmp_path):
++    folder = tmp_path / 'clips'
++    (folder / '_clip_work' / 'src1').mkdir(parents=True)
++    (folder / '_clip_work' / 'src1' / 'source.mp4').write_bytes(b'x')
++    plan = pjc.plan_clip_folder(folder)
++    assert not plan['allowed']
++    with pytest.raises(ValueError, match='blocked'):
++        pjc.apply_plan(folder, plan['digest'], kind='clip')
++    assert (folder / '_clip_work' / 'src1' / 'source.mp4').exists()
+diff -ruN a/tools/update_v771_to_v772.py b/tools/update_v771_to_v772.py
+--- a/tools/update_v771_to_v772.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v771_to_v772.py	2026-10-21 05:58:42.512576025 +0000
+@@ -0,0 +1,130 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.72 update (post-job cleanup) to a v7.0.71 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.72 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.72/tools/update_v771_to_v772.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.72/tools/update_v771_to_v772.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'POST_JOB_CLEANUP_V7_0_72.md',
++    'VERSION',
++    'cli.py',
++    'engine/post_job_cleanup.py',
++    'engine/storage_manager.py',
++    'tests/test_v772_post_job_cleanup.py',
++    'tools/update_v771_to_v772.py',
++]
++# Files as they exist in 7.0.71: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['8cb8d863f222948be19976fe70adfc7273081102023bc6da2d681cf633aaac80'],
++    'cli.py': ['122604d17b6fb6ccb76b618797f17f26c4365a26ecaf77a5771532e946379269'],
++    'engine/storage_manager.py': ['0617f02d4b32b0b621ffd9060815fc7b036fbdcfe39eed99769f3e56dccf919e'],
++}
++ACCEPTED_INSTALLS = ('7.0.71', '7.0.72')  # 7.0.72 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.71 (found ' + current + '). '
++                         'Install 7.0.71 first with ../AutoVideoAI-v7.0.71/tools/update_v770_to_v771.py.')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.72 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.72 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.71-to-v7.0.72-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.72. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

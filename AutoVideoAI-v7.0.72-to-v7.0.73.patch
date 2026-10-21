@@ -1,0 +1,1218 @@
+diff -ruN a/LANGUAGE_OUTPUTS_V7_0_73.md b/LANGUAGE_OUTPUTS_V7_0_73.md
+--- a/LANGUAGE_OUTPUTS_V7_0_73.md	1970-01-01 00:00:00.000000000 +0000
++++ b/LANGUAGE_OUTPUTS_V7_0_73.md	2026-10-21 10:43:36.000000000 +0000
+@@ -0,0 +1,65 @@
++# AutoVideoAI 7.0.73 — language outputs, background music, cleanup keeps every video
++
++## What changed
++
++### 1. The English master gets the profile intro and outro
++- When a production has language editions and the English channel profile has an intro or outro, the English master is branded automatically at the end of the render.
++- Only intro and outro are added. Captions, music, text cards and any channel mark are already in the master, so the logo and channel name are not applied twice.
++- Output: `render/<job>-en-branded.mp4`. The unbranded `render/<job>-final.mp4` stays where it was.
++- Single-language productions are unchanged.
++
++### 2. Finished editions are copied into render/
++- Every finished Hindi or Odia edition is copied, verified by SHA-256, to `render/<job>-<lang>-edition.mp4`.
++- The originals stay in `language_editions/<stamp>/exports/`.
++- Editions that already exported (for example the 21 Oct run) are copied the next time the editions step runs.
++
++### 3. Background music was effectively silent
++Diagnosis (measured with real FFmpeg on a synthetic narration and a music bed at a realistic level):
++- The music was in the mix, but the sidechain ducking was 8:1 at -30 dBFS with a 600 ms release. Between phrases the bed fell to about -46 dBFS, which is inaudible.
++- The Create slider defaulted to 0.10, and so did Pro mode; standard mode used 0.16. Realistic music at 0.10–0.16 sat roughly 15–25 dB under narration, and near-silent in pauses once ducked.
++
++Changes:
++- Ducking is 4:1 at -28 dBFS (threshold 0.04), 120 ms attack, 400 ms release. Music drops about 9 dB under speech and comes back in pauses.
++- Default narration Music gain is 0.20 (Create slider and presentation default).
++- The same ducking is used in the Finishing Studio, the editions, the music overlay and Clip Studio.
++
++Existing jobs keep their saved Music gain. If a job was created at 0.10, raise **Music gain** to about 0.20 before rendering again.
++
++### 4. Cleanup keeps every language video (fixes a 7.0.72 gap)
++- 7.0.72 would have treated the branded master, the render/ edition copies and the edition exports as media to free. They are now kept.
++- New: keep a verified copy of every kept video in a folder you choose:
++  - CLI: `python3 cli.py v3 cleanup-apply <job_id> --digest <digest> --keep-video-dir "D:/Videos/Ready"`
++  - GUI: "Also copy the videos…" field in Manage saved jobs & clips → Free space after finishing.
++- Copies keep their original names. An existing file with the same name must be identical, otherwise nothing is deleted.
++- The folder must be outside the job.
++
++### 5. Commands
++- `python3 cli.py v3 language-outputs <job_id>`: adds the English intro/outro if needed, then renders pending editions and copies them into render/. The dashboard button "Add English intro/outro and render pending language editions" does the same.
++
++### 6. Caption timing: warning added, cause not yet fixed
++- On-screen transcript timing can drift 2–3 s when captions are estimated from the script instead of measured from speech.
++- Estimated timing happens when: the Odia caption provider is forced to `script-timed`; or Groq and local Whisper are both unavailable, so the script-estimate fallback is used.
++- Now: when captions are estimated, the render adds a readiness warning ("Captions are estimated from the script…").
++- Not done: a measured fix. It needs the job's `audio/*.words.meta.json` (engine name) and first word timings to confirm which path your job used.
++
++## Not in this release
++- Playful text cards and five-point educational boxes.
++- Hook generation with Gemini Web.
++- Full channel-manager evaluation and its feature list.
++
++## Install
++Requires 7.0.72 installed. For an installation at 7.0.70, first run the 7.0.71 and 7.0.72 updaters, in order.
++
++```
++python3 ../AutoVideoAI-v7.0.73/tools/update_v772_to_v773.py .            # dry run
++python3 ../AutoVideoAI-v7.0.73/tools/update_v772_to_v773.py . --apply    # installs code only
++```
++Stop the dashboard first. Outputs, saved jobs, profiles, music and browser profiles are not copied or changed.
++
++## Tests
++- `tests/test_v773_language_outputs.py`: intro/outro plan, skip rules, render/ copies, record.
++- `tests/test_v773_cleanup_keeps_language_videos.py`: deliverables kept, keep-directory copy, conflict stops before deletion.
++- `tests/test_audio_mix_quality.py` (ducking must cut the bed by at least 6 dB under speech and recover) passes with the new ducking.
++- `tests/test_optional_presentation.py` expectation updated: narrated default Music gain is 0.20 in every mode.
++- Full suite against the 7.0.72 tree: the same 57 environmental failures and 11 errors; no new failures.
++- FFmpeg-based render tests need ffprobe on the machine; the sandbox used for this build has none, so the final render and caption burn were not played back here.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-21 05:55:52.000000000 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-21 10:43:54.000000000 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.72",
+-  "built_at": "2026-10-21T05:55:53+00:00",
++  "version": "7.0.73",
++  "built_at": "2026-10-21T10:43:54Z",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -253,6 +253,11 @@
+       "sha256": "a76ad31f1f49d617eed2433ba0230e0000b2474b0374d9b768602ad7f7dd4f03"
+     },
+     {
++      "path": "LANGUAGE_OUTPUTS_V7_0_73.md",
++      "bytes": 4808,
++      "sha256": "58e8f7164aa06f90a5fd4f4aa385fde1b740f4209ee5d743a606f607238a6669"
++    },
++    {
+       "path": "LOCAL_EDIT_V7_0_20.md",
+       "bytes": 2568,
+       "sha256": "aa4f6ba70d580397c655c0eb00c7b3a019084f173285e0e5b8488eb1d6d36852"
+@@ -835,7 +840,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "df2e046c87f2dc9b86f1af20da505f87d8b112311ada4a9bbea3ce986e034cde"
++      "sha256": "bb06c9bb1957e45db18979ebd6e203100be25fa6e547da3a8a62d09abdfef96e"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -874,8 +879,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 218796,
+-      "sha256": "5ce6ff21129bf41569415fd68da1c9c61283e82c6326bb96f99ff8007f65e693"
++      "bytes": 218865,
++      "sha256": "7682eaff2813b20c75e18928c1aa07aa1a99225e3038eda5cabb8cce01a5b65b"
+     },
+     {
+       "path": "architecture.md",
+@@ -989,8 +994,8 @@
+     },
+     {
+       "path": "cli.py",
+-      "bytes": 77175,
+-      "sha256": "833e47556113af25548f70c5a4e737367056da48d91e75375c9f51d912c108ff"
++      "bytes": 78219,
++      "sha256": "9316cd597bf3e788439b1d20202af0a4871b5421c958294ffa7cd577698debbc"
+     },
+     {
+       "path": "clip_config.yaml",
+@@ -1115,7 +1120,7 @@
+     {
+       "path": "engine/audio/music_overlay.py",
+       "bytes": 5124,
+-      "sha256": "b730bad9bc784da931a481d677cda87fdd55ab4e5d4a19c404ba187015439adb"
++      "sha256": "a14b78e402d8bd90ce7d92abde11a7b62eaec358fe284192a8ff1b226410c821"
+     },
+     {
+       "path": "engine/audio/music_provider.py",
+@@ -1225,7 +1230,7 @@
+     {
+       "path": "engine/clipping.py",
+       "bytes": 68564,
+-      "sha256": "6908bbe32478c3dd034cf41bb79a7dbf1fe7bc3e5555cf5dcb4dd33fc5724d57"
++      "sha256": "0d21e0fc083e250e9fe7628bf86c7051e2869202d9b80f8d3c6726921429328f"
+     },
+     {
+       "path": "engine/content_library.py",
+@@ -1259,13 +1264,13 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 278347,
+-      "sha256": "2eb15d004ab492dca8badc70166219453b7badaff59229ed902b5a81370898f4"
++      "bytes": 280193,
++      "sha256": "dd50477effc27a2b120a26c94642463919ad45c34d1eb7bb2843308aed78ee25"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+-      "bytes": 26909,
+-      "sha256": "7b53d24e7ba337df1fd291191723cc5ad52dcad40a19841d04e832732bb32ad8"
++      "bytes": 26969,
++      "sha256": "46210950ba6a49ce6f4ea9d60228f7ecf71152dd50ce9fa3e002da43acc7f648"
+     },
+     {
+       "path": "engine/finishing_ui.py",
+@@ -1399,8 +1404,8 @@
+     },
+     {
+       "path": "engine/language_editions.py",
+-      "bytes": 7143,
+-      "sha256": "10fdefa8205edb01aec847c0719b457cfb9a0812b841a11c987e9a94f7dd585d"
++      "bytes": 14073,
++      "sha256": "31c503e2c23569e32a6ac26a07bd935a59c38159d7506609a620b1a98cf968df"
+     },
+     {
+       "path": "engine/languages.py",
+@@ -1484,13 +1489,13 @@
+     },
+     {
+       "path": "engine/post_job_cleanup.py",
+-      "bytes": 10348,
+-      "sha256": "69e230e560818373238e532a756c4b0c6919a6eceda446b94a16bd46bf97a80b"
++      "bytes": 13800,
++      "sha256": "a57beda137f941f986581b17e9fe8d3cc3077a7752d1309075f42d864adc177c"
+     },
+     {
+       "path": "engine/presentation.py",
+-      "bytes": 3640,
+-      "sha256": "0cdeb36d587c8872ab9719a54ec809d9b6327b111a09628bae7bdc0624ee0f01"
++      "bytes": 3675,
++      "sha256": "20c6782cdb90bd6930c7dcbc16e37a922bc45f4f74320c6564f3feda21f71278"
+     },
+     {
+       "path": "engine/production.py",
+@@ -1644,8 +1649,8 @@
+     },
+     {
+       "path": "engine/render/ffmpeg_renderer.py",
+-      "bytes": 40919,
+-      "sha256": "677ecdf8248a772195a223371d6f5dbaf7bd9598b66c0b385ac65dc44c61cb1b"
++      "bytes": 41164,
++      "sha256": "3d3dc19655452e3d48a4b6f9bb389c88ad4818a8ec6f55dc4a0bad8b8d05a570"
+     },
+     {
+       "path": "engine/render/graphics.py",
+@@ -1729,8 +1734,8 @@
+     },
+     {
+       "path": "engine/storage_manager.py",
+-      "bytes": 23994,
+-      "sha256": "f6dc269b87fa8c41078aea1063c696dfcda5f9526b2eaa68b05c30005565569b"
++      "bytes": 24481,
++      "sha256": "76418a63f809d1eba39664648d7e5d3ce24662253cdb198401979cc3ae54cfda"
+     },
+     {
+       "path": "engine/studio.css",
+@@ -1994,8 +1999,8 @@
+     },
+     {
+       "path": "tests/test_optional_presentation.py",
+-      "bytes": 9664,
+-      "sha256": "2a975cd1129df71cf60e017c83260c9fd0c975d8a24f2bd12f0b66ee4099df02"
++      "bytes": 9750,
++      "sha256": "750c43e79b002de7adcab7a0146159c5564540499417ee3eb32082796a68f80d"
+     },
+     {
+       "path": "tests/test_presentation_dashboard.py",
+@@ -2723,6 +2728,16 @@
+       "sha256": "b0bf9c0415e8f774eb4723c97c909032dd653ddb8bfd2ca24320122d33db4517"
+     },
+     {
++      "path": "tests/test_v773_cleanup_keeps_language_videos.py",
++      "bytes": 4423,
++      "sha256": "5f785e17b23c6be654bbf6bb40c464b01398bab6e509367e1fcef1d15a492623"
++    },
++    {
++      "path": "tests/test_v773_language_outputs.py",
++      "bytes": 7597,
++      "sha256": "c43ccb11fbffd752102bd4d9b02137c463814f397a165c8b77e886daa322dba5"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2988,6 +3003,11 @@
+       "sha256": "438154927ee7353566fee62bd5a760c348d7fe1afe9921ed0380cdf1e4798870"
+     },
+     {
++      "path": "tools/update_v772_to_v773.py",
++      "bytes": 7267,
++      "sha256": "93e4822979534e0dd7cced9da0080aafe2b5b85e466259ffefbc3f777de46253"
++    },
++    {
+       "path": "topics.csv",
+       "bytes": 467,
+       "sha256": "d54c2d86c942a6140bcf70e711e759d168549faaf543d123e9310d42be4dcf7e"
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-21 05:51:20.000000000 +0000
++++ b/VERSION	2026-10-21 10:34:54.000000000 +0000
+@@ -1 +1 @@
+-7.0.72
++7.0.73
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-21 05:49:14.000000000 +0000
++++ b/app.py	2026-10-21 10:31:13.000000000 +0000
+@@ -512,7 +512,7 @@
+ 
+ def language_edition_panel(job_id):
+     """Language editions of a job: status, exports and an explicit render action."""
+-    from engine.language_editions import requested_languages, render_job_editions
++    from engine.language_editions import requested_languages, render_job_editions, render_language_outputs
+     from engine.production_lock import production_slot
+     from engine.languages import LANGUAGES as LANGUAGE_PACKS
+     job_dir = Path(F.pm.job_dir(job_id))
+@@ -531,10 +531,10 @@
+             st.video(entry['path'], width=420)
+         elif entry.get('status') == 'failed':
+             st.error(entry.get('error', 'Render failed.'))
+-    if st.button('Render pending language editions', key=f'render-language-editions-{job_id}'):
++    if st.button('Add English intro/outro and render pending language editions', key=f'render-language-editions-{job_id}'):
+         try:
+             with production_slot(job_dir):
+-                report = render_job_editions(job_dir)
++                report = render_language_outputs(job_dir)['editions']
+             if report.get('status') == 'exported':
+                 st.success('All language editions are exported.')
+             else:
+@@ -832,7 +832,7 @@
+                                                help="Title, chapter, key-point, recap and structured cards. Off is respected even in Pro mode.")
+             text_card_style = pc2.selectbox("Text card style", ["auto", "bold", "playful", "clean"],
+                                             help="auto selects rounded playful type for cartoon stories, bold display type otherwise.")
+-            music_volume = pc3.slider("Music gain", 0.0, 1.0, .10 if studio_voice_on else .55, .01)
++            music_volume = pc3.slider("Music gain", 0.0, 1.0, .20 if studio_voice_on else .55, .01)
+             o, p, q = st.columns(3)
+             caption_display = o.selectbox("Speech captions", ["auto", "full", "none"], disabled=not studio_voice_on)
+             from engine.channel_branding import branding_plan
+diff -ruN a/cli.py b/cli.py
+--- a/cli.py	2026-10-21 05:50:48.000000000 +0000
++++ b/cli.py	2026-10-21 10:32:57.000000000 +0000
+@@ -265,6 +265,11 @@
+     cleanup_apply.add_argument("--clip-folder", help="Clip output folder instead of a job")
+     cleanup_apply.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
+     cleanup_apply.add_argument("--digest", required=True, help="Digest printed by cleanup-plan")
++    cleanup_apply.add_argument("--keep-video-dir", default="", help="Copy the final, branded and language videos here (verified) before cleanup")
++
++    lang_out = sub.add_parser("language-outputs", help="Add the English intro/outro and render Hindi/Odia editions into render/")
++    lang_out.add_argument("job_id")
++    lang_out.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -480,6 +485,17 @@
+         print("No browser opened and no generation submitted. Review this JSON before sharing; never send .env or browser profiles.")
+         return
+ 
++    if args.cmd == "language-outputs":
++        import json as _json
++        from engine.language_editions import render_language_outputs
++        from engine.production_lock import production_slot
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        with production_slot(job_dir):
++            report = render_language_outputs(job_dir, progress=lambda label, pct, detail="": print(f"[{int(pct):3d}%] {label} {detail}".rstrip()))
++        print(_json.dumps(report, indent=2, ensure_ascii=False))
++        return
++
+     if args.cmd in ("cleanup-plan", "cleanup-apply"):
+         import json as _json
+         from engine import post_job_cleanup as _pjc
+@@ -496,7 +512,7 @@
+                 print(_json.dumps({k: v for k, v in plan.items() if k != "files"}, indent=2))
+                 print(f"Reviewed digest: {plan['digest']}  (nothing deleted; run cleanup-apply with this digest)")
+                 return
+-            report = _pjc.apply_plan(target, args.digest, kind=kind)
++            report = _pjc.apply_plan(target, args.digest, kind=kind, keep_video_dir=args.keep_video_dir or None)
+         except (ValueError, OSError) as exc:
+             raise SystemExit(f"Cleanup stopped: {exc}") from exc
+         print(_json.dumps(report, indent=2))
+diff -ruN a/engine/audio/music_overlay.py b/engine/audio/music_overlay.py
+--- a/engine/audio/music_overlay.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/audio/music_overlay.py	2026-10-21 10:31:07.000000000 +0000
+@@ -38,7 +38,7 @@
+         if voice:
+             filters=(f'[0:a:0]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{duration}[voice];'
+                      f'[1:a:0]aresample=48000,aformat=channel_layouts=stereo,volume={volume},atrim=0:{duration}[music];'
+-                     '[voice]asplit=2[main][detect];[music][detect]sidechaincompress=threshold=0.03:ratio=6:attack=100:release=550[duck];'
++                     '[voice]asplit=2[main][detect];[music][detect]sidechaincompress=threshold=0.04:ratio=4:attack=120:release=400[duck];'
+                      f'[main][duck]amix=inputs=2:duration=first:normalize=0,atrim=0:{duration},'
+                      'loudnorm=I=-14:TP=-1.5:LRA=11[mix]')
+         else:
+diff -ruN a/engine/clipping.py b/engine/clipping.py
+--- a/engine/clipping.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/clipping.py	2026-10-21 10:31:07.000000000 +0000
+@@ -909,7 +909,7 @@
+     normal='aresample=48000,asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo'
+     return (f"[0:a]{normal},atrim=0:{duration:.3f},apad,atrim=0:{end:.3f},asplit=2[speech][detector];"
+             f"[1:a]{normal},volume={volume:.4f},atrim=0:{duration:.3f},apad,atrim=0:{end:.3f}[bed];"
+-            "[bed][detector]sidechaincompress=threshold=.03:ratio=8:attack=200:release=600[duck];"
++            "[bed][detector]sidechaincompress=threshold=.04:ratio=4:attack=120:release=400[duck];"
+             f"[speech][duck]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,atrim=0:{duration:.3f}[aout]")
+ 
+ 
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/factory.py	2026-10-21 10:33:38.000000000 +0000
+@@ -4022,6 +4022,17 @@
+             prog("B-roll placement checked", 88, f"{len(video_cutaways)} safe cutaways; AI video shots protected. See render/broll_placement_report.json for skipped inserts.")
+         words_p = voice_path + ".words.json"
+         words = json.load(open(words_p, encoding="utf-8")) if voice and os.path.exists(words_p) else []
++        # v7.0.73: estimated caption timings drift against speech in pauses (the 2-3 s lag).
++        # Say so in the readiness warnings instead of presenting them as measured.
++        caption_timing_estimated = False
++        caption_timing_engine = ""
++        try:
++            _cmeta = json.load(open(voice_path + ".words.meta.json", encoding="utf-8")) if voice else {}
++            caption_timing_engine = str((_cmeta or {}).get("engine") or (_cmeta or {}).get("timing_source") or "")
++        except Exception:
++            caption_timing_engine = ""
++        caption_timing_estimated = bool(words) and any(
++            token in caption_timing_engine.lower() for token in ("script", "estimated"))
+         script_text = ""
+         script_data = {}
+         try:
+@@ -4321,6 +4332,15 @@
+         # v7.0.68: the primary edition is complete here. Every additional language
+         # edition selected in Create is rendered from the approved clean picture and
+         # its reviewed narration. A failure is reported, never replaced by English audio.
++        # v7.0.73: the English master also gets the channel profile's intro and outro,
++        # the same way the editions do. The unbranded final stays in render/ as well.
++        primary_report = {"status": "not_requested"}
++        try:
++            from .language_editions import render_primary_branding
++            primary_report = render_primary_branding(
++                D["root"], out, progress=lambda label, pct, detail="": prog(label, 95 + 1 * float(pct) / 100, detail))
++        except Exception as primary_error:
++            primary_report = {"status": "failed", "error": str(primary_error)[:800]}
+         edition_report = {"status": "not_requested", "editions": {}}
+         try:
+             from .language_editions import render_job_editions
+@@ -4329,6 +4349,10 @@
+         except Exception as edition_error:
+             edition_report = {"status": "failed", "editions": {}, "error": str(edition_error)[:800]}
+         final_warnings = list(tl["warnings"])
++        if caption_timing_estimated and caption_display == "full":
++            final_warnings.append("Captions are estimated from the script (" + caption_timing_engine + "), not measured from speech. Words can drift 2-3 s during pauses; check sync before publishing.")
++        if primary_report.get("status") == "failed":
++            final_warnings.append("Intro/outro not applied to the primary master: " + str(primary_report.get("error") or "see production/language_editions_render.json"))
+         if edition_report.get("status") in ("failed", "partial"):
+             final_warnings.append("Language editions need attention: " + str(edition_report.get("error") or "see production/language_editions_render.json"))
+         if image_fallbacks:
+@@ -4426,6 +4450,7 @@
+         prog(f"Render complete — {publish_readiness['status']}; providers={actual_counts} fallbacks={total_fallbacks} (storyboard={len(image_fallbacks)})", 100)
+         return {"job_id": job_id, "status": "done", "video": out, "renderer": renderer,
+                 "language_editions": edition_report,
++                "primary_branding": primary_report,
+                 "captions": cap, "generation_summary": generation_summary,
+                 "visual_diversity": diversity, "publish_readiness": publish_readiness,
+                 "graphics": overlays if "overlays" in locals() else [],
+diff -ruN a/engine/finishing_studio.py b/engine/finishing_studio.py
+--- a/engine/finishing_studio.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/finishing_studio.py	2026-10-21 10:31:07.000000000 +0000
+@@ -121,7 +121,8 @@
+ 
+ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+                 source_rights='own_content', shared_music=None, shared_music_license='',
+-                source_language=None, require_profiles=True, fit_narration=False, captions=False):
++                source_language=None, require_profiles=True, fit_narration=False, captions=False,
++                use_clean_master=True):
+     """A profile may be a single path or a language->profile path mapping.
+ 
+     ``source_language`` names the language spoken in the source picture's own
+@@ -143,7 +144,7 @@
+     original_source = Path(source).resolve()
+     job_root = original_source.parent.parent if original_source.parent.name == 'render' else original_source.parent
+     clean_record = job_root / 'production' / 'visual_master.json'
+-    if clean_record.is_file() and original_source.parent.name == 'render' and ('-final' in original_source.stem or original_source.name == 'visual-master.mp4'):
++    if use_clean_master and clean_record.is_file() and original_source.parent.name == 'render' and ('-final' in original_source.stem or original_source.name == 'visual-master.mp4'):
+         record = json.loads(clean_record.read_text(encoding='utf8'))
+         if Path(record['path']).is_file() and _hash(record['path']) == record['sha256']:
+             source = record['path']
+@@ -437,7 +438,7 @@
+             else:
+                 side, main = speech, speech
+             filters += [f'[{inp}:a]volume={volume:.3f},atrim=0:{full_duration:.3f},asetpts=N/SR/TB[music]',
+-                        f'[music][{side}]sidechaincompress=threshold=0.03:ratio=8:attack=200:release=600[duck]',
++                        f'[music][{side}]sidechaincompress=threshold=0.04:ratio=4:attack=120:release=400[duck]',
+                         f'[{main}][duck]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]']
+             audio='aout'
+         else:audio=speech
+diff -ruN a/engine/language_editions.py b/engine/language_editions.py
+--- a/engine/language_editions.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/language_editions.py	2026-10-21 10:29:24.000000000 +0000
+@@ -13,6 +13,8 @@
+ from __future__ import annotations
+ 
+ import json
++import os
++import shutil
+ import time
+ from pathlib import Path
+ 
+@@ -68,6 +70,105 @@
+     return source, [code for code in editions if code != source], state
+ 
+ 
++def _publish_copy(export, destination):
++    """Copy a finished export into render/ atomically and verify the bytes."""
++    destination = Path(destination)
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    temporary = destination.with_name(destination.stem + '.copying.mp4')
++    shutil.copy2(export, temporary)
++    if finish._hash(temporary) != finish._hash(export):
++        temporary.unlink(missing_ok=True)
++        raise ValueError('Copy verification failed for ' + destination.name)
++    os.replace(temporary, destination)
++    return str(destination)
++
++
++def edition_render_name(job_root, code):
++    """File name of a finished language edition inside the production's render/ folder."""
++    return Path(job_root).name + '-' + code + '-edition.mp4'
++
++
++def _sync_render_copies(job_root, record):
++    """Keep every finished edition visible in render/. Idempotent; returns True when the record changed."""
++    changed = False
++    render_dir = Path(job_root) / 'render'
++    for code, entry in (record.get('editions') or {}).items():
++        if entry.get('status') != 'exported' or not entry.get('path'):
++            continue
++        export = Path(entry['path'])
++        if not export.is_file():
++            continue
++        target = render_dir / edition_render_name(job_root, code)
++        if target.is_file() and finish._hash(target) == entry.get('sha256'):
++            if entry.get('render_copy') != str(target):
++                entry['render_copy'] = str(target)
++                changed = True
++            continue
++        try:
++            entry['render_copy'] = _publish_copy(export, target)
++            entry.pop('render_copy_error', None)
++        except Exception as error:  # the export itself is still valid; report the copy problem
++            entry['render_copy_error'] = str(error)[:300]
++        changed = True
++    return changed
++
++
++def render_primary_branding(job_root, final_path, *, progress=None):
++    """Give the primary-language master the profile intro and outro automatically.
++
++    Only multi-language productions are touched, and only when the primary
++    language's channel profile has an intro or outro. The picture, captions,
++    music and any channel mark are already in the final master, so the logo and
++    channel name are not applied a second time. Writes ``<job>-<lang>-branded.mp4``
++    into render/ and records the outcome under ``primary`` in the render record.
++    """
++    job_root = Path(job_root).resolve()
++    emit = progress or (lambda label, pct, detail='': None)
++    source, _extra, state = requested_languages(job_root)
++    if state is None:
++        return {'status': 'not_requested'}
++    profile_path = (state.get('profiles') or {}).get(source)
++    profile = _read(profile_path, {}) if profile_path else {}
++    assets = (profile or {}).get('assets') or {}
++    if not (assets.get('intro') or assets.get('outro')):
++        return {'status': 'no_intro_outro', 'language': source}
++    final = Path(final_path)
++    if not final.is_file():
++        return {'status': 'failed', 'language': source, 'error': 'Primary master is missing: ' + final.name}
++    record = _read(_record_path(job_root), {'schema_version': 1, 'editions': {}})
++    emit('Adding intro and outro to the ' + _label(source) + ' master', 0, _label(source))
++    try:
++        plan_path = finish.create_plan(
++            final, {source: profile_path}, languages=[source], output_root=job_root / 'primary_branding',
++            source_rights='own_content', source_language=source, require_profiles=True,
++            fit_narration=False, captions=False, use_clean_master=False)
++        plan = _read(plan_path)
++        edition = plan['editions'][source]
++        # Only intro and outro: no narration, cards, captions, music, logo or channel name are added here.
++        edition['assets'] = {k: v for k, v in (edition.get('assets') or {}).items() if k in ('intro', 'outro')}
++        edition.update({'channel': {'name': '', 'display_name': ''}, 'narration': None, 'cards': [],
++                        'words': None, 'music': None})
++        edition.pop('script', None)
++        edition.pop('timing_source', None)
++        plan['shared_music'] = None
++        plan['shared_music_license'] = ''
++        finish._atomic_json(plan_path, plan)
++        finish.set_edition(plan_path, source, reviewed=True)
++        exported = finish.render(plan_path, source, progress=lambda value: emit(
++            'Adding intro and outro to the ' + _label(source) + ' master', 100 * float(value), _label(source)))
++        target = job_root / 'render' / (job_root.name + '-' + source + '-branded.mp4')
++        copied = _publish_copy(exported, target)
++        report = {'status': 'exported', 'language': source, 'path': str(exported), 'render_copy': copied,
++                  'sha256': finish._hash(exported), 'plan': str(plan_path),
++                  'source_master': str(final), 'finished_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++    except Exception as error:
++        report = {'status': 'failed', 'language': source, 'error': str(error)[:800],
++                  'source_master': str(final), 'finished_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++    record['primary'] = report
++    _save_record(job_root, record)
++    return report
++
++
+ def render_job_editions(job_root, *, progress=None):
+     """Render every pending additional edition. Returns a status report; never silently English.
+ 
+@@ -108,6 +209,8 @@
+         if not current:
+             pending.append(code)
+     if not pending:
++        if _sync_render_copies(job_root, record):
++            _save_record(job_root, record)
+         return {'status': 'exported', 'editions': previous, 'record': str(_record_path(job_root))}
+ 
+     profiles = state.get('profiles') or {}
+@@ -136,6 +239,7 @@
+         try:
+             exported = finish.render(plan_path, code, progress=edition_progress)
+             entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
++            _sync_render_copies(job_root, {'editions': {code: entry}})
+         except Exception as error:  # keep the primary edition and every finished edition
+             entry.update(status='failed', error=str(error)[:800])
+             failures.append(label + ': ' + str(error)[:300])
+@@ -154,3 +258,32 @@
+     _save_record(job_root, record)
+     return {'status': overall, 'editions': record['editions'], 'record': str(_record_path(job_root)),
+             'error': '; '.join(failures)}
++
++
++def render_language_outputs(job_root, *, progress=None):
++    """Everything that makes a multi-language production complete, in order.
++
++    1. the English master with the profile intro/outro (skipped when already current);
++    2. every pending extra edition, copied into render/.
++    Returns ``{'primary': ..., 'editions': ...}``. Never silently English.
++    """
++    job_root = Path(job_root).resolve()
++    source, _extra, state = requested_languages(job_root)
++    if state is None:
++        return {'primary': {'status': 'not_requested'}, 'editions': {'status': 'not_requested', 'editions': {}}}
++    render_dir = job_root / 'render'
++    final = next((p for p in (render_dir / (job_root.name + '-final-broll.mp4'),
++                              render_dir / (job_root.name + '-final.mp4')) if p.is_file()), None)
++    if final is None:
++        primary = {'status': 'failed', 'language': source,
++                   'error': 'No final master in render/. Render the production first.'}
++    else:
++        previous = (_read(_record_path(job_root), {}) or {}).get('primary') or {}
++        copy = previous.get('render_copy')
++        if (previous.get('status') == 'exported' and previous.get('source_master') == str(final)
++                and copy and Path(copy).is_file()):
++            primary = previous
++        else:
++            primary = render_primary_branding(job_root, final, progress=progress)
++    editions = render_job_editions(job_root, progress=progress)
++    return {'primary': primary, 'editions': editions}
+diff -ruN a/engine/post_job_cleanup.py b/engine/post_job_cleanup.py
+--- a/engine/post_job_cleanup.py	2026-10-21 05:52:22.000000000 +0000
++++ b/engine/post_job_cleanup.py	2026-10-21 10:33:15.000000000 +0000
+@@ -20,6 +20,7 @@
+ import hashlib
+ import json
+ import os
++import shutil
+ import time
+ from pathlib import Path
+ 
+@@ -100,6 +101,21 @@
+     }
+ 
+ 
++def _deliverable_videos(job):
++    """Videos the user keeps: branded/edition copies in render/ and every language export folder."""
++    job = Path(job)
++    found = []
++    render = job / 'render'
++    if render.is_dir() and not render.is_symlink():
++        found += [p for p in render.glob('*-branded.mp4') if p.is_file() and not p.is_symlink()]
++        found += [p for p in render.glob('*-edition.mp4') if p.is_file() and not p.is_symlink()]
++    for folder in ('language_editions', 'primary_branding'):
++        base = job / folder
++        if base.is_dir() and not base.is_symlink():
++            found += [p for p in base.glob('*/exports/*.mp4') if p.is_file() and not p.is_symlink()]
++    return sorted(set(found))
++
++
+ def plan_job(job_directory, *, validate_final=None):
+     """Plan cleanup for one generation job. Read-only except the lock probe."""
+     job = Path(job_directory).absolute()
+@@ -117,8 +133,12 @@
+     validator = validate_final or _default_validator
+     finals = sorted(p for p in render.glob('*final*.mp4') if p.is_file() and not p.is_symlink()) \
+         if render.is_dir() and not render.is_symlink() else []
+-    kept = [str(p.relative_to(job)) for p in finals if validator(str(p))]
+-    if not kept:
++    # v7.0.73: the English branded master, the edition copies in render/ and every
++    # edition export are deliverables too. Without this they were treated as media to free.
++    valid_finals = [p for p in finals if validator(str(p))]
++    kept_paths = valid_finals + [p for p in _deliverable_videos(job) if validator(str(p))]
++    kept = [str(p.relative_to(job)) for p in kept_paths]
++    if not valid_finals:
+         blocked.append('No validated final video in render/. Cleanup would remove the only copy. '
+                        'If a final file exists, check that ffprobe is installed and the file plays.')
+ 
+@@ -215,8 +235,56 @@
+             continue
+ 
+ 
+-def apply_plan(folder_path, reviewed_digest, *, kind='job', validate_final=None):
+-    """Delete exactly the reviewed files. Refuses if the folder changed since review."""
++def export_kept_videos(folder_path, kept_videos, destination):
++    """Copy each kept video into ``destination`` under its own file name, verified by SHA-256.
++
++    Nothing is overwritten: an existing file with the same name must be byte-identical,
++    otherwise the export stops and the caller deletes nothing. The destination must be
++    outside the job folder.
++    """
++    folder = Path(folder_path).absolute()
++    target_dir = Path(destination).expanduser().absolute()
++    if target_dir == folder or folder in target_dir.parents:
++        raise ValueError('Choose a folder outside the job; the videos would be kept inside it')
++    target_dir.mkdir(parents=True, exist_ok=True)
++    exported = []
++    for rel in kept_videos:
++        source = folder / rel
++        if not source.is_file() or source.is_symlink():
++            raise ValueError('Kept video is missing: ' + rel)
++        target = target_dir / source.name
++        digest = _file_sha256(source)
++        if target.exists():
++            if _file_sha256(target) != digest:
++                raise ValueError('The folder already has a different ' + target.name + '; choose another folder')
++            exported.append({'file': target.name, 'status': 'already there', 'sha256': digest})
++            continue
++        temporary = target.with_name(target.name + '.copying')
++        shutil.copy2(source, temporary)
++        if _file_sha256(temporary) != digest:
++            temporary.unlink(missing_ok=True)
++            raise ValueError('Copy verification failed for ' + target.name + '; nothing was deleted')
++        os.replace(temporary, target)
++        exported.append({'file': target.name, 'status': 'copied', 'sha256': digest})
++    return exported
++
++
++def _file_sha256(path):
++    digest = hashlib.sha256()
++    with open(path, 'rb') as handle:
++        for block in iter(lambda: handle.read(1024 * 1024), b''):
++            digest.update(block)
++    return digest.hexdigest()
++
++
++def apply_plan(folder_path, reviewed_digest, *, kind='job', validate_final=None, keep_video_dir=None):
++    """Delete exactly the reviewed files. Refuses if the folder changed since review.
++
++    ``keep_video_dir`` copies every kept video (final, branded, language editions)
++    there first, verified. If any copy fails, nothing is deleted.
++    """
++    if keep_video_dir and kind != 'job':
++        raise ValueError('Keeping videos in a folder is available for generation jobs')
+     folder = Path(folder_path).absolute()
+     fresh = plan_clip_folder(folder) if kind == 'clip' else plan_job(folder, validate_final=validate_final)
+     if fresh['blocked']:
+@@ -225,6 +293,9 @@
+         raise ValueError('Folder changed since the review; review the cleanup again')
+     if not _lock_is_free(folder):
+         raise ValueError('Production started since review; nothing deleted')
++    exported = []
++    if keep_video_dir and kind == 'job':
++        exported = export_kept_videos(folder, fresh['kept_videos'], keep_video_dir)
+ 
+     removed, errors, freed = [], [], 0
+     for item in fresh['files']:
+@@ -246,6 +317,7 @@
+         'freed_bytes': freed,
+         'removed_count': len(removed),
+         'kept_videos': fresh['kept_videos'],
++        'exported_videos': exported,
+         'categories': fresh['categories'],
+         'errors': errors,
+     }
+diff -ruN a/engine/presentation.py b/engine/presentation.py
+--- a/engine/presentation.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/presentation.py	2026-10-21 10:31:13.000000000 +0000
+@@ -59,7 +59,7 @@
+     path = str(settings.get("background_music_path") or "").strip()
+     volume = settings.get("music_volume")
+     if volume is None:
+-        volume = (.10 if pro else .16) if voice else .55
++        volume = .20 if voice else .55  # audible in pauses; ducked about 9 dB under speech
+     if type(volume) not in (int, float) or not math.isfinite(volume) or not 0 <= volume <= 1:
+         raise ValueError("music_volume must be a finite number between 0 and 1")
+     return Presentation(voice, cards, style, captions, music_mode, path, float(volume),
+diff -ruN a/engine/render/ffmpeg_renderer.py b/engine/render/ffmpeg_renderer.py
+--- a/engine/render/ffmpeg_renderer.py	2026-10-21 05:49:14.000000000 +0000
++++ b/engine/render/ffmpeg_renderer.py	2026-10-21 10:31:07.000000000 +0000
+@@ -330,7 +330,10 @@
+             # narration need separate branches; reusing [voice] made every render
+             # with music, ambience, or SFX fail with 'matches no streams'.
+             F.append("[voice]asplit=2[voice_mix][voice_sidechain]")
+-            F.append("[bed][voice_sidechain]sidechaincompress=threshold=0.03:ratio=8:attack=200:release=600[duck]")
++            # Ducking: about 9 dB under speech, recovering in pauses. The old 8:1 ratio at
++            # -30 dBFS with a 600 ms release kept the bed near -46 dBFS between phrases,
++            # which made background music effectively disappear.
++            F.append("[bed][voice_sidechain]sidechaincompress=threshold=0.04:ratio=4:attack=120:release=400[duck]")
+             # amix's default normalization halves narration gain just because a bed
+             # exists, even when that bed is silent. Keep configured gains intact;
+             # the loudness master below handles normal publish-path peak control.
+diff -ruN a/engine/storage_manager.py b/engine/storage_manager.py
+--- a/engine/storage_manager.py	2026-10-21 05:51:00.000000000 +0000
++++ b/engine/storage_manager.py	2026-10-21 10:32:57.000000000 +0000
+@@ -322,11 +322,17 @@
+                           for name, info in sorted(plan['categories'].items())], hide_index=True)
+             confirmed = st.checkbox('I understand the listed media is removed and the final video is kept',
+                                     key='cleanup-confirm-' + digest_key + plan['digest'])
++            keep_dir = ''
++            if kind == 'job':
++                keep_dir = st.text_input('Also copy the videos (final, English branded, Hindi and Odia) to this folder',
++                                         value='', placeholder='e.g. D:/Videos/Ready', key='cleanup-keep-' + digest_key)
+             if st.button('Free space now', disabled=not confirmed, key='cleanup-apply-' + digest_key + plan['digest']):
+                 try:
+-                    report = pjc.apply_plan(row['path'], plan['digest'], kind=kind)
++                    report = pjc.apply_plan(row['path'], plan['digest'], kind=kind, keep_video_dir=keep_dir.strip() or None)
+                     st.session_state.pop(digest_key, None)
+                     st.success(f"Freed {report['freed_bytes'] / 1024**3:.2f} GB; removed {report['removed_count']} file(s).")
++                    for copied in report.get('exported_videos', []):
++                        st.info(f"Video {copied['status']}: {copied['file']}")
+                     for problem in report['errors']:
+                         st.error(f"Not removed: {problem['path']} ({problem['error']})")
+                 except (OSError, ValueError) as error:
+diff -ruN a/tests/test_optional_presentation.py b/tests/test_optional_presentation.py
+--- a/tests/test_optional_presentation.py	2026-10-21 05:49:14.000000000 +0000
++++ b/tests/test_optional_presentation.py	2026-10-21 10:43:29.000000000 +0000
+@@ -20,7 +20,8 @@
+     assert p.voiceover is voice and p.text_cards is cards
+     assert p.captions == ('full' if voice else 'none')
+     assert p.sound_effects is voice and p.ambience is voice
+-    assert p.music_volume == (.55 if not voice else (.16 if mode == 'legacy' else .10))
++    # v7.0.73: narrated videos default to 0.20 in every mode (the old 0.10 Pro default was inaudible after ducking).
++    assert p.music_volume == (.55 if not voice else .20)
+ 
+ 
+ @pytest.mark.parametrize('change', [dict(voiceover_enabled='false'), dict(text_cards_enabled=0),
+diff -ruN a/tests/test_v773_cleanup_keeps_language_videos.py b/tests/test_v773_cleanup_keeps_language_videos.py
+--- a/tests/test_v773_cleanup_keeps_language_videos.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v773_cleanup_keeps_language_videos.py	2026-10-21 10:33:10.000000000 +0000
+@@ -0,0 +1,95 @@
++"""v7.0.73 cleanup: English branded master, Hindi/Odia copies and exports are kept; videos can be copied out first."""
++import json
++from pathlib import Path
++
++import pytest
++
++from engine import post_job_cleanup as pjc
++
++
++def _job(root):
++    job = root / 'job-42'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    (job / 'flow' / 'shots' / 'shot_001').mkdir(parents=True)
++    (job / 'downloads').mkdir()
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'done'}))
++    (job / 'render' / 'job-42-final.mp4').write_bytes(b'final-video')
++    (job / 'render' / 'job-42-en-branded.mp4').write_bytes(b'english-branded')
++    (job / 'render' / 'job-42-hi-edition.mp4').write_bytes(b'hindi-copy')
++    (job / 'render' / 'job-42-or-edition.mp4').write_bytes(b'odia-copy')
++    export_dir = job / 'language_editions' / 'stamp-1' / 'exports'
++    export_dir.mkdir(parents=True)
++    (export_dir / 'hi-stamp-1.mp4').write_bytes(b'hindi-copy')
++    (export_dir / 'or-stamp-1.mp4').write_bytes(b'odia-copy')
++    (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').write_bytes(b'x' * 1000)
++    (job / 'downloads' / 'raw.png').write_bytes(b'x' * 500)
++    return job
++
++
++def _valid(path):
++    return Path(path).read_bytes() in (b'final-video', b'english-branded', b'hindi-copy', b'odia-copy')
++
++
++def test_plan_keeps_every_language_video_and_frees_only_intermediates(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    assert plan['allowed'], plan['blocked']
++    assert set(plan['kept_videos']) == {
++        'render/job-42-final.mp4', 'render/job-42-en-branded.mp4', 'render/job-42-hi-edition.mp4',
++        'render/job-42-or-edition.mp4', 'language_editions/stamp-1/exports/hi-stamp-1.mp4',
++        'language_editions/stamp-1/exports/or-stamp-1.mp4'}
++    freed = {f['path'] for f in plan['files']}
++    assert 'flow/shots/shot_001/take_01.mp4' in freed and 'downloads/raw.png' in freed
++    assert not any(p.startswith(('render/job-42', 'language_editions/')) for p in freed)
++
++
++def test_apply_with_keep_dir_copies_every_video_verified_then_cleans(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    keep = tmp_path / 'ready'
++    report = pjc.apply_plan(job, plan['digest'], validate_final=_valid, keep_video_dir=str(keep))
++    names = sorted(p.name for p in keep.iterdir())
++    assert names == ['hi-stamp-1.mp4', 'job-42-en-branded.mp4', 'job-42-final.mp4',
++                     'job-42-hi-edition.mp4', 'job-42-or-edition.mp4', 'or-stamp-1.mp4']
++    assert (keep / 'job-42-final.mp4').read_bytes() == b'final-video'
++    assert len(report['exported_videos']) == 6
++    assert not (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').exists()
++    assert (job / 'render' / 'job-42-final.mp4').is_file()  # the in-job videos are kept too
++
++
++def test_keep_dir_inside_job_is_refused_and_nothing_is_deleted(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    with pytest.raises(ValueError, match='outside the job'):
++        pjc.apply_plan(job, plan['digest'], validate_final=_valid, keep_video_dir=str(job / 'copies'))
++    assert (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').exists()
++
++
++def test_conflicting_file_in_keep_dir_stops_before_any_delete(tmp_path):
++    job = _job(tmp_path)
++    plan = pjc.plan_job(job, validate_final=_valid)
++    keep = tmp_path / 'ready'
++    keep.mkdir()
++    (keep / 'job-42-final.mp4').write_bytes(b'a different video with the same name')
++    with pytest.raises(ValueError, match='different job-42-final.mp4'):
++        pjc.apply_plan(job, plan['digest'], validate_final=_valid, keep_video_dir=str(keep))
++    assert (job / 'flow' / 'shots' / 'shot_001' / 'take_01.mp4').exists()
++    assert (job / 'downloads' / 'raw.png').exists()
++
++
++def test_identical_existing_copy_is_reused(tmp_path):
++    job = _job(tmp_path)
++    keep = tmp_path / 'ready'
++    keep.mkdir()
++    (keep / 'job-42-final.mp4').write_bytes(b'final-video')
++    exported = pjc.export_kept_videos(job, ['render/job-42-final.mp4'], keep)
++    assert exported[0]['status'] == 'already there'
++
++
++def test_keep_dir_is_refused_for_clip_folders(tmp_path):
++    folder = tmp_path / 'clips'
++    folder.mkdir()
++    plan = pjc.plan_clip_folder(folder)
++    with pytest.raises(ValueError, match='generation jobs'):
++        pjc.apply_plan(folder, plan['digest'], kind='clip', keep_video_dir=str(tmp_path / 'x'))
+diff -ruN a/tests/test_v773_language_outputs.py b/tests/test_v773_language_outputs.py
+--- a/tests/test_v773_language_outputs.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v773_language_outputs.py	2026-10-21 10:29:46.000000000 +0000
+@@ -0,0 +1,164 @@
++"""v7.0.73: the English master gets the profile intro/outro, and finished editions are copied into render/.
++
++FFmpeg-free: the Finishing Studio plan and render steps are stubbed so the
++orchestration (plan editing, skip rules, render/ copies, record) is exercised.
++"""
++import json
++import sys
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++if str(ROOT) not in sys.path:
++    sys.path.insert(0, str(ROOT))
++
++from engine import language_editions as le  # noqa: E402
++from engine import finishing_studio as finish  # noqa: E402
++
++
++def _write(path, data):
++    path = Path(path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    if isinstance(data, bytes):
++        path.write_bytes(data)
++    else:
++        path.write_text(json.dumps(data, indent=2), encoding='utf8')
++    return path
++
++
++def _job(tmp_path, *, with_intro=True, languages=('en', 'hi')):
++    job = tmp_path / 'outputs' / 'job-42'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    final = _write(job / 'render' / 'job-42-final.mp4', b'final-master')
++    profile_assets = {'logo': {'path': str(tmp_path / 'logo.png'), 'sha256': 'x'}}
++    if with_intro:
++        profile_assets['intro'] = {'path': str(tmp_path / 'intro.mp4'), 'sha256': 'x'}
++        profile_assets['outro'] = {'path': str(tmp_path / 'outro.mp4'), 'sha256': 'x'}
++    profile = _write(tmp_path / 'profile-en.json', {'schema_version': 1, 'name': 'Skill Shift',
++                                                     'names': {}, 'assets': profile_assets})
++    _write(job / 'production' / 'language_editions.json', {
++        'source_language': 'en', 'editions': list(languages), 'profiles': {'en': str(profile)},
++        'bundles': {code: {'audio_sha256': 'a'} for code in languages if code != 'en'}})
++    return job, final
++
++
++def _fake_create_plan(source, selection, *, languages, output_root, **kwargs):
++    folder = Path(output_root) / '20261021-000000-aaaaaaaa'
++    folder.mkdir(parents=True, exist_ok=True)
++    assets = {'intro': {'path': 'i'}, 'outro': {'path': 'o'}, 'logo': {'path': 'l'}}
++    plan = {'schema_version': 2, 'state': 'draft', 'source': {'path': str(source), 'sha256': 'x', 'duration': 3},
++            'shared_music': {'path': 'm'}, 'shared_music_license': 'licence',
++            'editions': {code: {'channel': {'name': 'Skill Shift'}, 'assets': dict(assets), 'narration': {'path': 'n'},
++                                'cards': [{'text': 'c'}], 'words': {'path': 'w'}, 'music': None,
++                                'script': 'x', 'timing_source': 'y', 'reviewed': False}
++                         for code in languages},
++            'captions': True, 'source_language': kwargs.get('source_language')}
++    path = folder / 'plan.json'
++    path.write_text(json.dumps(plan), encoding='utf8')
++    calls.append({'kwargs': kwargs, 'languages': list(languages)})
++    return path
++
++
++calls = []
++
++
++def _fake_set_edition(plan_path, language, *, reviewed=False, **_):
++    plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
++    plan['editions'][language]['reviewed'] = bool(reviewed)
++    plan['state'] = 'reviewed'
++    Path(plan_path).write_text(json.dumps(plan), encoding='utf8')
++    return Path(plan_path)
++
++
++def _fake_render(plan_path, language, *, progress=None):
++    plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
++    edition = plan['editions'][language]
++    # The primary branding must not carry over any narration, cards, captions, music, logo or name.
++    assert edition['narration'] is None and edition['cards'] == [] and edition['words'] is None
++    assert edition['music'] is None and set(edition['assets']) <= {'intro', 'outro'}
++    assert edition['channel'] == {'name': '', 'display_name': ''}
++    assert plan['shared_music'] is None
++    out = Path(plan_path).parent / 'exports' / (language + '-' + Path(plan_path).parent.name + '.mp4')
++    out.parent.mkdir(exist_ok=True)
++    out.write_bytes(b'branded-' + language.encode())
++    return out
++
++
++@pytest.fixture(autouse=True)
++def _stub_ffmpeg(monkeypatch):
++    calls.clear()
++    monkeypatch.setattr(finish, 'create_plan', _fake_create_plan)
++    monkeypatch.setattr(finish, 'set_edition', _fake_set_edition)
++    monkeypatch.setattr(finish, 'render', _fake_render)
++
++
++def test_primary_gets_intro_and_outro_and_copy_in_render(tmp_path):
++    job, final = _job(tmp_path)
++    report = le.render_primary_branding(job, final)
++    assert report['status'] == 'exported'
++    branded = job / 'render' / 'job-42-en-branded.mp4'
++    assert branded.is_file() and branded.read_bytes() == b'branded-en'
++    assert final.read_bytes() == b'final-master'  # the unbranded master stays as it was
++    assert calls[0]['kwargs']['use_clean_master'] is False
++    assert calls[0]['kwargs']['captions'] is False
++    record = json.loads((job / 'production' / 'language_editions_render.json').read_text(encoding='utf8'))
++    assert record['primary']['status'] == 'exported'
++    assert record['primary']['render_copy'] == str(branded)
++
++
++def test_primary_skipped_without_intro_or_outro(tmp_path):
++    job, final = _job(tmp_path, with_intro=False)
++    report = le.render_primary_branding(job, final)
++    assert report == {'status': 'no_intro_outro', 'language': 'en'}
++    assert calls == []
++    assert not (job / 'render' / 'job-42-en-branded.mp4').exists()
++
++
++def test_single_language_job_is_untouched(tmp_path):
++    job = tmp_path / 'outputs' / 'job-7'
++    (job / 'render').mkdir(parents=True)
++    final = _write(job / 'render' / 'job-7-final.mp4', b'x')
++    assert le.render_primary_branding(job, final) == {'status': 'not_requested'}
++    assert calls == []
++
++
++def test_missing_final_is_reported_not_raised(tmp_path):
++    job, final = _job(tmp_path)
++    final.unlink()
++    report = le.render_primary_branding(job, final)
++    assert report['status'] == 'failed' and 'missing' in report['error']
++
++
++def test_finished_editions_are_copied_into_render_and_idempotent(tmp_path):
++    job, _final = _job(tmp_path)
++    export = _write(job / 'language_editions' / 'stamp' / 'exports' / 'hi-stamp.mp4', b'hindi-video')
++    record = {'editions': {'hi': {'status': 'exported', 'path': str(export),
++                                  'sha256': finish._hash(export)}}}
++    assert le._sync_render_copies(job, record) is True
++    target = job / 'render' / 'job-42-hi-edition.mp4'
++    assert target.read_bytes() == b'hindi-video'
++    assert record['editions']['hi']['render_copy'] == str(target)
++    assert le._sync_render_copies(job, record) is False  # second pass: nothing to do
++
++
++def test_stale_render_copy_is_replaced_and_export_kept(tmp_path):
++    job, _final = _job(tmp_path)
++    export = _write(job / 'language_editions' / 's' / 'exports' / 'or-s.mp4', b'odia')
++    record = {'editions': {'or': {'status': 'exported', 'path': str(export), 'sha256': 'does-not-match'}}}
++    # A stale render/ copy that differs from the export is replaced, so the copy must verify.
++    _write(job / 'render' / 'job-42-or-edition.mp4', b'stale')
++    assert le._sync_render_copies(job, record) is True
++    assert record['editions']['or']['status'] == 'exported'
++    assert (job / 'render' / 'job-42-or-edition.mp4').read_bytes() == b'odia'
++
++
++def test_render_language_outputs_skips_current_primary(tmp_path, monkeypatch):
++    job, final = _job(tmp_path)
++    le.render_primary_branding(job, final)
++    calls.clear()
++    monkeypatch.setattr(le, 'render_job_editions', lambda *a, **k: {'status': 'exported', 'editions': {}})
++    report = le.render_language_outputs(job)
++    assert report['primary']['status'] == 'exported'
++    assert calls == []  # primary already current: no second plan or render
+diff -ruN a/tools/update_v772_to_v773.py b/tools/update_v772_to_v773.py
+--- a/tools/update_v772_to_v773.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v772_to_v773.py	2026-10-21 10:34:42.000000000 +0000
+@@ -0,0 +1,148 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.73 update (language outputs, music level, cleanup keeps language videos) to a v7.0.72 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.72 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.73/tools/update_v772_to_v773.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.73/tools/update_v772_to_v773.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'LANGUAGE_OUTPUTS_V7_0_73.md',
++    'VERSION',
++    'app.py',
++    'cli.py',
++    'engine/audio/music_overlay.py',
++    'engine/clipping.py',
++    'engine/factory.py',
++    'engine/finishing_studio.py',
++    'engine/language_editions.py',
++    'engine/post_job_cleanup.py',
++    'engine/presentation.py',
++    'engine/render/ffmpeg_renderer.py',
++    'engine/storage_manager.py',
++    'tests/test_v773_cleanup_keeps_language_videos.py',
++    'tests/test_v773_language_outputs.py',
++    'tools/update_v772_to_v773.py',
++]
++# Files as they exist in 7.0.72: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['df2e046c87f2dc9b86f1af20da505f87d8b112311ada4a9bbea3ce986e034cde'],
++    'app.py': ['5ce6ff21129bf41569415fd68da1c9c61283e82c6326bb96f99ff8007f65e693'],
++    'cli.py': ['833e47556113af25548f70c5a4e737367056da48d91e75375c9f51d912c108ff'],
++    'engine/audio/music_overlay.py': ['b730bad9bc784da931a481d677cda87fdd55ab4e5d4a19c404ba187015439adb'],
++    'engine/clipping.py': ['6908bbe32478c3dd034cf41bb79a7dbf1fe7bc3e5555cf5dcb4dd33fc5724d57'],
++    'engine/factory.py': ['2eb15d004ab492dca8badc70166219453b7badaff59229ed902b5a81370898f4'],
++    'engine/finishing_studio.py': ['7b53d24e7ba337df1fd291191723cc5ad52dcad40a19841d04e832732bb32ad8'],
++    'engine/language_editions.py': ['10fdefa8205edb01aec847c0719b457cfb9a0812b841a11c987e9a94f7dd585d'],
++    'engine/post_job_cleanup.py': ['69e230e560818373238e532a756c4b0c6919a6eceda446b94a16bd46bf97a80b'],
++    'engine/presentation.py': ['0cdeb36d587c8872ab9719a54ec809d9b6327b111a09628bae7bdc0624ee0f01'],
++    'engine/render/ffmpeg_renderer.py': ['677ecdf8248a772195a223371d6f5dbaf7bd9598b66c0b385ac65dc44c61cb1b'],
++    'engine/storage_manager.py': ['f6dc269b87fa8c41078aea1063c696dfcda5f9526b2eaa68b05c30005565569b'],
++}
++ACCEPTED_INSTALLS = ('7.0.72', '7.0.73')  # 7.0.73 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.72 (found ' + current + '). '
++                         'Run ../AutoVideoAI-v7.0.72/tools/update_v771_to_v772.py first (7.0.70 to 7.0.71 to 7.0.72 is a chain).')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.73 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.73 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.72-to-v7.0.73-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.73. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

@@ -1,0 +1,1118 @@
+diff -ruN a/EDUCATIONAL_POINTS_SERIES_V7_0_75.md b/EDUCATIONAL_POINTS_SERIES_V7_0_75.md
+--- a/EDUCATIONAL_POINTS_SERIES_V7_0_75.md	1970-01-01 00:00:00.000000000 +0000
++++ b/EDUCATIONAL_POINTS_SERIES_V7_0_75.md	2026-10-21 11:36:06.894017554 +0000
+@@ -0,0 +1,60 @@
++# Educational points series and AI-drafted cards (7.0.75)
++
++Follows 7.0.74. Changed on request: the list is no longer fixed at five points,
++and each point is covered while the narration reaches it, across the whole video.
++
++## Who gets it
++
++Only **educational** videos: content type `education`, and a preset that is not a
++story preset. Presets containing `story`, `cartoon`, `kids`, `fairy` or `animation`
++are excluded (for example `cartoon_story` and `cinematic_story`). Story and
++cartoon videos keep their current cards. Educational videos with the default
++`cinematic_realism` preset do get the cards.
++
++## What appears on screen
++
++- **Points series.** 2–8 points, in spoken order. The panel opens when the first
++  point starts, highlights the point being covered (soft bar, accent colour), moves
++  to the next point when the narration moves on, and closes after the last point.
++  Each point is shown for the time it is spoken. The font shrinks as needed so up to
++  eight points fit; a list that cannot fit at a readable size fails with a clear message.
++- **Single-point cards** (`takeaway`, `tip`, `warning`), at most four, and only
++  before the first point or after the last point. Cards that would overlap the series
++  are dropped and counted in `speech_cards.json` as `dropped_overlapping_cards`.
++
++## Who writes the copy
++
++The card draft uses the **drafting model chosen in Create** (the "Drafting model"
++selector): Gemini Web (default), ChatGPT Web, ChatGPT/OpenAI API, Indus AI, Gemini
++API, Groq, Grok or Ollama. The choice is saved with the job as `card_draft_provider`.
++The prompt includes the video topic, so copy stays on the topic. Only facts stated in
++the narration are allowed.
++
++## Validation rules (checked before rendering)
++
++- 2–8 points; each point at most 60 characters; series title at most 60.
++- Points must not overlap and must be in spoken order.
++- Coverage: the first point starts within the first quarter of the narration, and the
++  last point ends after 70% of it.
++- Single cards: 1.5–6 seconds, at most 80 characters, takeaway/tip/warning only.
++
++## Animation
++
++- The series panel opens once (scale-in with fade), then stays while the highlight
++  moves, and closes once (shrink with fade).
++- Single cards pop open and closed.
++- The FFmpeg renderer supports `open`, `close` and `pop` modes. Middle segments of the
++  series carry no animation, so the highlight changes without the panel re-animating.
++
++## Not in this release
++
++- Language editions still use the 7.0.73 card path. Educational series are not
++  applied to edition copies yet.
++- The narration script itself is not rewritten by this change. Only the on-screen copy
++  is drafted by the chosen provider.
++- A real AI draft and a full render on the user's footage still need the user's test.
++
++## Install
++
++From 7.0.74: `python3 ../AutoVideoAI-v7.0.75/tools/update_v774_to_v775.py .` (dry run),
++then with `--apply`. Stop the dashboard first.
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-21 11:39:14.738966345 +0000
++++ b/VERSION	2026-10-21 11:36:09.402030223 +0000
+@@ -1 +1 @@
+-7.0.74
++7.0.75
+diff -ruN a/app.py b/app.py
+--- a/app.py	2026-10-21 11:39:14.742966364 +0000
++++ b/app.py	2026-10-21 11:33:55.729355111 +0000
+@@ -930,6 +930,7 @@
+                     cfg['channel_logo'] = str(_verified(logo_asset))
+                 cfg['watermark'] = True
+             cfg['character_ids'] = studio_cast
++            cfg['card_draft_provider'] = str(st.session_state.get('studio-draft-provider') or 'gemini-web')
+             cfg.update(studio_broll)
+             kwargs = config_to_factory_kwargs(cfg)
+             job_id = F.create_job(topic=cfg["topic"], video_type=cfg["video_type"],
+diff -ruN a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-21 11:39:14.758966446 +0000
++++ b/engine/factory.py	2026-10-21 11:33:48.089316452 +0000
+@@ -240,7 +240,7 @@
+                    broll_count: int = 0, broll_duration: float = 2.0, broll_max_uses: int = 1,
+                    broll_query_hint: str = "", broll_auto: bool = False, external_video_mode: bool = False,
+                    speech_cards_enabled: bool = False, gemini_video_count: int = 0,
+-                   flow_auto_cleanup_images: bool = False) -> str:
++                   flow_auto_cleanup_images: bool = False, card_draft_provider: str = "gemini-web") -> str:
+         if type(gemini_video_count) is not int or not 0 <= gemini_video_count <= 4:
+             raise ValueError("Gemini video count must be between zero and four")
+         from .broll import validate_broll_options
+@@ -343,6 +343,7 @@
+                     "music_mood": str(music_mood or ""), "external_video_mode": bool(external_video_mode),
+                     "speech_cards_enabled": bool(speech_cards_enabled), "gemini_video_count": gemini_video_count,
+                     "flow_auto_cleanup_images": bool(flow_auto_cleanup_images),
++                    "card_draft_provider": str(card_draft_provider or "gemini-web"),
+                     "channel_name": str(channel_name or ""),
+                     "channel_logo": str(channel_logo or ""), "channel_logo_size": channel_logo_size,
+                     "graphics_overlays": bool(graphics_overlays),
+@@ -1249,7 +1250,8 @@
+             from .render.educational_cards import is_educational
+             prepare(D['root'], voice_path, words, plan.get('narration', ''), narration_dur,
+                     m.language, cleanup=settings.get('gemini_chat_cleanup', 'keep'), timing_source=timing,
+-                    educational=is_educational(m.content_type))
++                    educational=is_educational(m.content_type, getattr(m, "preset", "")),
++                    topic=m.topic, provider=settings.get("card_draft_provider") or "gemini-web")
+ 
+         # ---- 3. bible + director ----
+         if m.status in ("created", "scripted", "narrated") or not m.shots:
+@@ -4095,7 +4097,7 @@
+         from .render.structured_graphics import build_structured_overlays
+         from .render.typography import resolve_style
+         from .render.educational_cards import is_educational
+-        educational = is_educational(m.content_type)
++        educational = is_educational(m.content_type, getattr(m, "preset", ""))
+         # 7.0.74: educational videos use the playful palette unless a style is chosen explicitly.
+         card_style = 'playful' if educational and presentation.card_style == 'auto' else resolve_style(presentation.card_style, m)
+         custom = (build_structured_overlays(D["root"], ndur, m.width, m.height, style=card_style, educational=educational)
+@@ -4111,7 +4113,7 @@
+                 from .speech_cards import render as render_speech_cards
+                 saved_words = json.load(open(words_p, encoding='utf-8'))
+                 reviewed = render_speech_cards(D['root'], voice, saved_words, script_text, ndur,
+-                                               m.width, m.height, card_style, educational=educational)
++                                               m.width, m.height, card_style, educational=educational, topic=m.topic)
+                 if reviewed is None:
+                     raise ValueError('Speech cards are enabled but not prepared. Resume this job first.')
+             else:
+diff -ruN a/engine/render/educational_cards.py b/engine/render/educational_cards.py
+--- a/engine/render/educational_cards.py	2026-10-21 11:39:14.766966485 +0000
++++ b/engine/render/educational_cards.py	2026-10-21 11:35:10.769734079 +0000
+@@ -1,14 +1,19 @@
+-"""Educational text-card kinds (7.0.74).
++"""Educational text cards (7.0.75).
+ 
+-Only used for videos whose content_type is "education". Copy is supplied by the
+-Gemini Web draft in speech_cards; this module only draws it:
++Only for educational videos: content type "education" and not a story preset.
++Story, cartoon and cinematic-story videos never get these cards.
+ 
+-* takeaway / tip / warning: one point with a glyph badge (star, check, triangle).
+-* points: a titled, numbered list of 3-5 short points in a transparent panel.
++Copy is drafted by the AI provider chosen for drafting (Gemini Web by default,
++or ChatGPT, Indus, the Gemini or OpenAI API, Groq, Grok or Ollama) and anchored
++to the spoken narration by speech_cards. This module only draws:
++
++* a points series: a translucent, numbered panel of 2-8 points. The panel opens
++  when the first point starts, highlights the point being covered, moves through
++  every point across the video, and closes after the last point.
++* takeaway / tip / warning: one point with a glyph badge.
+ 
+-Each card PNG is a full-canvas transparent frame. Its panel rectangle is returned
+-as ``box`` so the FFmpeg renderer can pop the panel open and closed (anim='pop').
+-Other video types keep the 7.0.73 keypoint cards unchanged.
++Every card PNG is full-canvas and transparent; the panel rectangle is returned as
++``box`` so the FFmpeg renderer can open and close it (anim = 'open', 'close' or 'pop').
+ """
+ from __future__ import annotations
+ 
+@@ -18,16 +23,22 @@
+ from PIL import Image, ImageDraw
+ 
+ EDUCATIONAL_TYPES = ("education",)
++STORY_MARKERS = ("story", "cartoon", "kids", "fairy", "animation")
+ SINGLE_KINDS = ("takeaway", "tip", "warning")
+ LIST_KIND = "points"
+ EDUCATIONAL_KINDS = SINGLE_KINDS + (LIST_KIND,)
+ LABELS = {"takeaway": "KEY IDEA", "tip": "TRY THIS", "warning": "AVOID THIS"}
+-MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS = 3, 5, 60
++MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS = 2, 8, 60
+ INK = (12, 20, 35, 255)
+ 
+ 
+-def is_educational(content_type) -> bool:
+-    return str(content_type or "").strip().lower() in EDUCATIONAL_TYPES
++def is_educational(content_type, preset="") -> bool:
++    """True only for educational videos. Any story, cartoon or animation marker excludes it."""
++    kind = str(content_type or "").strip().lower()
++    if kind not in EDUCATIONAL_TYPES:
++        return False
++    label = str(preset or "").lower()
++    return not any(marker in label for marker in STORY_MARKERS)
+ 
+ 
+ def _badge(d, kind, cx, cy, r, palette):
+@@ -88,21 +99,75 @@
+                        "text_boxes": boxes, "canvas": [width, height]}}
+ 
+ 
+-def render_list(card: dict, path, width: int, height: int, style: str) -> dict:
+-    from .structured_graphics import render_card
+-    event = {"kind": "list", "start": card["start"], "end": card["end"], "title": card["text"],
+-             "rows": [{"label": point} for point in card["points"]], "active": None}
+-    return render_card(event, path, width, height, style=style)
++def _series_layout(d, series, width, height, style, palette, scale):
++    """Largest row size whose wrapped points fit the panel; returns (size, title, rows, panel_h)."""
++    from .typography import fit
++    vertical = height > width
++    max_h = height * (.66 if vertical else .76)
++    content_w = int(width * (.80 if vertical else .70)) - 2 * max(12, int(28 * scale))
++    stroke = max(1, int(3 * scale))
++    gap = max(6, int(12 * scale))
++    for size in range(int(52 * scale), int(34 * scale) - 1, -max(1, int(2 * scale))):
++        try:
++            title = fit(d, series["title"], content_w, int(height * .14), size=76 * scale, minimum=52 * scale,
++                        style=style, bold=True, headline=True, max_lines=2, stroke=stroke)
++            rows = [fit(d, f"{i + 1}. {p['text']}", content_w, int(height * .5), size=size, minimum=size,
++                        style=style, bold=True, max_lines=2, stroke=stroke)
++                    for i, p in enumerate(series["points"])]
++        except ValueError:
++            continue
++        pad = max(12, int(28 * scale))
++        total = 2 * pad + title.height + gap + sum(r.height for r in rows) + gap * (len(rows) - 1) + pad // 2
++        if total <= max_h:
++            return size, title, rows, int(total)
++    raise ValueError("Points list is too long for one card: shorten the points or use fewer of them")
++
++
++def render_series(series: dict, path, width: int, height: int, style: str, active: int) -> dict:
++    """One frame of the points series with point ``active`` (zero-based) highlighted.
++
++    Points are numbered and wrapped; the font shrinks (never below 34 px at 1080 wide) so
++    up to eight points fit. The active point gets a soft highlight bar.
++    """
++    from .typography import resolve_style, PALETTES, draw_text
++    style = resolve_style(style)
++    palette = PALETTES[style]
++    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
++    d = ImageDraw.Draw(img)
++    vertical = height > width
++    scale = min(width, height) / 1080.0
++    left, top = int(width * .065), int(height * .12)
++    panel_w = int(width * (.80 if vertical else .70))
++    pad, stroke = max(12, int(28 * scale)), max(1, int(3 * scale))
++    gap = max(6, int(12 * scale))
++    _, title, rows, panel_h = _series_layout(d, series, width, height, style, palette, scale)
++    d.rounded_rectangle((left, top, left + panel_w, top + panel_h), radius=int(28 * scale),
++                        fill=palette["panel"], outline=(255, 255, 255, 65), width=max(1, int(2 * scale)))
++    boxes = []
++    y = top + pad
++    boxes.append(draw_text(d, title, (left + pad, y, left + panel_w - pad, y + title.height), palette["accent"]))
++    y += title.height + gap
++    for index, layout in enumerate(rows):
++        if index == active:
++            d.rounded_rectangle((left + pad // 2, y - gap // 3, left + panel_w - pad // 2, y + layout.height + gap // 3),
++                                radius=max(6, int(14 * scale)), fill=(255, 255, 255, 46))
++        color = palette["secondary"] if index == active else (255, 255, 255, 215)
++        boxes.append(draw_text(d, layout, (left + pad, y, left + panel_w - pad, y + layout.height), color))
++        y += layout.height + gap
++    Path(path).parent.mkdir(parents=True, exist_ok=True)
++    img.save(path)
++    return {"kind": "list", "path": str(path), "start": series["start"], "end": series["end"],
++            "title": series["title"], "opacity": 1, "anchor": "center", "fade_in": .18, "fade_out": .18,
++            "box": [left, top, panel_w, panel_h],
++            "layout": {"style": style, "font_sizes": [title.size] + [r.size for r in rows],
++                       "text_boxes": boxes, "canvas": [width, height], "active": active}}
+ 
+ 
+ def render_card_png(card: dict, path, width: int, height: int, style: str = "playful") -> dict:
+-    """Draw one educational card and return its overlay fields (path, box, layout)."""
++    """Draw one single-point educational card and return its overlay fields."""
+     kind = card.get("kind")
+-    if kind == LIST_KIND:
+-        info = render_list(card, path, width, height, style)
+-    elif kind in SINGLE_KINDS:
+-        info = render_single(card, path, width, height, style)
+-    else:
++    if kind not in SINGLE_KINDS:
+         raise ValueError("Unknown educational card kind: " + str(kind))
++    info = render_single(card, path, width, height, style)
+     return {**info, "kind": kind, "start": card["start"], "end": card["end"], "title": card["text"],
+             "anchor": "top-left", "opacity": 1, "anim": "pop", "fade_in": .22, "fade_out": .22}
+diff -ruN a/engine/render/ffmpeg_renderer.py b/engine/render/ffmpeg_renderer.py
+--- a/engine/render/ffmpeg_renderer.py	2026-10-21 11:39:14.766966485 +0000
++++ b/engine/render/ffmpeg_renderer.py	2026-10-21 11:33:03.197089736 +0000
+@@ -140,9 +140,13 @@
+     span = en - st
+     open_d = min(0.45, span * 0.35)
+     close_d = min(0.35, span * 0.25)
++    mode = e.get("anim")
+     grow = f"min(1,max(0,(t-{st:.3f})/{open_d:.3f}))"
+     shrink = f"min(1,max(0,(t-{en - close_d:.3f})/{close_d:.3f}))"
+-    scale = f"(0.70+0.30*(1-pow(1-{grow},3)))*(1-0.20*{shrink})"
++    # 'open' grows in only, 'close' shrinks out only, 'pop' does both (7.0.75 list segments).
++    opening = f"(0.70+0.30*(1-pow(1-{grow},3)))" if mode in ("pop", "open") else "1"
++    closing = f"(1-0.20*{shrink})" if mode in ("pop", "close") else "1"
++    scale = f"{opening}*{closing}"
+     chain = (f"[{idx}:v]scale={W}:{H},format=rgba,crop={bw}:{bh}:{bx}:{by},"
+              f"scale=w='trunc({bw}*{scale}/2)*2':h='trunc({bh}*{scale}/2)*2':eval=frame")
+     if fade_in:
+@@ -309,7 +313,7 @@
+         en = min(total, max(st + 0.05, en))
+         fade_in = min((en-st)/2, _checked_seconds(e.get("fade_in", 0), f"overlay[{j}].fade_in"))
+         fade_out = min((en-st)/2, _checked_seconds(e.get("fade_out", 0), f"overlay[{j}].fade_out"))
+-        pop = _pop_chain(e, st, en, W, H, idx, fade_in, fade_out) if e.get("anim") == "pop" else None
++        pop = _pop_chain(e, st, en, W, H, idx, fade_in, fade_out) if e.get("anim") in ("pop", "open", "close") else None
+         if pop:
+             F.append(pop[0] + f"[ov{j}]")
+             F.append(f"{vcur}[ov{j}]overlay={pop[1]}:enable='between(t,{st:.3f},{en:.3f})'[vg{j}]")
+diff -ruN a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py	2026-10-21 11:39:14.770966506 +0000
++++ b/engine/speech_cards.py	2026-10-21 11:33:41.737284400 +0000
+@@ -1,17 +1,20 @@
+ """Cards anchored to measured speech tokens, never global duration scaling.
+ 
+-7.0.74: for educational videos Gemini Web may also return single-point cards
+-(takeaway, tip, warning) and five-point lists (points). Other video types keep
+-the one-line keypoint cards exactly as before.
++7.0.75: educational videos only (see render/educational_cards.is_educational). The
++AI drafting provider writes a points series (2-8 points, spread across the whole
++narration: each point is shown while it is spoken) and optional single-point cards
++before or after the series. Other video types keep the one-line keypoint cards.
+ """
+ import hashlib
+ import json
+ import math
+ from pathlib import Path
+ 
+-from .render.educational_cards import EDUCATIONAL_KINDS, SINGLE_KINDS, LIST_KIND, MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS
++from .render.educational_cards import SINGLE_KINDS, MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS
+ 
+-EDUCATIONAL_VARIANT = 'educational-v1'
++EDUCATIONAL_VARIANT = 'educational-v3'
++SERIES_MIN_SECONDS = 2.0
++SERIES_HOLD_SECONDS = 1.0
+ BASE_PROMPT = (
+     'You are an editorial video producer. Suggest sparse, useful transparent pop-up cards. '
+     'Use the supplied narration words for exact anchors, not guessed seconds. '
+@@ -21,17 +24,32 @@
+     'Do not repeat entire subtitles. No invented facts, statistics, or generic numbered headings. '
+     'Use the target language and exact zero-based word IDs. Cards should reinforce the opening promise, '
+     'useful actions and payoff. Empty cards is allowed if none is useful.')
+-EDUCATIONAL_PROMPT = (
+-    'You are an editorial video producer for an educational video. Suggest sparse, useful transparent cards. '
+-    'Use the supplied narration words for exact anchors, not guessed seconds. '
+-    'Return JSON {"cards":[{"kind":"takeaway","text":"short copy","start_word":0,"end_word":5}]}. '
+-    'Every card needs "kind". Kinds: "takeaway" = one key idea; "tip" = one practical action the viewer can take; '
+-    '"warning" = one common mistake to avoid; "points" = a list of 3 to 5 short points, with "text" as the list title '
+-    'and a "points" array of strings (each at most 60 characters), anchored across the whole spoken list so it lasts 6 to 14 seconds. '
+-    'Single-point copy is at most 80 characters and lasts 2 to 6 seconds. '
+-    'Choose at most 18 cards, roughly one per 20–35 seconds, no overlapping anchors, and keep total coverage below 30%. '
+-    'Use only facts stated in the narration: no invented facts, statistics or numbers. '
+-    'Use the target language and exact zero-based word IDs. Empty cards is allowed if none is useful.')
++
++
++def educational_prompt(topic):
++    return (
++        'You are a senior editor for an educational YouTube channel. '
++        f'The video topic is: {topic}. '
++        'Write on-screen text for a narrated educational video using only the supplied narration words. '
++        'Return JSON {"series":{"title":"...","points":[{"text":"...","start_word":0,"end_word":8}]},'
++        '"cards":[{"kind":"takeaway","text":"...","start_word":0,"end_word":5}]}. '
++        'series: the main points the narrator makes, in spoken order. Use as many points as the narration '
++        'genuinely makes, from 2 to 8 (fewer for short videos). Each point is at most 60 characters, specific '
++        'to the topic, and anchored to the words where the narrator makes that point. Points must not overlap '
++        'and must spread across the whole video: the first point starts within the first quarter of the '
++        'narration and the last point ends after the three-quarter mark. Series title: at most 60 characters. '
++        'cards: optional single-point cards, kind "takeaway" (key idea), "tip" (practical action) or "warning" '
++        '(common mistake). At most 4 cards, each at most 80 characters, lasting 2 to 6 seconds, and only in a '
++        'moment before the first point or after the last point. '
++        'Use the target language and exact zero-based word IDs. Use only facts stated in the narration: '
++        'no invented facts, statistics or numbers. No greetings, no story or character narration. '
++        'Empty lists are allowed if none fit.')
++
++
++def _variant(educational, topic):
++    if not educational:
++        return ''
++    return EDUCATIONAL_VARIANT + '|' + ' '.join(str(topic or '').split())
+ 
+ 
+ def fingerprint(audio, words, script, variant=''):
+@@ -59,58 +77,42 @@
+         previous = start
+ 
+ 
+-def _card_kind(row, educational):
+-    """Return (kind, points). Non-educational videos always get plain keypoint cards."""
+-    if not educational:
+-        return 'keypoint', None
+-    kind = row.get('kind') or ('points' if row.get('points') is not None else 'takeaway')
+-    if kind == LIST_KIND:
+-        points = row.get('points')
+-        if not isinstance(points, list) or not MIN_POINTS <= len(points) <= MAX_POINTS:
+-            raise ValueError(f'A points card needs {MIN_POINTS} to {MAX_POINTS} points')
+-        cleaned = []
+-        for point in points:
+-            if (not isinstance(point, str) or not 1 <= len(point.strip()) <= MAX_POINT_CHARS
+-                    or '\n' in point):
+-                raise ValueError(f'Each point must be one short line of at most {MAX_POINT_CHARS} characters')
+-            cleaned.append(point.strip())
+-        return LIST_KIND, cleaned
+-    if kind in SINGLE_KINDS:
+-        return kind, None
+-    raise ValueError('Educational card kind must be takeaway, tip, warning or points')
++def _word_span(row, words):
++    first, last = row.get('start_word'), row.get('end_word')
++    if any(type(i) is not int for i in (first, last)) or not 0 <= first <= last < len(words):
++        raise ValueError('Card refers to an invalid speech word index')
++    return first, last
+ 
+ 
+ def anchor_cards(draft, words, duration, educational=False):
++    """Single-line cards. Educational videos use takeaway, tip or warning kinds only."""
+     validate_words(words, duration)
+     rows = draft.get('cards') if isinstance(draft, dict) else None
++    if rows is None:
++        rows = []
+     if not isinstance(rows, list) or len(rows) > 18:
+         raise ValueError('Gemini must return at most 18 sparse cards')
+     cards = []
+     for row in rows:
+         if not isinstance(row, dict):
+             raise ValueError('Each card must be an object')
+-        first, last = row.get('start_word'), row.get('end_word')
++        first, last = _word_span(row, words)
+         text = row.get('text')
+-        if any(type(i) is not int for i in (first, last)) or not 0 <= first <= last < len(words):
+-            raise ValueError('Card refers to an invalid speech word index')
+         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 80 or '\n' in text:
+             raise ValueError('Card copy must be a short single line, at most 80 characters')
+-        kind, points = _card_kind(row, educational)
+-        start, end = float(words[first]['start']), float(words[last]['end'])
+-        if kind == LIST_KIND:
+-            end = min(duration, max(end, start + 6.0))
+-            if end-start < 6.0 or end-start > 14:
+-                raise ValueError('Choose a spoken anchor lasting 6–14 seconds for a points card')
++        if educational:
++            kind = row.get('kind') or 'takeaway'
++            if kind not in SINGLE_KINDS:
++                raise ValueError('Educational single cards must be takeaway, tip or warning; lists go in the series')
+         else:
+-            end = min(duration, max(end, start + 2.0, start + len(text.split()) / 2.8))
+-            if end-start < 1.5 or end-start > 6:
+-                raise ValueError('Choose a spoken anchor lasting 1.5–6 seconds')
+-        card = {'text': text.strip(), 'start': round(start, 3), 'end': round(end, 3),
+-                'start_word': first, 'end_word': last, 'kind': kind,
+-                'spoken_anchor': ' '.join(w['word'] for w in words[first:last+1])}
+-        if points is not None:
+-            card['points'] = points
+-        cards.append(card)
++            kind = 'keypoint'
++        start, end = float(words[first]['start']), float(words[last]['end'])
++        end = min(duration, max(end, start + 2.0, start + len(text.split()) / 2.8))
++        if end-start < 1.5 or end-start > 6:
++            raise ValueError('Choose a spoken anchor lasting 1.5–6 seconds')
++        cards.append({'text': text.strip(), 'start': round(start, 3), 'end': round(end, 3),
++                      'start_word': first, 'end_word': last, 'kind': kind,
++                      'spoken_anchor': ' '.join(w['word'] for w in words[first:last+1])})
+     cards.sort(key=lambda c: c['start'])
+     for before, after in zip(cards, cards[1:]):
+         if after['start'] < before['end'] + .15:
+@@ -120,48 +122,140 @@
+     return cards
+ 
+ 
++def anchor_series(draft, words, duration):
++    """Validate the educational points series. Returns None when the draft has no series."""
++    series = draft.get('series') if isinstance(draft, dict) else None
++    if not series:
++        return None
++    if not isinstance(series, dict):
++        raise ValueError('The points series must be an object')
++    title = series.get('title')
++    if not isinstance(title, str) or not 1 <= len(title.strip()) <= MAX_POINT_CHARS or '\n' in title:
++        raise ValueError(f'The series title must be one line of at most {MAX_POINT_CHARS} characters')
++    points = series.get('points')
++    if not isinstance(points, list) or not MIN_POINTS <= len(points) <= MAX_POINTS:
++        raise ValueError(f'A points series needs {MIN_POINTS} to {MAX_POINTS} points')
++    rows, previous_end = [], -1.0
++    for point in points:
++        if not isinstance(point, dict):
++            raise ValueError('Each point must be an object')
++        first, last = _word_span(point, words)
++        text = point.get('text')
++        if not isinstance(text, str) or not 1 <= len(text.strip()) <= MAX_POINT_CHARS or '\n' in text:
++            raise ValueError(f'Each point must be one short line of at most {MAX_POINT_CHARS} characters')
++        start = float(words[first]['start'])
++        end = max(float(words[last]['end']), start + SERIES_MIN_SECONDS)
++        if start < previous_end - .05:
++            raise ValueError('Series points overlap or are out of spoken order')
++        previous_end = end
++        rows.append({'text': text.strip(), 'start_word': first, 'end_word': last,
++                     'start': round(start, 3), 'end': round(min(end, duration), 3)})
++    if rows[0]['start'] > duration * .25 or rows[-1]['end'] < duration * .70:
++        raise ValueError('The points must cover the whole video: start in the first quarter and end after 70%')
++    return {'title': title.strip(), 'points': rows,
++            'start': rows[0]['start'], 'end': round(min(duration, rows[-1]['end'] + SERIES_HOLD_SECONDS), 3)}
++
++
++def series_segments(series):
++    """Each point owns the time from its start until the next point starts."""
++    out = []
++    points = series['points']
++    for i, point in enumerate(points):
++        end = points[i+1]['start'] if i + 1 < len(points) else series['end']
++        out.append({'index': i, 'count': len(points), 'title': series['title'], 'text': point['text'],
++                    'points': points, 'start': point['start'], 'end': round(end, 3)})
++    return out
++
++
++def _overlaps(card, series):
++    return card['start'] < series['end'] and series['start'] < card['end']
++
++
++def _series_record(series):
++    """Compact, re-validatable form saved in speech_cards.json."""
++    return {'title': series['title'], 'points': [{'text': p['text'], 'start_word': p['start_word'],
++                                                 'end_word': p['end_word']} for p in series['points']]}
++
++
++def _draft_text(provider, system, user, cleanup):
++    from .studio_review import _draft_generate
++    return _draft_generate(provider or 'gemini-web', system, user, cleanup=cleanup)
++
++
+ def prepare(root, audio, words, script, duration, language, cleanup='delete-after-read', timing_source='measured',
+-            educational=False):
++            educational=False, topic='', provider='gemini-web'):
+     from .production import save
+     root = Path(root)
+     target = root / 'production' / 'speech_cards.json'
+-    variant = EDUCATIONAL_VARIANT if educational else ''
++    variant = _variant(educational, topic)
+     key = fingerprint(audio, words, script, variant)
+     if target.is_file():
+         prior = json.loads(target.read_text(encoding='utf-8'))
+         if prior.get('fingerprint') == key:
+             anchor_cards(prior, words, duration, educational)
++            if educational and prior.get('series'):
++                anchor_series(prior, words, duration)
+             return prior
+     validate_words(words, duration)
+-    from .providers.gemini_web import gemini_web_generate
+     from .planning.script_engine import _extract_json
+     indexed = [{'id': i, 'word': w['word'], 'start': w['start'], 'end': w['end']} for i,w in enumerate(words)]
+-    raw = gemini_web_generate(
+-        EDUCATIONAL_PROMPT if educational else BASE_PROMPT,
+-        f'Language: {language}\nMeasured duration: {duration:.3f}s\nReviewed script:\n{script}\n'
+-        'Timed narration words:\n'+json.dumps(indexed, ensure_ascii=False), cleanup=cleanup)
+-    save(target.with_name('speech_cards-draft.json'), {'response': raw, 'fingerprint': key})
++    user = (f'Language: {language}\nMeasured duration: {duration:.3f}s\nReviewed script:\n{script}\n'
++            'Timed narration words:\n'+json.dumps(indexed, ensure_ascii=False))
++    if educational:
++        raw = _draft_text(provider, educational_prompt(topic), user, cleanup)
++    else:
++        from .providers.gemini_web import gemini_web_generate
++        raw = gemini_web_generate(BASE_PROMPT, user, cleanup=cleanup)
++    save(target.with_name('speech_cards-draft.json'), {'response': raw, 'fingerprint': key, 'provider': provider})
+     draft = _extract_json(raw)
+     cards = anchor_cards(draft, words, duration, educational)
+-    result = {'schema_version': 2 if educational else 1, 'source': 'gemini-web-speech-anchors', 'fingerprint': key,
++    series = anchor_series(draft, words, duration) if educational else None
++    dropped = 0
++    if series:
++        kept = [c for c in cards if not _overlaps(c, series)]
++        dropped, cards = len(cards) - len(kept), kept
++    result = {'schema_version': 3 if educational else 1, 'source': 'gemini-web-speech-anchors', 'fingerprint': key,
+               'duration': duration, 'language': language, 'timing_source': timing_source,
+-              'review_required': True, 'educational': bool(educational), 'cards': cards}
++              'review_required': True, 'educational': bool(educational), 'draft_provider': provider if educational else 'gemini-web',
++              'series': _series_record(series) if series else None, 'dropped_overlapping_cards': dropped,
++              'cards': cards}
+     save(target, result)
+     return result
+ 
+ 
+-def render(root, audio, words, script, duration, width, height, style, educational=False):
++def render(root, audio, words, script, duration, width, height, style, educational=False, topic=''):
+     path = Path(root) / 'production' / 'speech_cards.json'
+     if not path.is_file():
+         return None
+     data = json.loads(path.read_text(encoding='utf-8'))
+-    variant = EDUCATIONAL_VARIANT if educational else ''
++    variant = _variant(educational, topic)
+     if data.get('fingerprint') != fingerprint(audio, words, script, variant):
+         raise ValueError('Narration or timings changed after card drafting. Resume to refresh speech cards before rendering.')
+     from .render.graphics import OverlayEvent, render_overlay_png
+-    from .render.educational_cards import render_card_png
++    from .render.educational_cards import render_card_png, render_series
+     overlays = []
+-    for index, card in enumerate(anchor_cards(data, words, duration, educational)):
++    cards = anchor_cards(data, words, duration, educational)
++    series = anchor_series({'series': data['series']}, words, duration) if educational and data.get('series') else None
++    if series:
++        segments = series_segments(series)
++        last = len(segments) - 1
++        for seg in segments:
++            target = Path(root) / 'render' / 'graphics' / f'speech-series-{seg["index"]:02d}.png'
++            info = render_series(seg, target, int(width), int(height), style, active=seg['index'])
++            if seg['count'] == 1:
++                mode = 'pop'
++            elif seg['index'] == 0:
++                mode = 'open'
++            elif seg['index'] == last:
++                mode = 'close'
++            else:
++                mode = None
++            info.update(kind='points', start=seg['start'], end=seg['end'], title=series['title'], anchor='top-left',
++                        opacity=1, fade_in=.22 if seg['index'] == 0 else 0, fade_out=.22 if seg['index'] == last else 0)
++            if mode:
++                info['anim'] = mode
++            overlays.append(info)
++    for index, card in enumerate(cards):
+         target = Path(root) / 'render' / 'graphics' / f'speech-card-{index:02d}.png'
+         if educational:
+             overlays.append(render_card_png(card, target, int(width), int(height), style=style))
+diff -ruN a/engine/studio_config.py b/engine/studio_config.py
+--- a/engine/studio_config.py	2026-10-21 11:39:14.770966506 +0000
++++ b/engine/studio_config.py	2026-10-21 11:33:55.729355111 +0000
+@@ -31,6 +31,7 @@
+     "character_ids": [],
+     "voice": "en-IN-PrabhatNeural",
+     "script_provider": "auto",
++    "card_draft_provider": "gemini-web",
+     "script_model": "auto",
+     "script_quality": "publish",
+     "gemini_chat_cleanup": "delete-after-read",
+@@ -112,6 +113,7 @@
+     "video_type": {"shorts", "faceless_youtube", "explainer", "marketing"},
+     "profile": {"FLOW_CINEMATIC", "FLOW_BALANCED", "FLOW_ECONOMY", "STORYBOARD_ECONOMY", "LOCAL_FREE", "FREE_HYBRID", "MANUAL_DIRECTOR"},
+     "script_provider": {"auto", "gemini", "gemini-web", "groq", "openai", "indus", "grok", "ollama", "planner"},
++    "card_draft_provider": {"gemini-web", "chatgpt-web", "openai", "indus", "gemini", "groq", "grok", "ollama"},
+     "script_quality": {"standard", "high", "publish"},
+     "tts_provider": {"auto", "gemini", "gemini-lite", "groq", "elevenlabs", "kokoro", "edge", "gtts", "mock"},
+     "caption_display": {"auto", "full", "none"},
+diff -ruN a/tests/test_v774_educational_cards.py b/tests/test_v774_educational_cards.py
+--- a/tests/test_v774_educational_cards.py	2026-10-21 11:39:14.782966567 +0000
++++ b/tests/test_v774_educational_cards.py	2026-10-21 11:35:10.769734079 +0000
+@@ -1,4 +1,4 @@
+-"""7.0.74 educational cards: single-point kinds, five-point box, pop animation."""
++"""Educational cards (7.0.74-7.0.75): points series across the video, single-point cards, pop animation."""
+ import json
+ import shutil
+ import subprocess
+@@ -8,130 +8,192 @@
+ import pytest
+ from PIL import Image
+ 
+-from engine.render.educational_cards import is_educational, render_card_png
++from engine.render.educational_cards import is_educational, render_card_png, render_series
+ from engine.render.ffmpeg_renderer import build_ffmpeg_cmd, ffmpeg_exe
+-from engine.speech_cards import anchor_cards, prepare, render
++from engine.speech_cards import anchor_cards, anchor_series, series_segments, prepare, render
+ from engine.render.structured_graphics import build_structured_overlays
+ 
+-POINTS = ['Breathe slowly before reacting', 'Write one worry on paper', 'Name the feeling out loud',
+-          'Pick one small next step', 'Review the day tonight']
++LONG_POINTS = [
++    'Breathe slowly and count four breaths before you answer back',
++    'Write the worry on paper so it stops circling your mind',
++    'Name the feeling out loud in one plain sentence today',
++    'Pick one small next step you can finish within ten minutes',
++    'Put the phone away one hour before you try to sleep',
++    'Walk outside for ten minutes without music or screens',
++    'Review what went well before you close your notebook tonight',
++    'Ask one trusted person how they handle the same pressure',
++]
++DURATION = 40.0
+ 
+ 
+ def words(n=60):
+     return [{'word': f'w{i}', 'start': i * .5, 'end': i * .5 + .4} for i in range(n)]
+ 
+ 
+-def points_card(**extra):
+-    return {'kind': 'points', 'text': 'Five habits that calm a racing mind', 'points': POINTS,
+-            'start_word': 0, 'end_word': 14, **extra}
++def draft_series(count, texts=None):
++    """Points spread across words 0..57 (about 0 s to 28.9 s of a 40 s video)."""
++    texts = texts or LONG_POINTS[:count]
++    starts = [round(i * 52 / (count - 1)) for i in range(count)] if count > 1 else [0]
++    points = []
++    for i, (start, text) in enumerate(zip(starts, texts)):
++        end = 57 if i == count - 1 else start + 5
++        points.append({'text': text, 'start_word': start, 'end_word': end})
++    return {'series': {'title': 'Habits that calm a racing mind', 'points': points}}
+ 
+ 
+-def test_only_education_gets_educational_card_kinds():
++def test_is_educational_excludes_stories_and_other_types():
+     assert is_educational('education')
+-    assert is_educational(' Education ')
++    assert is_educational(' Education ', 'cinematic_realism')  # default educational preset
++    assert not is_educational('education', 'cartoon_story')
++    assert not is_educational('education', 'cinematic_story')
+     assert not is_educational('kids_story')
+     assert not is_educational('')
+ 
+ 
+-def test_educational_kinds_validate_and_keep_timings():
+-    rows = {'cards': [points_card(), {'kind': 'tip', 'text': 'Drink water before coffee', 'start_word': 20, 'end_word': 23}]}
+-    cards = anchor_cards(rows, words(), 40, educational=True)
+-    assert [c['kind'] for c in cards] == ['points', 'tip']
+-    assert len(cards[0]['points']) == 5
+-    assert 6 <= cards[0]['end'] - cards[0]['start'] <= 14
++@pytest.mark.parametrize('count', [2, 3, 5, 8])
++def test_series_accepts_two_to_eight_points(count):
++    series = anchor_series(draft_series(count), words(), DURATION)
++    assert len(series['points']) == count
++    segments = series_segments(series)
++    assert [s['index'] for s in segments] == list(range(count))
++    assert segments[0]['start'] == series['start']
++    assert segments[-1]['end'] == series['end']
++    for before, after in zip(segments, segments[1:]):
++        assert before['end'] == after['start']          # contiguous: every point owns its time
+ 
+ 
+-@pytest.mark.parametrize('points', [
+-    POINTS[:2],                      # too few
+-    POINTS + ['Sixth point'],        # too many
+-    ['x' * 61, 'b', 'c'],            # over 60 characters
+-    ['', 'b', 'c'],                  # empty
+-    [1, 'b', 'c'],                   # not a string
+-])
+-def test_points_cards_reject_bad_lists(points):
++def test_series_rejects_one_or_nine_points():
++    one = {'series': {'title': 'T', 'points': [{'text': 'Only one', 'start_word': 0, 'end_word': 57}]}}
+     with pytest.raises(ValueError):
+-        anchor_cards({'cards': [points_card(points=points)]}, words(), 40, educational=True)
++        anchor_series(one, words(), DURATION)
++    nine = draft_series(8)
++    nine['series']['points'].append({'text': 'Ninth point', 'start_word': 57, 'end_word': 57})
++    with pytest.raises(ValueError):
++        anchor_series(nine, words(), DURATION)
+ 
+ 
+-def test_points_card_must_last_six_to_fourteen_seconds():
++def test_series_must_cover_the_whole_video():
++    late = draft_series(2)
++    late['series']['points'][0]['start_word'] = 40                     # starts after the first quarter
++    late['series']['points'][0]['end_word'] = 45
++    with pytest.raises(ValueError, match='cover the whole video'):
++        anchor_series(late, words(), DURATION)
++    early = draft_series(2)
++    early['series']['points'][-1]['start_word'] = 20                   # ends before 70%
++    early['series']['points'][-1]['end_word'] = 23
++    with pytest.raises(ValueError, match='cover the whole video'):
++        anchor_series(early, words(), DURATION)
++
++
++def test_series_rejects_overlap_and_long_copy():
++    overlap = draft_series(3)
++    overlap['series']['points'][1]['start_word'] = 3                   # starts before point 0 ends
++    with pytest.raises(ValueError):
++        anchor_series(overlap, words(), DURATION)
++    long_copy = draft_series(2, ['x' * 61, 'Second point'])
+     with pytest.raises(ValueError):
+-        anchor_cards({'cards': [points_card(end_word=40)]}, words(), 40, educational=True)
++        anchor_series(long_copy, words(), DURATION)
+ 
+ 
+-def test_unknown_educational_kind_is_rejected():
++def test_single_cards_are_takeaway_tip_or_warning_only():
++    rows = {'cards': [{'kind': 'tip', 'text': 'Drink water before coffee', 'start_word': 2, 'end_word': 5}]}
++    assert anchor_cards(rows, words(), DURATION, educational=True)[0]['kind'] == 'tip'
+     with pytest.raises(ValueError):
+-        anchor_cards({'cards': [{'kind': 'bullet', 'text': 'Nope', 'start_word': 0, 'end_word': 4}]},
+-                     words(), 40, educational=True)
++        anchor_cards({'cards': [{'kind': 'points', 'text': 'List', 'start_word': 0, 'end_word': 4}]},
++                     words(), DURATION, educational=True)
+ 
+ 
+ def test_other_video_types_stay_plain_keypoints():
+-    rows = {'cards': [{'kind': 'points', 'text': 'Plain line', 'points': POINTS, 'start_word': 10, 'end_word': 12}]}
+-    cards = anchor_cards(rows, words(), 40)
+-    assert cards[0]['kind'] == 'keypoint' and 'points' not in cards[0]
++    rows = {'cards': [{'kind': 'tip', 'text': 'Plain line', 'start_word': 10, 'end_word': 12}]}
++    cards = anchor_cards(rows, words(), DURATION)
++    assert cards[0]['kind'] == 'keypoint'
+ 
+ 
+ @pytest.mark.parametrize('dimensions', [(1080, 1920), (1920, 1080)])
+-@pytest.mark.parametrize('kind', ['takeaway', 'tip', 'warning', 'points'])
+-def test_every_kind_draws_inside_canvas_with_transparent_panel(tmp_path, kind, dimensions):
++@pytest.mark.parametrize('count', [2, 8])
++def test_series_draws_for_few_and_many_points_inside_canvas(tmp_path, count, dimensions):
+     w, h = dimensions
+-    card = points_card() if kind == 'points' else {'kind': kind, 'text': 'Put the phone away before bed',
+-                                                   'start': 2.0, 'end': 5.0}
+-    card.setdefault('start', 2.0)
+-    card.setdefault('end', 9.0)
+-    info = render_card_png(card, tmp_path / f'{kind}.png', w, h, 'playful')
++    series = anchor_series(draft_series(count), words(), DURATION)
++    for seg in series_segments(series)[::max(1, count - 1)]:
++        info = render_series(seg, tmp_path / f'series-{count}-{seg["index"]}.png', w, h, 'playful', active=seg['index'])
++        x, y, bw, bh = info['box']
++        assert 0 <= x and 0 <= y and x + bw <= w and y + bh <= h
++        for x0, y0, x1, y1 in info['layout']['text_boxes']:
++            assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h
++
++
++@pytest.mark.parametrize('kind', ['takeaway', 'tip', 'warning'])
++def test_single_cards_draw_with_transparent_panel(tmp_path, kind):
++    card = {'kind': kind, 'text': 'Put the phone away before bed', 'start': 2.0, 'end': 9.0}
++    info = render_card_png(card, tmp_path / f'{kind}.png', 1080, 1920, 'playful')
+     x, y, bw, bh = info['box']
+-    assert 0 <= x and 0 <= y and x + bw <= w and y + bh <= h
+     assert info['anim'] == 'pop' and info['kind'] == kind
+-    for x0, y0, x1, y1 in info['layout']['text_boxes']:
+-        assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h
+     with Image.open(tmp_path / f'{kind}.png') as image:
+         alpha = np.asarray(image.getchannel('A'))
+     assert alpha[0, 0] == 0
+-    # The panel is translucent: inside the padding it is neither opaque nor invisible.
+     assert 120 <= alpha[y + bh // 2, x + bw - 8] <= 200
+ 
+ 
+-def _cards_fixture(root, audio, script='Script'):
++def _audio(tmp_path):
++    audio = tmp_path / 'voice.mp3'
+     audio.write_bytes(b'voice-bytes')
+-    return words(), script
++    return audio
+ 
+ 
+-def test_educational_prepare_uses_points_prompt_and_render_animates(tmp_path, monkeypatch):
+-    import engine.providers.gemini_web as gemini
+-    audio = tmp_path / 'voice.mp3'
+-    word_rows, script = _cards_fixture(tmp_path, audio)
++def test_prepare_uses_chosen_provider_topic_and_drops_overlapping_cards(tmp_path, monkeypatch):
++    import engine.studio_review as review
++    audio = _audio(tmp_path)
+     seen = {}
+ 
+-    def fake(system, user, cleanup='keep'):
+-        seen['system'] = system
+-        return json.dumps({'cards': [points_card(), {'kind': 'warning', 'text': 'Do not scroll in bed',
+-                                                    'start_word': 20, 'end_word': 23}]})
+-    monkeypatch.setattr(gemini, 'gemini_web_generate', fake)
+-    result = prepare(tmp_path, audio, word_rows, script, 40, 'en', educational=True)
+-    assert '"points"' in seen['system'] and 'warning' in seen['system']
+-    assert result['schema_version'] == 2 and result['educational'] is True
+-    overlays = render(tmp_path, audio, word_rows, script, 40, 1080, 1920, 'playful', educational=True)
+-    assert [o['kind'] for o in overlays] == ['points', 'warning']
+-    assert all(o['anim'] == 'pop' and len(o['box']) == 4 for o in overlays)
+-    # The educational draft is a different fingerprint: a plain render must refuse it.
++    def fake(provider, system, user, cleanup='keep'):
++        seen.update(provider=provider, system=system)
++        draft = draft_series(4)
++        draft['cards'] = [{'kind': 'warning', 'text': 'Do not scroll in bed', 'start_word': 58, 'end_word': 59}]
++        return json.dumps(draft)
++    monkeypatch.setattr(review, '_draft_generate', fake)
++    result = prepare(tmp_path, audio, words(), 'Script', DURATION, 'en', educational=True,
++                     topic='Stop overthinking', provider='chatgpt-web')
++    assert seen['provider'] == 'chatgpt-web'
++    assert 'Stop overthinking' in seen['system'] and '2 to 8' in seen['system']
++    assert result['draft_provider'] == 'chatgpt-web' and result['schema_version'] == 3
++    assert len(result['series']['points']) == 4
++    assert result['cards'] == [] and result['dropped_overlapping_cards'] == 1
++
++
++def test_educational_render_opens_holds_and_closes_the_series(tmp_path, monkeypatch):
++    import engine.studio_review as review
++    audio = _audio(tmp_path)
++    draft = draft_series(4)
++    monkeypatch.setattr(review, '_draft_generate', lambda *a, **k: json.dumps(draft))
++    prepare(tmp_path, audio, words(), 'Script', DURATION, 'en', educational=True, topic='Calm')
++    overlays = render(tmp_path, audio, words(), 'Script', DURATION, 1080, 1920, 'playful',
++                      educational=True, topic='Calm')
++    assert len(overlays) == 4
++    assert [o.get('anim') for o in overlays] == ['open', None, None, 'close']
++    assert overlays[0]['fade_in'] and overlays[-1]['fade_out']
++    assert [o['kind'] for o in overlays] == ['points'] * 4
++    for before, after in zip(overlays, overlays[1:]):
++        assert before['end'] == after['start']
++    # Changing the topic changes the educational draft fingerprint: a stale draft must not render.
+     with pytest.raises(ValueError):
+-        render(tmp_path, audio, word_rows, script, 40, 1080, 1920, 'playful', educational=False)
++        render(tmp_path, audio, words(), 'Script', DURATION, 1080, 1920, 'playful', educational=True, topic='Other')
+ 
+ 
+-def test_non_educational_prepare_keeps_original_prompt_and_plain_cards(tmp_path, monkeypatch):
++def test_single_point_cards_pop_and_stories_stay_plain(tmp_path, monkeypatch):
++    import engine.studio_review as review
++    audio = _audio(tmp_path)
++    draft = {'cards': [{'kind': 'tip', 'text': 'Drink water before coffee', 'start_word': 0, 'end_word': 4}]}
++    monkeypatch.setattr(review, '_draft_generate', lambda *a, **k: json.dumps(draft))
++    prepare(tmp_path, audio, words(), 'Script', DURATION, 'en', educational=True, topic='Health')
++    overlays = render(tmp_path, audio, words(), 'Script', DURATION, 1080, 1920, 'playful',
++                      educational=True, topic='Health')
++    assert overlays[0]['anim'] == 'pop'
+     import engine.providers.gemini_web as gemini
+-    audio = tmp_path / 'voice.mp3'
+-    word_rows, script = _cards_fixture(tmp_path, audio)
+-    seen = {}
+-
+-    def fake(system, user, cleanup='keep'):
+-        seen['system'] = system
+-        return json.dumps({'cards': [{'text': 'Pause before speaking', 'start_word': 10, 'end_word': 12}]})
+-    monkeypatch.setattr(gemini, 'gemini_web_generate', fake)
+-    prepare(tmp_path, audio, word_rows, script, 40, 'en')
+-    assert '"points"' not in seen['system']
+-    overlays = render(tmp_path, audio, word_rows, script, 40, 1080, 1920, 'bold')
+-    assert overlays and 'anim' not in overlays[0] and overlays[0]['kind'] == 'keypoint'
++    monkeypatch.setattr(gemini, 'gemini_web_generate',
++                        lambda *a, **k: json.dumps({'cards': [{'text': 'Pause before speaking', 'start_word': 10, 'end_word': 12}]}))
++    prepare(tmp_path / 'story', audio, words(), 'Script', DURATION, 'en')
++    plain = render(tmp_path / 'story', audio, words(), 'Script', DURATION, 1080, 1920, 'bold')
++    assert plain and 'anim' not in plain[0] and plain[0]['kind'] == 'keypoint'
+ 
+ 
+ def test_structured_list_gets_pop_only_for_education(tmp_path):
+@@ -139,42 +201,52 @@
+     graphics.parent.mkdir(parents=True)
+     graphics.write_text(json.dumps({'events': [{
+         'kind': 'list', 'start': 1, 'end': 9, 'title': 'Five habits',
+-        'rows': [{'label': p} for p in POINTS]}]}), encoding='utf-8')
++        'rows': [{'label': p} for p in LONG_POINTS[:5]]}]}), encoding='utf-8')
+     plain = build_structured_overlays(tmp_path, 40, 1080, 1920, style='playful')
+     taught = build_structured_overlays(tmp_path, 40, 1080, 1920, style='playful', educational=True)
+     assert 'anim' not in plain[0] and plain[0]['box']
+     assert taught[0]['anim'] == 'pop' and taught[0]['box'] == plain[0]['box']
+ 
+ 
+-def _measure_card_area(png, background=(32, 48, 64)):
++def _area(png, background=(32, 48, 64)):
+     arr = np.asarray(Image.open(png).convert('RGB')).astype(int)
+-    diff = np.abs(arr - np.array(background)).max(axis=2)
+-    return int((diff > 40).sum())
++    return int((np.abs(arr - np.array(background)).max(axis=2) > 40).sum())
+ 
+ 
+ @pytest.mark.skipif(not (shutil.which('ffmpeg') or Path(ffmpeg_exe()).exists()), reason='ffmpeg unavailable')
+-def test_pop_animation_opens_holds_and_closes_in_ffmpeg(tmp_path):
++def test_series_opens_and_closes_in_ffmpeg(tmp_path):
+     binary = ffmpeg_exe()
+     W, H = 720, 1280
+     src = tmp_path / 'src.mp4'
+-    subprocess.run([binary, '-v', 'error', '-y', '-f', 'lavfi', '-i', f'color=c=0x203040:s={W}x{H}:d=5:r=25',
++    subprocess.run([binary, '-v', 'error', '-y', '-f', 'lavfi', '-i', f'color=c=0x203040:s={W}x{H}:d=10:r=25',
+                     '-pix_fmt', 'yuv420p', str(src)], check=True, timeout=60)
+-    card = points_card(start=1.0, end=4.0)
+-    info = render_card_png(card, tmp_path / 'points.png', W, H, 'playful')
++    series = anchor_series(draft_series(3), words(), 10.0)
++    # A 10 s clip: segments are retimed onto the clip so the open/hold/close phases are visible.
++    segments = series_segments({**series, 'start': 1.0, 'end': 8.0,
++                                'points': [{**p, 'start': 1.0 + i * 2.3} for i, p in enumerate(series['points'])]})
++    overlays = []
++    for seg in segments:
++        seg['start'] = round(seg['start'], 3)
++        info = render_series(seg, tmp_path / f'seg{seg["index"]}.png', W, H, 'playful', active=seg['index'])
++        info.update(start=seg['start'], end=round(seg['end'], 3), fade_in=.22 if seg['index'] == 0 else 0,
++                    fade_out=.22 if seg['index'] == 2 else 0)
++        info['anim'] = 'open' if seg['index'] == 0 else ('close' if seg['index'] == 2 else None)
++        if info['anim'] is None:
++            del info['anim']
++        overlays.append(info)
+     out = tmp_path / 'out.mp4'
+-    cmd, meta = build_ffmpeg_cmd([{'src': str(src), 'in': 0, 'dur': 5, 'freeze': 0, 'hard_cut': True}], None,
+-                                 str(out), W=W, H=H, fps=25, encoder='libx264', quality='preview',
+-                                 safe_concat=True, overlays=[info])
+-    assert 'eval=frame' in ' '.join(cmd)
+-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
++    cmd, _ = build_ffmpeg_cmd([{'src': str(src), 'in': 0, 'dur': 10, 'freeze': 0, 'hard_cut': True}], None,
++                              str(out), W=W, H=H, fps=25, encoder='libx264', quality='preview',
++                              safe_concat=True, overlays=overlays)
++    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+     assert result.returncode == 0, result.stderr[-2000:]
+     areas = {}
+-    for t in (0.5, 1.12, 2.5, 3.9, 4.6):
++    for t in (0.5, 1.1, 2.5, 6.0, 7.9, 9.2):
+         frame = tmp_path / f'frame_{t}.png'
+         subprocess.run([binary, '-v', 'error', '-y', '-ss', str(t), '-i', str(out), '-frames:v', '1', str(frame)],
+                        check=True, timeout=60)
+-        areas[t] = _measure_card_area(frame)
+-    assert areas[0.5] < 50 and areas[4.6] < 50          # not visible before or after
+-    assert areas[1.12] < areas[2.5]                      # still opening
+-    assert areas[3.9] < areas[2.5]                       # closing
+-    assert areas[2.5] > 5000                             # full panel on screen while held
++        areas[t] = _area(frame)
++    assert areas[0.5] < 50 and areas[9.2] < 50              # not visible before or after the series
++    assert areas[1.1] < areas[2.5]                          # opening
++    assert areas[7.9] < areas[6.0]                          # closing
++    assert areas[6.0] > 5000                                # full panel while the last point is covered
+diff -ruN a/tools/update_v774_to_v775.py b/tools/update_v774_to_v775.py
+--- a/tools/update_v774_to_v775.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v774_to_v775.py	2026-10-21 11:38:58.874886208 +0000
+@@ -0,0 +1,138 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.75 update (educational points series across the video, AI-drafted copy, takeaway/tip/warning cards) to a v7.0.74 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.75 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.75/tools/update_v774_to_v775.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.75/tools/update_v774_to_v775.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'EDUCATIONAL_POINTS_SERIES_V7_0_75.md',
++    'VERSION',
++    'app.py',
++    'engine/factory.py',
++    'engine/render/educational_cards.py',
++    'engine/render/ffmpeg_renderer.py',
++    'engine/speech_cards.py',
++    'engine/studio_config.py',
++    'tests/test_v774_educational_cards.py',
++    'tools/update_v774_to_v775.py',
++]
++# Files as they exist in 7.0.74: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['a0ebb7fed2f69581a404c145ddbba9e173c1d2f87670f2fa8d3ab93a4dcc86ec'],
++    'app.py': ['7682eaff2813b20c75e18928c1aa07aa1a99225e3038eda5cabb8cce01a5b65b'],
++    'engine/factory.py': ['8bf58616ce237836a70877a451aab07ec76e31898916c0670e871997237a3ce0'],
++    'engine/render/educational_cards.py': ['bd53ed54ba00974e6412e02975dd97e6118a9f5a64cae42068f1065936adbaef'],
++    'engine/render/ffmpeg_renderer.py': ['038eef6f5ff4e683897f709566d03562fa6fb1bc71112449a0fa09e440f22fb0'],
++    'engine/speech_cards.py': ['5e4a8f28f1d3e1b167032376289da20b914c959cfd12b839ba96ec636c797470'],
++    'engine/studio_config.py': ['a3ccbb414072c9dd8c5e23fee308f91161c9cbb8c68530a70f1131bdac110246'],
++    'tests/test_v774_educational_cards.py': ['9226948d182890dfa22622c3f55e0e34576d2119397b696610ed616bb9e0a53c'],
++}
++ACCEPTED_INSTALLS = ('7.0.74', '7.0.75')  # 7.0.75 allows a safe re-run after success
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError('This update requires an installed 7.0.74 (found ' + current + '). '
++                         'Run ../AutoVideoAI-v7.0.74/tools/update_v773_to_v774.py first (7.0.70 to 7.0.71 to 7.0.72 to 7.0.73 to 7.0.74 to 7.0.75 is a chain).')
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.75 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.75 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.74-to-v7.0.75-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.75. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

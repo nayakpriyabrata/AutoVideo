@@ -1,0 +1,1130 @@
+diff -ruN a/ODIA_TTS_BATCH_REUSE_V7_0_80.md b/ODIA_TTS_BATCH_REUSE_V7_0_80.md
+--- a/ODIA_TTS_BATCH_REUSE_V7_0_80.md	1970-01-01 00:00:00.000000000 +0000
++++ b/ODIA_TTS_BATCH_REUSE_V7_0_80.md	2026-10-22 10:44:41.000000000 +0000
+@@ -0,0 +1,54 @@
++# AutoVideo 7.0.80 — Odia TTS resilience, batch reuse, wrong-script guard
++
++Update from 7.0.79 with `python3 ../AutoVideoAI-v7.0.80/tools/update_v779_to_v780.py . --apply`
++(dry run first without `--apply`; stop the dashboard before applying).
++
++## What failed (job 20261022-143856-7-small-daily-habits-tha-9729)
++
++1. **Odia TTS, step 4 (`Prepare all selected TTS`).** The Gemini call failed twice:
++   - SDK path: HTTP 400 `The value 'UNKNOWN' is not supported for 'type' at input[0].content[0].annotations[0]`.
++     The request body built by google-genai 2.32.0 is correct (`speech_metadata`); the `UNKNOWN` value could
++     not be reproduced here, so the SDK path is removed and the documented REST JSON is sent directly.
++   - REST path: `Read timed out` after 180 s. One 3-minute request for the whole Odia narration.
++   - Odia has no fallback by design, so preparation stopped.
++2. **Odia TTS, video generation.** Production synthesised Odia a second time. Cause: when one saved language
++   had a failed hook draft, `prepare_selected_editions` treated the whole saved batch as stale and reran
++   localization, TTS and cards for all three languages. Odia voice files written by the failed run were not reused.
++3. **Corrupted Odia narration.** The approved Odia text contained `βαğβαğ` in place of an Odia word
++   (Gemini Web localization artifact). It was sent to TTS unchecked.
++
++## What changed
++
++- `engine/audio/tts.py`: Gemini TTS uses REST JSON only. Narration is split into parts of at most 1200
++  characters at sentence ends (`।`, `.`, `!`, `?`, or a space for long unpunctuated runs). Each part is
++  synthesised with a 30 s connect / 240 s read timeout, up to 3 attempts for timeouts, connection errors,
++  408/429 and 5xx. Other 4xx responses fail at once. Finished parts are cached in `<out>.parts/` so a
++  retry sends only the unfinished parts. The folder is removed after success.
++- Odia failures now state that no English fallback is used and that the edition needs a native Odia voice
++  file. **Per-language voice import is not available in 7.0.80**: the imported narration file applies to the
++  source (master) language only, so it cannot replace the Odia edition yet.
++- `engine/speech_cards.py`:
++  - A saved batch with matching choices is reused. If only hook drafts are missing, only those hooks are drafted
++    again; localization, TTS and card drafts are not repeated. A failed hook redo is recorded in `hooks_error`
++    and the batch is still reused.
++  - `foreign_script_words(text, language)` flags words with letters from a non-Latin foreign script, or Latin
++    letters mixed into an Odia/Hindi word. Pure Latin words (brand names, loanwords) are allowed.
++    `prepare_batch` raises before any TTS call and names the words. Correct them in step 4 and save again.
++- `tools/update_v779_to_v780.py`: the updater. The 7.0.78→7.0.79 step is kept in the chain as
++  documentation (run it from the 7.0.79 zip folder if you are on 7.0.78).
++
++## Not verified
++
++- Live Gemini Odia speech timing and quality could not be tested from the build sandbox. The REST path, timeouts
++  and retries are tested with a fake server. Treat Odia narration as **needing a native voice file** until one
++  Odia edition has been generated and listened to.
++- The `UNKNOWN` SDK error did not reproduce on google-genai 2.32.0; the cause on the user's install is unknown.
++
++## Tests
++
++- `tests/test_v780_tts_resilience.py` (9): documented request body, timeout retried, 400 fails at once, persistent
++  timeouts stop after 3 attempts, long narration split and finished parts reused, word-preserving split, Odia
++  failure message.
++- `tests/test_v780_batch_reuse.py` (5): foreign-script detection, wrong-script narration blocked before TTS,
++  complete batch not rerun, failed hook redone alone, hook-redo failure recorded.
++- `tests/test_v778_odia_fixes.py`: retry sleep patched.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-22 10:48:12.341637715 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-22 10:48:17.261662540 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.79",
+-  "built_at": "2026-10-22T08:30:58+00:00",
++  "version": "7.0.80",
++  "built_at": "2026-10-22T10:47:45+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -323,6 +323,11 @@
+       "sha256": "02f3986f06638f962a283be8bedf341a62770a3d077727f2b37b25981ce52315"
+     },
+     {
++      "path": "ODIA_TTS_BATCH_REUSE_V7_0_80.md",
++      "bytes": 3868,
++      "sha256": "020b2bf6688079aab7b2a402580c5f85ebf3d77f41fb38f8480f3436c31f148d"
++    },
++    {
+       "path": "PERSISTENT_RENDER_CLEANUP_V7_0_49.md",
+       "bytes": 1776,
+       "sha256": "e1024d1c533fcbd365c68cbe64267e88b7d78c3ba397427b772abf75728ba9aa"
+@@ -870,7 +875,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "49de81a43a2e93ced4be13b78be0c43b1ded6b7172049506c45399b8525b4470"
++      "sha256": "751b49c552573d93ccae841381aaad1365dc2235153d1317111d71bddd7ed41e"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -1174,8 +1179,8 @@
+     },
+     {
+       "path": "engine/audio/tts.py",
+-      "bytes": 27283,
+-      "sha256": "7185ba5ba29d6cbb23c724bbeed464ba7d886aab8656a226395d56b07bcb3764"
++      "bytes": 29927,
++      "sha256": "c084d3fc65bd691808883c05869b14bd88d7ccbf6cf36bd64cf4d4a5c3629958"
+     },
+     {
+       "path": "engine/auto_resume.py",
+@@ -1764,8 +1769,8 @@
+     },
+     {
+       "path": "engine/speech_cards.py",
+-      "bytes": 35181,
+-      "sha256": "51aec735c30120d7e1a54543833f5973bf5c563c040a935d030be1a6536b1242"
++      "bytes": 37904,
++      "sha256": "fb14d728091c453ff1de6785a1e8b7e8eb1b3600127701cf764be543685026d8"
+     },
+     {
+       "path": "engine/stock_video.py",
+@@ -2789,8 +2794,8 @@
+     },
+     {
+       "path": "tests/test_v778_odia_fixes.py",
+-      "bytes": 9853,
+-      "sha256": "ba7c317fc48553c8bf23341e4189c9fdb4abb8221ae31025a61a373dd8ffa68c"
++      "bytes": 9949,
++      "sha256": "6d6f0a47870a13a333f167415db238ed8dedc1a789e046b8c448af6919d7d900"
+     },
+     {
+       "path": "tests/test_v779_submit_cards_timing.py",
+@@ -2798,6 +2803,16 @@
+       "sha256": "fa34438d0c6985ffb4d10adb5a4853e3b6145e9d7ded20398fb3e4242037b20b"
+     },
+     {
++      "path": "tests/test_v780_batch_reuse.py",
++      "bytes": 4676,
++      "sha256": "9e5bb774f92101b8bc1b2486cf91e57232d7e8f01a1f1d7bfbf1419be9d5d617"
++    },
++    {
++      "path": "tests/test_v780_tts_resilience.py",
++      "bytes": 5675,
++      "sha256": "43ac7095fb153358c4f6dae9f2dda57da86ea64532020e1c06bc36ab21fbc84a"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2888,9 +2903,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v778_to_v779.py",
+-      "bytes": 8426,
+-      "sha256": "fc06886c6d6eb478c831a8c764fa6b407edfe82375e6d6669278d2e5429825ea"
++      "path": "tools/update_v779_to_v780.py",
++      "bytes": 7944,
++      "sha256": "a0ee408e0e1df40efba065669f24d65b2b2ef319ace588c48ada311ae7f84c56"
+     },
+     {
+       "path": "topics.csv",
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-22 10:48:12.333637675 +0000
++++ b/VERSION	2026-10-22 10:42:17.000000000 +0000
+@@ -1 +1 @@
+-7.0.79
++7.0.80
+diff -ruN a/engine/audio/tts.py b/engine/audio/tts.py
+--- a/engine/audio/tts.py	2026-10-22 10:48:12.337637695 +0000
++++ b/engine/audio/tts.py	2026-10-22 10:41:50.000000000 +0000
+@@ -12,13 +12,14 @@
+ 
+ import asyncio
+ import base64
+-import json
++import hashlib
+ import os
+ import re
+ import shutil
+ import subprocess
+ import tempfile
+ import threading
++import time
+ 
+ import requests
+ from ..runtime_log import runtime_print as print
+@@ -110,6 +111,42 @@
+         return {"audio": out, "words": all_words, "duration": dur, "engine": "edge-native"}
+ 
+ 
++GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
++# 7.0.80: one request per sentence group. A 330-second Odia narration in one request timed out at 180 s
++# (the 7.0.79 run). Each part is cached on disk, so a retry redoes only the part that failed.
++GEMINI_TTS_CHUNK_CHARS = 1200
++GEMINI_TTS_TIMEOUT = (30, 240)        # (connect, read) seconds per part
++GEMINI_TTS_ATTEMPTS = 3
++GEMINI_TTS_RETRY_STATUS = {408, 429, 500, 502, 503, 504}
++
++
++def split_speech_text(text: str, limit: int = GEMINI_TTS_CHUNK_CHARS) -> list[str]:
++    """Split narration into parts of at most ``limit`` characters, on sentence ends where possible.
++
++    Sentence ends include the Devanagari/Odia danda (।) and the double danda (॥).
++    """
++    sentences = [s.strip() for s in re.split(r"(?<=[.!?।॥])\s+", str(text or "").strip()) if s.strip()]
++    parts: list[str] = []
++    current = ""
++    for sentence in sentences:
++        while len(sentence) > limit:  # no sentence end inside the limit: split on a space
++            cut = sentence.rfind(" ", 0, limit)
++            cut = cut if cut > 0 else limit
++            piece, sentence = sentence[:cut].strip(), sentence[cut:].strip()
++            if current:
++                parts.append(current)
++                current = ""
++            parts.append(piece)
++        if current and len(current) + 1 + len(sentence) > limit:
++            parts.append(current)
++            current = sentence
++        else:
++            current = (current + " " + sentence).strip()
++    if current:
++        parts.append(current)
++    return parts
++
++
+ class GeminiTTSProvider:
+     name = "gemini"
+ 
+@@ -147,40 +184,15 @@
+                 if found:
+                     return found
+             return None
+-        # SDK objects. Prefer the documented convenience property first.
+-        for attr in ("output_audio", "outputAudio", "audio", "data"):
+-            try:
+-                found = GeminiTTSProvider._audio_data(getattr(obj, attr, None))
+-                if found:
+-                    return found
+-            except Exception:
+-                pass
+-        try:
+-            dump = obj.model_dump()
+-            return GeminiTTSProvider._audio_data(dump)
+-        except Exception:
+-            return None
++        return None
+ 
+-    def synth(self, text: str, voice: str, out: str, rate: str = "+0%", **kwargs) -> dict:
+-        key = os.getenv("GEMINI_API_KEY", "")
+-        if not key:
+-            raise RuntimeError(
+-                "GEMINI_API_KEY is not configured. Run 'python3 cli.py v3 env-doctor' "
+-                "to verify which .env file and provider variables AutoVideoAI detected.")
+-        model = kwargs.get("model") or (
+-            "gemini-3.8-flash-lite-tts" if self.lite else "gemini-3.8-flash-tts")
+-        provider_voice = kwargs.get("provider_voice") or os.getenv("GEMINI_TTS_VOICE", "Kore")
+-        style = kwargs.get("style") or (
+-            "warm, confident documentary narrator; conversational and human; medium energy; "
+-            "natural sentence pauses; never salesy or robotic"
+-        )
+-        # Name the spoken language explicitly. Without it the English narrator
+-        # style is the only instruction, and Odia text can be read with the
+-        # wrong language or accent. Kept even when a caller supplies a style.
+-        spoken = {"or": "Odia (Oriya)", "hi": "Hindi"}.get(str(kwargs.get("language") or "en").lower())
+-        if spoken:
+-            style = (f"Speak the entire text in {spoken} with native pronunciation. Do not translate it "
+-                     f"or read it in English or another language. " + style)
++    def _speak_part(self, text: str, key: str, model: str, provider_voice: str, style: str) -> bytes:
++        """One Gemini TTS request over raw REST JSON, retried on timeouts, connection errors and 5xx/429.
++
++        7.0.80: the google-genai SDK releases 2.10.0 to 2.20.0 rewrite the speech annotation to
++        ``{"type": "UNKNOWN"}``, which Gemini rejects with HTTP 400 on every call. The SDK path was
++        removed; this request sends the documented JSON unchanged.
++        """
+         payload = {
+             "model": model,
+             "input": [{
+@@ -193,54 +205,34 @@
+             "response_format": {"type": "audio"},
+             "generation_config": {"speech_config": [{"voice": provider_voice}]},
+         }
+-        audio = None
+-        errors = []
+-        # Current google-genai Interactions API.
+-        try:
+-            from google import genai
+-            client = genai.Client(api_key=key)
+-            interaction = client.interactions.create(**payload)
+-            audio = self._audio_data(interaction)
+-        except Exception as e:
+-            errors.append(f"sdk:{type(e).__name__}:{str(e)[:160]}")
+-
+-        # REST fallback mirrors the GA Interactions schema.
+-        if not audio:
++        headers = {"x-goog-api-key": key, "Content-Type": "application/json", "Api-Revision": "2026-05-20"}
++        last = "no response"
++        for attempt in range(1, GEMINI_TTS_ATTEMPTS + 1):
+             try:
+-                r = requests.post(
+-                    "https://generativelanguage.googleapis.com/v1beta/interactions",
+-                    headers={
+-                        "x-goog-api-key": key,
+-                        "Content-Type": "application/json",
+-                        "Api-Revision": "2026-05-20",
+-                    },
+-                    json=payload, timeout=180,
+-                )
+-                if r.status_code >= 400:
+-                    raise RuntimeError(f"HTTP {r.status_code}: {(r.text or '')[:300]}")
+-                audio = self._audio_data(r.json())
+-            except Exception as e:
+-                errors.append(f"rest:{type(e).__name__}:{str(e)[:180]}")
+-
+-        if not audio:
+-            detail = " | ".join(errors[-2:])
+-            raise RuntimeError("Gemini TTS response contained no audio data" + (f" ({detail})" if detail else ""))
+-
+-        if isinstance(audio, str):
+-            try:
+-                raw = base64.b64decode(audio, validate=False)
+-            except Exception as e:
+-                raise RuntimeError(f"Gemini TTS audio payload was not valid base64: {e}") from e
+-        else:
+-            raw = bytes(audio)
+-        if len(raw) < 1024:
+-            raise RuntimeError("Gemini TTS returned an implausibly small audio payload")
++                response = requests.post(GEMINI_TTS_URL, headers=headers, json=payload, timeout=GEMINI_TTS_TIMEOUT)
++                if response.status_code >= 400:
++                    detail = (response.text or "")[:300]
++                    if response.status_code not in GEMINI_TTS_RETRY_STATUS:
++                        raise RuntimeError(f"Gemini TTS rejected the request (HTTP {response.status_code}): {detail}")
++                    last = f"HTTP {response.status_code}: {detail[:120]}"
++                else:
++                    audio = self._audio_data(response.json())
++                    if audio:
++                        raw = bytes(audio) if not isinstance(audio, str) else base64.b64decode(audio, validate=False)
++                        if len(raw) >= 1024:
++                            return raw
++                    last = "response contained no audio data"
++            except requests.RequestException as error:
++                last = f"{type(error).__name__}: {str(error)[:120]}"
++            if attempt < GEMINI_TTS_ATTEMPTS:
++                time.sleep(min(20, 4 * attempt))
++        raise RuntimeError(f"Gemini TTS failed for a {len(text)}-character part after "
++                           f"{GEMINI_TTS_ATTEMPTS} attempts: {last}")
+ 
+-        wav = out + ".gemini.wav"
+-        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+-        # Gemini speech responses may be a WAV container or raw 24 kHz signed
+-        # 16-bit mono PCM. Detect the container instead of assuming the base64
+-        # bytes already include a RIFF header.
++    @staticmethod
++    def _part_to_mp3(raw: bytes, part: str):
++        # Gemini speech responses may be a WAV container or raw 24 kHz signed 16-bit mono PCM.
++        wav = part + ".gemini.wav"
+         if raw[:4] == b"RIFF":
+             with open(wav, "wb") as f:
+                 f.write(raw)
+@@ -251,14 +243,51 @@
+                 wf.setsampwidth(2)
+                 wf.setframerate(24000)
+                 wf.writeframes(raw)
+-        _audio_to_mp3(wav, out)
++        _audio_to_mp3(wav, part)
+         try:
+             os.remove(wav)
+         except Exception:
+             pass
++
++    def synth(self, text: str, voice: str, out: str, rate: str = "+0%", **kwargs) -> dict:
++        key = os.getenv("GEMINI_API_KEY", "")
++        if not key:
++            raise RuntimeError(
++                "GEMINI_API_KEY is not configured. Run 'python3 cli.py v3 env-doctor' "
++                "to verify which .env file and provider variables AutoVideoAI detected.")
++        model = kwargs.get("model") or (
++            "gemini-3.8-flash-lite-tts" if self.lite else "gemini-3.8-flash-tts")
++        provider_voice = kwargs.get("provider_voice") or os.getenv("GEMINI_TTS_VOICE", "Kore")
++        style = kwargs.get("style") or (
++            "warm, confident documentary narrator; conversational and human; medium energy; "
++            "natural sentence pauses; never salesy or robotic"
++        )
++        # Name the spoken language explicitly. Without it the English narrator
++        # style is the only instruction, and Odia text can be read with the
++        # wrong language or accent. Kept even when a caller supplies a style.
++        spoken = {"or": "Odia (Oriya)", "hi": "Hindi"}.get(str(kwargs.get("language") or "en").lower())
++        if spoken:
++            style = (f"Speak the entire text in {spoken} with native pronunciation. Do not translate it "
++                     f"or read it in English or another language. " + style)
++        parts_text = split_speech_text(text)
++        if not parts_text:
++            raise RuntimeError("Gemini TTS needs narration text")
++        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
++        parts_dir = out + ".parts"
++        os.makedirs(parts_dir, exist_ok=True)
++        part_files = []
++        for index, piece in enumerate(parts_text):
++            digest = hashlib.sha256(piece.encode("utf-8")).hexdigest()[:12]
++            part = os.path.join(parts_dir, f"part-{index:03d}-{digest}.mp3")
++            if not (os.path.isfile(part) and os.path.getsize(part) >= 1024):
++                raw = self._speak_part(piece, key, model, provider_voice, style)
++                self._part_to_mp3(raw, part)
++            part_files.append(part)
++        _concat_mp3(part_files, out)
+         dur = _mp3_len(out)
+-        if dur <= 0:
++        if dur <= 0 or not os.path.isfile(out) or os.path.getsize(out) < 1024:
+             raise RuntimeError("Gemini TTS produced unreadable audio")
++        shutil.rmtree(parts_dir, ignore_errors=True)
+         return {"audio": out, "words": [], "duration": dur,
+                 "engine": "gemini-3.8-flash-lite-tts" if self.lite else "gemini-3.8-flash-tts"}
+ 
+@@ -501,6 +530,15 @@
+             except Exception as e:
+                 print(f"Edge TTS failed ({e}) -> gTTS last-resort fallback")
+                 return providers["gtts"].synth(text, voice, out, rate, **kwargs)
++        if language == 'or' and p in ('gemini', 'gemini-lite'):
++            # 7.0.80: no English fallback for Odia. Say what the user can do next.
++            try:
++                return providers[p].synth(text, voice, out, rate, **kwargs)
++            except Exception as error:
++                raise RuntimeError(
++                    f"Odia narration could not be voiced by Gemini ({str(error)[:300]}). No English fallback is used. "
++                    "This edition needs a native Odia voice file; per-language voice import is not available in 7.0.80."
++                ) from error
+         return providers[p].synth(text, voice, out, rate, **kwargs)
+ 
+     chain = []
+diff -ruN a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py	2026-10-22 10:48:12.337637695 +0000
++++ b/engine/speech_cards.py	2026-10-22 10:40:50.000000000 +0000
+@@ -8,7 +8,9 @@
+ import hashlib
+ import json
+ import math
++import re
+ import time
++import unicodedata
+ from pathlib import Path
+ 
+ from .render.educational_cards import SINGLE_KINDS, MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS
+@@ -424,12 +426,16 @@
+     return result
+ 
+ 
+-def _bundle_matches(bundle, wanted):
+-    """Whether a saved bundle was prepared with the same choices. Legacy bundles (no flags) mean cards on, no hooks."""
++def _bundle_flags_match(bundle, wanted):
++    """Same card/hook/educational choices as the saved bundle. Legacy bundles (no flags) mean cards on, no hooks."""
+     return (bool(bundle.get('text_cards', True)) == wanted['text_cards']
+             and bool(bundle.get('educational', False)) == wanted['educational']
+-            and bool(bundle.get('hooks', False)) == wanted['hooks']
+-            and (not wanted['hooks'] or bool(bundle.get('hooks_ready'))))
++            and bool(bundle.get('hooks', False)) == wanted['hooks'])
++
++
++def _bundle_matches(bundle, wanted):
++    """Flags match and, when hooks were requested, the hook draft is ready."""
++    return _bundle_flags_match(bundle, wanted) and (not wanted['hooks'] or bool(bundle.get('hooks_ready')))
+ 
+ 
+ def complete_edition_cards(bundle,cleanup='delete-after-read'):
+@@ -528,6 +534,39 @@
+     return result
+ 
+ 
++# Unicode blocks a reviewed narration must use for its language (7.0.80).
++NATIVE_SCRIPT_RANGES = {'or': (0x0B00, 0x0B7F), 'hi': (0x0900, 0x097F)}
++
++
++def foreign_script_words(text, language):
++    """Words that mix or corrupt scripts inside a native-language narration (7.0.80).
++
++    A 7.0.79 Odia narration contained 'βαğβαğ' in place of an Odia word, which the TTS reads as noise.
++    Flagged: any letter from a non-Latin foreign script (Greek, Cyrillic, ...), or Latin letters mixed into
++    a native word. Pure Latin words (brand names, loanwords such as 'Instagram') are allowed.
++    Digits, punctuation (including the danda) and marks in the native script are ignored.
++    """
++    code = str(language or '').lower()
++    if code not in NATIVE_SCRIPT_RANGES:
++        return []
++    low, high = NATIVE_SCRIPT_RANGES[code]
++    bad = []
++    for word in re.findall(r"\S+", str(text or '')):
++        native = latin = foreign = False
++        for c in word:
++            if not c.isalpha():
++                continue
++            if low <= ord(c) <= high:
++                native = True
++            elif c.isascii() or 'LATIN' in unicodedata.name(c, ''):
++                latin = True
++            else:
++                foreign = True
++        if foreign or (native and latin):
++            bad.append(word.strip('.,;:!?\'"’‘“”()[]{}।॥'))
++    return bad
++
++
+ def prepare_batch(root,source_script,source_language,languages,*,provider='auto',audio_path=None,cleanup='delete-after-read',progress=None,localized_scripts=None,
+                   text_cards=True,educational=False,topic='',card_provider='gemini-web',hooks=False):
+     """One action, two phases: every language voice first, then separate card requests."""
+@@ -543,6 +582,12 @@
+         scripts={language:str(localized_scripts.get(language,'')).strip() for language in editions}
+         if any(not scripts[x] for x in editions):raise ValueError('Every selected language needs a reviewed localized script before TTS')
+         if scripts.get(source_language)!=source_script.strip():raise ValueError('Reviewed master script changed; prepare the language scripts again')
++    # 7.0.80: stop before any TTS call when a reviewed narration has words in the wrong script.
++    for language in editions:
++        wrong = foreign_script_words(scripts[language], language)
++        if wrong:
++            raise ValueError(language_pack(language).label + ' narration has words outside its script: ' + ', '.join(wrong[:8])
++                             + '. Correct them in step 4 and save; no TTS was started.')
+     scripts_hash=hashlib.sha256(json.dumps(scripts,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+     state={'source_language':source_language,'source_script':source_script,'editions':editions,'scripts_sha256':scripts_hash,'bundles':{},'phase':'tts'}
+     emit=progress or (lambda *args:None)
+@@ -599,9 +644,22 @@
+     from .production import digest
+     existing=data.get('bundles',{})
+     wanted={'text_cards':bool(text_cards),'hooks':bool(hooks),'educational':bool(educational)}
+-    if (all(lang in existing and Path(existing[lang]['audio']).is_file()
+-            and digest(existing[lang]['audio'])==existing[lang]['audio_sha256'] and _bundle_matches(existing[lang],wanted) for lang in editions)
+-            and existing.get(source_language,{}).get('script','').strip()==source_script.strip()):
++    reusable=(all(lang in existing and Path(existing[lang]['audio']).is_file()
++                  and digest(existing[lang]['audio'])==existing[lang]['audio_sha256'] and _bundle_flags_match(existing[lang],wanted)
++                  for lang in editions)
++              and existing.get(source_language,{}).get('script','').strip()==source_script.strip())
++    if reusable:
++        # 7.0.80: a saved batch whose only gap is a failed hook draft is reused. Only the hooks are drafted
++        # again; localization, TTS and card drafts are not repeated (the 7.0.79 run repeated all of them).
++        missing=[lang for lang in editions if wanted['hooks'] and not existing[lang].get('hooks_ready')]
++        for lang in missing:
++            try:
++                existing[lang]=complete_edition_cards(existing[lang],settings.get('gemini_chat_cleanup','keep'))
++            except Exception as error:
++                existing[lang]=dict(existing[lang],hooks_ready=False,hooks_error=str(error)[:300])
++        if missing:
++            data['bundles']=existing
++            save(path,data)
+         return
+     audio=Path(root)/'narration/voice.mp3'
+     result=prepare_batch(root,source_script,source_language,editions,provider=settings.get('tts_provider','auto'),
+diff -ruN a/tests/test_v778_odia_fixes.py b/tests/test_v778_odia_fixes.py
+--- a/tests/test_v778_odia_fixes.py	2026-10-22 10:48:12.341637715 +0000
++++ b/tests/test_v778_odia_fixes.py	2026-10-22 10:41:29.000000000 +0000
+@@ -190,6 +190,7 @@
+     monkeypatch.setitem(sys.modules, 'google', None)  # force the REST path
+     monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+     monkeypatch.setattr(requests, 'post', capture)
++    monkeypatch.setattr(TTS.time, 'sleep', lambda seconds: None)  # 500 is retried; do not wait
+     with pytest.raises(RuntimeError):
+         TTS.GeminiTTSProvider().synth('text', 'voice', str(tmp_path / 'out.mp3'), language=language, style='')
+     assert name in seen['style']
+diff -ruN a/tests/test_v780_batch_reuse.py b/tests/test_v780_batch_reuse.py
+--- a/tests/test_v780_batch_reuse.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v780_batch_reuse.py	2026-10-22 10:40:50.000000000 +0000
+@@ -0,0 +1,92 @@
++"""v7.0.80: a saved language batch is reused, a failed hook draft redoes only the hooks, and a wrong-script
++narration stops before any TTS call.
++
++No browser, Gemini or TTS call is made: the batch functions are replaced by recorders.
++"""
++import json
++
++import pytest
++
++import engine.speech_cards as SC
++from engine.production import digest
++
++
++def test_foreign_script_words_flags_only_wrong_script_letters():
++    assert SC.foreign_script_words('ଆମ βαğβαğ ହୋଇ ଯାଏ।', 'or') == ['βαğβαğ']
++    assert SC.foreign_script_words('ନମସ୍କାର, ଏହା ଠିକ୍।', 'or') == []
++    assert SC.foreign_script_words('कभी सोचा है, आज।', 'hi') == []
++    assert SC.foreign_script_words('Hello there', 'en') == []  # English is not checked
++    # Pure Latin brand names and loanwords are legitimate in a native narration.
++    assert SC.foreign_script_words('ଇନଷ୍ଟାଗ୍ରାମ Instagram ଆଜି', 'or') == []
++    # Latin letters mixed into a native word are not.
++    assert SC.foreign_script_words('ଆମରmeaning ଠିକ', 'or') == ['ଆମରmeaning']
++
++
++def test_wrong_script_narration_stops_before_any_tts(monkeypatch):
++    calls = []
++    monkeypatch.setattr(SC, 'prepare_edition', lambda *a, **k: calls.append(a) or {})
++    scripts = {'en': 'Master narration.', 'or': 'ଆମ βαğβαğ ହୋଇ ଯାଏ।'}
++    monkeypatch.setattr(SC, 'prepare_localized_scripts', lambda *a, **k: {'scripts': scripts})
++    with pytest.raises(ValueError, match='outside its script: βαğβαğ.*no TTS was started'):
++        SC.prepare_batch('/tmp/unused', 'Master narration.', 'en', ['en', 'or'])
++    assert calls == []
++
++
++def _batch_root(tmp_path, hooks_ready_or=True):
++    root = tmp_path / 'job'
++    (root / 'production').mkdir(parents=True)
++    bundles = {}
++    for lang in ('en', 'or'):
++        folder = root / 'speech-editions' / lang / 'k'
++        folder.mkdir(parents=True)
++        audio = folder / 'voice.mp3'
++        audio.write_bytes(b'x' * 4096)
++        bundles[lang] = {'audio': str(audio), 'audio_sha256': digest(audio), 'duration': 10.0,
++                         'script': 'Master narration.' if lang == 'en' else 'ଓଡ଼ିଆ ବର୍ଣ୍ଣନା।',
++                         'language': lang, 'text_cards': True, 'educational': False, 'hooks': True,
++                         'hooks_ready': hooks_ready_or if lang == 'or' else True, 'cards': []}
++    (root / 'production' / 'language_editions.json').write_text(json.dumps({
++        'source_language': 'en', 'editions': ['en', 'or'], 'prepare_audio': True, 'bundles': bundles}))
++    return root
++
++
++def _recorders(monkeypatch):
++    seen = {'batch': [], 'cards': []}
++    monkeypatch.setattr(SC, 'prepare_batch', lambda *a, **k: seen['batch'].append(a) or {'bundles': {}})
++
++    def cards(bundle, cleanup='delete-after-read'):
++        seen['cards'].append(bundle['language'])
++        return dict(bundle, hooks_ready=True, hooks_error='')
++    monkeypatch.setattr(SC, 'complete_edition_cards', cards)
++    return seen
++
++
++def test_complete_saved_batch_is_reused_without_any_rerun(monkeypatch, tmp_path):
++    seen = _recorders(monkeypatch)
++    root = _batch_root(tmp_path, hooks_ready_or=True)
++    SC.prepare_selected_editions(root, 'Master narration.', 'en', {}, None, text_cards=True, hooks=True)
++    assert seen == {'batch': [], 'cards': []}
++
++
++def test_failed_hook_draft_redoes_only_the_hooks(monkeypatch, tmp_path):
++    seen = _recorders(monkeypatch)
++    root = _batch_root(tmp_path, hooks_ready_or=False)
++    SC.prepare_selected_editions(root, 'Master narration.', 'en', {}, None, text_cards=True, hooks=True)
++    assert seen['batch'] == []            # no localization, TTS or card drafting again
++    assert seen['cards'] == ['or']        # only the language whose hook draft is missing
++    saved = json.loads((root / 'production' / 'language_editions.json').read_text())
++    assert saved['bundles']['or']['hooks_ready'] is True
++
++
++def test_hook_redo_failure_is_recorded_and_the_batch_is_still_reused(monkeypatch, tmp_path):
++    seen = _recorders(monkeypatch)
++
++    def failing(bundle, cleanup='delete-after-read'):
++        raise RuntimeError('hook drafting unavailable')
++    monkeypatch.setattr(SC, 'complete_edition_cards', failing)
++    root = _batch_root(tmp_path, hooks_ready_or=False)
++    SC.prepare_selected_editions(root, 'Master narration.', 'en', {}, None, text_cards=True, hooks=True)
++    assert seen['batch'] == []
++    saved = json.loads((root / 'production' / 'language_editions.json').read_text())
++    assert saved['bundles']['or']['hooks_ready'] is False
++    assert 'hook drafting unavailable' in saved['bundles']['or']['hooks_error']
+diff -ruN a/tests/test_v780_tts_resilience.py b/tests/test_v780_tts_resilience.py
+--- a/tests/test_v780_tts_resilience.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v780_tts_resilience.py	2026-10-22 10:41:53.000000000 +0000
+@@ -0,0 +1,134 @@
++"""v7.0.80: Gemini TTS sends the documented request, survives slow long narrations, and reuses finished parts.
++
++The Gemini calls use a fake ``requests.post``; no network is used. Audio is real: a short PCM tone is
++converted with ffmpeg, so the ffmpeg/ffprobe binaries must be on PATH (see the full-suite note in
++GEMINI_SUBMIT_AND_CARDS_V7_0_79.md).
++"""
++import base64
++import json
++
++import pytest
++import requests
++
++import engine.audio.tts as TTS
++
++
++def _pcm_base64(seconds=0.5):
++    raw = b"\x00\x20" * int(24000 * seconds)  # 24 kHz, 16-bit mono silence with a tiny level
++    return base64.b64encode(raw).decode("ascii")
++
++
++class FakeResponse:
++    def __init__(self, status=200, body=None, text=""):
++        self.status_code = status
++        self._body = body
++        self.text = text
++
++    def json(self):
++        return self._body
++
++
++def _ok():
++    return FakeResponse(200, {"audio": _pcm_base64()})
++
++
++@pytest.fixture
++def gemini(monkeypatch):
++    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
++    monkeypatch.setattr(TTS.time, "sleep", lambda seconds: None)
++    calls = []
++
++    def install(responses):
++        calls.clear()  # each install starts a new request log
++        queue = list(responses)
++
++        def fake_post(url, headers=None, json=None, timeout=None):
++            calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
++            item = queue.pop(0) if queue else _ok()
++            if isinstance(item, BaseException):
++                raise item
++            return item
++
++        monkeypatch.setattr(requests, "post", fake_post)
++        return calls
++
++    return install
++
++
++def test_request_is_the_documented_json_with_no_unknown_annotation(gemini, tmp_path):
++    calls = gemini([])
++    TTS.GeminiTTSProvider().synth("Hello there.", "voice", str(tmp_path / "out.mp3"), language="en", style="")
++    body = calls[0]["json"]
++    annotation = body["input"][0]["content"][0]["annotations"][0]
++    assert annotation == {"type": "speech_metadata", "style": annotation["style"]}
++    assert "UNKNOWN" not in json.dumps(body)
++    assert calls[0]["headers"]["x-goog-api-key"] == "test-key"
++    assert calls[0]["timeout"] == TTS.GEMINI_TTS_TIMEOUT
++
++
++def test_timeout_is_retried_and_the_part_succeeds(gemini, tmp_path):
++    calls = gemini([requests.exceptions.ReadTimeout("read timed out"), _ok()])
++    result = TTS.GeminiTTSProvider().synth("Short Odia line.", "voice", str(tmp_path / "out.mp3"),
++                                           language="or", style="")
++    assert len(calls) == 2
++    assert result["duration"] > 0
++    assert not (tmp_path / "out.mp3.parts").exists()  # finished parts are cleared after success
++
++
++def test_rejected_request_fails_at_once_without_retrying(gemini, tmp_path):
++    calls = gemini([FakeResponse(400, None, "bad annotation")])
++    with pytest.raises(RuntimeError, match="rejected the request \\(HTTP 400\\)"):
++        TTS.GeminiTTSProvider().synth("Short line.", "voice", str(tmp_path / "out.mp3"), language="or", style="")
++    assert len(calls) == 1
++
++
++def test_persistent_timeouts_give_up_after_the_configured_attempts(gemini, tmp_path):
++    calls = gemini([requests.exceptions.ReadTimeout("slow")] * TTS.GEMINI_TTS_ATTEMPTS)
++    with pytest.raises(RuntimeError, match="failed for a .* part after 3 attempts"):
++        TTS.GeminiTTSProvider().synth("Short line.", "voice", str(tmp_path / "out.mp3"), language="or", style="")
++    assert len(calls) == TTS.GEMINI_TTS_ATTEMPTS
++
++
++def test_long_narration_is_split_and_finished_parts_are_reused(gemini, tmp_path):
++    text = " ".join(f"This is sentence number {i} of the narration." for i in range(200))
++    parts = TTS.split_speech_text(text)
++    assert len(parts) >= 4
++    # Call 1 and 2 succeed, call 3 is rejected: the first two parts are on disk when the run fails.
++    calls = gemini([_ok(), _ok(), FakeResponse(400, None, "rejected")])
++    out = str(tmp_path / "out.mp3")
++    with pytest.raises(RuntimeError):
++        TTS.GeminiTTSProvider().synth(text, "voice", out, language="en", style="")
++    assert len(calls) == 3
++    # The retry sends only the parts that never finished.
++    calls = gemini([])
++    result = TTS.GeminiTTSProvider().synth(text, "voice", out, language="en", style="")
++    assert len(calls) == len(parts) - 2
++    assert result["duration"] > 0
++
++
++def test_split_keeps_every_word_in_order_and_respects_the_limit():
++    odia = ("ଆମ ମଧ୍ୟରୁ ଅଧିକାଂଶ ଲୋକ ନିରବତାକୁ ଦୂର କରିବା ପାଇଁ ପ୍ରଥମ କଥାଟି କହିଦେଇଥା’ନ୍ତି। ") * 40
++    parts = TTS.split_speech_text(odia)
++    assert len(parts) > 1
++    assert all(len(p) <= TTS.GEMINI_TTS_CHUNK_CHARS for p in parts)
++    assert " ".join(parts).split() == odia.split()
++
++
++def test_split_breaks_a_sentence_with_no_end_on_a_space():
++    text = " ".join(["word"] * 1000)  # one sentence, no full stop
++    parts = TTS.split_speech_text(text)
++    assert len(parts) > 1
++    assert all(len(p) <= TTS.GEMINI_TTS_CHUNK_CHARS for p in parts)
++    assert " ".join(parts).split() == text.split()
++
++
++def test_short_text_is_one_part():
++    assert TTS.split_speech_text("Just one short sentence.") == ["Just one short sentence."]
++    assert TTS.split_speech_text("   ") == []
++
++
++def test_odia_gemini_failure_says_no_english_fallback_and_needs_a_native_file(gemini, tmp_path):
++    gemini([FakeResponse(400, None, "rejected")])
++    with pytest.raises(RuntimeError, match="No English fallback.*native Odia voice file"):
++        TTS.synthesize_narration("ଆମେ କଥା କହିବା।", "gemini-native-odia", str(tmp_path / "o.mp3"),
++                                 provider="gemini", language="or", style="")
+diff -ruN a/tools/update_v778_to_v779.py b/tools/update_v778_to_v779.py
+--- a/tools/update_v778_to_v779.py	2026-10-22 10:48:12.341637715 +0000
++++ b/tools/update_v778_to_v779.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,174 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.79 update (Gemini Web send check, text cards dropped instead of aborting the set,
+-no speech recognition for Odia captions) to a v7.0.78 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.79 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.79/tools/update_v778_to_v779.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.79/tools/update_v778_to_v779.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'GEMINI_SUBMIT_AND_CARDS_V7_0_79.md',
+-    'VERSION',
+-    'engine/captions.py',
+-    'engine/providers/gemini_web.py',
+-    'engine/speech_cards.py',
+-    'tests/test_v576_gemini_capture_cleanup.py',
+-    'tests/test_v765_speech_gemini.py',
+-    'tests/test_v774_educational_cards.py',
+-    'tests/test_v778_odia_fixes.py',
+-    'tests/test_v779_submit_cards_timing.py',
+-    'tools/update_v778_to_v779.py',
+-]
+-# Files as they exist in 7.0.78: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['711cd6876daf7c9cedc0bf233356dccbf5782f735df8116b211436d41df0290e'],
+-    'engine/captions.py': ['98667a8d2eed11b23fd78d1bb49a59929e5c383ba187fc21a3c0b3259a56d36d'],
+-    'engine/providers/gemini_web.py': ['fadb7ffd1c230bee7593581bd3f32b4bfb844d08cd96c7c03d0129677d8afe2f'],
+-    'engine/speech_cards.py': ['ede2944ce7de00b3cf6d15f5710a61d0452bc8ce423c15bd3b313b61441e97f8'],
+-    'tests/test_v576_gemini_capture_cleanup.py': ['073b7502eefcfcb16663872576b5f9b888394d314065be3b82d8f022103cd20d'],
+-    'tests/test_v765_speech_gemini.py': ['e69c8773665030202b06ade9907b25921151a201f068d285e68575ffa81101b7'],
+-    'tests/test_v774_educational_cards.py': ['210a05d592a33dbd1b7cf1a91c002ca347dfc09b6987d8a5c90d403bca7f3e68'],
+-    'tests/test_v778_odia_fixes.py': ['34ca0766b157043d9adf1f4c02336b831538f2ae5db6ec9b624187ec9efae125'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.78', '7.0.79')  # 7.0.79 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.78 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.78':
+-            break
+-    return ('This update requires an installed 7.0.78 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.79 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.79 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.79 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.78-to-v7.0.79-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.79. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN a/tools/update_v779_to_v780.py b/tools/update_v779_to_v780.py
+--- a/tools/update_v779_to_v780.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v779_to_v780.py	2026-10-22 10:42:17.000000000 +0000
+@@ -0,0 +1,168 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.80 update (Odia Gemini TTS over REST with timed retries and cached parts, duplicate-free
++batch reuse when only hooks are missing, wrong-script narration blocked before TTS) to a v7.0.79 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.80 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.80/tools/update_v779_to_v780.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.80/tools/update_v779_to_v780.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'ODIA_TTS_BATCH_REUSE_V7_0_80.md',
++    'VERSION',
++    'engine/audio/tts.py',
++    'engine/speech_cards.py',
++    'tests/test_v778_odia_fixes.py',
++    'tests/test_v780_batch_reuse.py',
++    'tests/test_v780_tts_resilience.py',
++    'tools/update_v779_to_v780.py',
++]
++# Files as they exist in 7.0.79: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['49de81a43a2e93ced4be13b78be0c43b1ded6b7172049506c45399b8525b4470'],
++    'engine/audio/tts.py': ['7185ba5ba29d6cbb23c724bbeed464ba7d886aab8656a226395d56b07bcb3764'],
++    'engine/speech_cards.py': ['51aec735c30120d7e1a54543833f5973bf5c563c040a935d030be1a6536b1242'],
++    'tests/test_v778_odia_fixes.py': ['ba7c317fc48553c8bf23341e4189c9fdb4abb8221ae31025a61a373dd8ffa68c'],
++}
++ACCEPTED_INSTALLS = ('7.0.79', '7.0.80')  # 7.0.80 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.79 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.79':
++            break
++    return ('This update requires an installed 7.0.79 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.80 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.80 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.80 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.79-to-v7.0.80-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.80. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

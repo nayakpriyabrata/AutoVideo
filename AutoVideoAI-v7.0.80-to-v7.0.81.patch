@@ -1,0 +1,660 @@
+diff -ruN a/QUOTA_RETRY_V7_0_81.md b/QUOTA_RETRY_V7_0_81.md
+--- a/QUOTA_RETRY_V7_0_81.md	1970-01-01 00:00:00.000000000 +0000
++++ b/QUOTA_RETRY_V7_0_81.md	2026-10-22 11:56:03.106030378 +0000
+@@ -0,0 +1,43 @@
++# AutoVideo 7.0.81 — Gemini daily limit stops the run at once
++
++Update from 7.0.80 with `python3 ../AutoVideoAI-v7.0.81/tools/update_v780_to_v781.py . --apply`
++(dry run first without `--apply`; stop the dashboard before applying).
++
++## What happened
++
++The error was `HTTP 429 … Rate limit exceeded for model gemini-3.8-flash-tts (limit: 10 requests per day on Free Tier)`.
++
++- That is a **daily** limit, counted per Google Cloud project and per model. Google resets it at midnight Pacific time.
++- 7.0.80 retried every 429 three times. Each retry is a counted request, so one exhausted daily quota cost three
++  requests per failing part. This was a bug in 7.0.80.
++- A narration is sent in parts of up to 1200 characters, and each language is its own set of requests. A three-language
++  batch can need more than 10 requests before any retry.
++
++## What changed
++
++- `engine/audio/tts.py`
++  - A 429 whose body says "per day" raises `GeminiQuotaExceeded` immediately. No retry is sent.
++  - A per-minute 429 waits 65 seconds before the next attempt (up to 3 attempts), because a shorter wait hits the same window.
++  - The error states how many parts are saved. Saved parts are kept in `<narration>.parts/`, so the next run continues from the
++    first unsaved part and does not resend finished parts.
++  - For Odia, a quota error is reported as a quota error, not as a missing native voice file.
++  - In the auto chain, a quota error on `gemini` still falls back to `gemini-lite`. That model has its own daily limit.
++- `tests/test_v781_quota_retry.py`: five tests (daily limit sent once; per-minute wait then retry; partial run resumes with
++  only the unsaved parts; Odia quota message; other 400 errors still fail at once).
++
++## Options to get more Gemini TTS capacity
++
++1. **Do not add several Google accounts or keys to get around the limit.** Limits are per project, so extra keys in the same
++   project add nothing. Using several accounts to get past a quota is likely a breach of Google's terms. Keep to one account.
++2. **Link billing to the project (Tier 1) and request a higher TTS limit.** Google's rate-limit page shows the live limit per project in Google AI Studio. Third-party reports from October 2026 say the TTS daily limit
++   stayed at 100 on Tier 1 until an increase was requested, so check the limit shown in Google AI Studio after linking billing. Those reports say increases are requested through Google's application form.
++3. **Choose `gemini-lite` in the TTS setting** when `gemini` is exhausted. It has its own daily limit. Check the Odia voice
++   quality on a short test before relying on it.
++4. **Sarvam Bulbul v3 supports Odia (`od-IN`).** It is a separate API with its own key and pricing, and it would need a new
++   provider in the code. Not implemented in 7.0.81.
++5. **Import a native Odia voice file.** Still not available per language (see 7.0.80 notes).
++
++## Not verified
++
++- Whether a 429 for the daily limit also counts against the quota. It was assumed, and sending no retries is safe either way.
++- Live Gemini behaviour from the build sandbox. The 429 and retry paths are tested with a fake server.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-22 11:56:03.098030338 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-22 11:56:03.122030459 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.80",
+-  "built_at": "2026-10-22T10:47:45+00:00",
++  "version": "7.0.81",
++  "built_at": "2026-10-22T11:55:45+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -363,6 +363,11 @@
+       "sha256": "40a8ba58c790eec22c624f364c8f772abf815e8bade740a96714d7356cfbf2cf"
+     },
+     {
++      "path": "QUOTA_RETRY_V7_0_81.md",
++      "bytes": 3121,
++      "sha256": "af99edd40905da838fd21120ba57d201ebcfc367b70cfe57e95c5a55128fd307"
++    },
++    {
+       "path": "READABLE_THEMES_V7_0_25.md",
+       "bytes": 1778,
+       "sha256": "072f6aec561257f5c6a19864b91cc31a1496e2b7ba52effdcf43438024014606"
+@@ -875,7 +880,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "751b49c552573d93ccae841381aaad1365dc2235153d1317111d71bddd7ed41e"
++      "sha256": "a09b797eab63a0df0d5dec2bcb3b441a394ba9878d7f76c0a4a37c9dcf862126"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -1179,8 +1184,8 @@
+     },
+     {
+       "path": "engine/audio/tts.py",
+-      "bytes": 29927,
+-      "sha256": "c084d3fc65bd691808883c05869b14bd88d7ccbf6cf36bd64cf4d4a5c3629958"
++      "bytes": 31626,
++      "sha256": "ec78ca99d1dd3b3ffefca749128481f86eda46c598d3f03dc2226b8fb341890b"
+     },
+     {
+       "path": "engine/auto_resume.py",
+@@ -2813,6 +2818,11 @@
+       "sha256": "43ac7095fb153358c4f6dae9f2dda57da86ea64532020e1c06bc36ab21fbc84a"
+     },
+     {
++      "path": "tests/test_v781_quota_retry.py",
++      "bytes": 4352,
++      "sha256": "89156341220c0700b3f4c97584245f273e774aa9c3737cdb88a085aef1176aaf"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2903,9 +2913,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v779_to_v780.py",
+-      "bytes": 7944,
+-      "sha256": "a0ee408e0e1df40efba065669f24d65b2b2ef319ace588c48ada311ae7f84c56"
++      "path": "tools/update_v780_to_v781.py",
++      "bytes": 7634,
++      "sha256": "08f942e9a905593bff8648e1a6ce526b4f768387a20f595970e9adc58ccb6aa8"
+     },
+     {
+       "path": "topics.csv",
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-22 11:56:03.082030258 +0000
++++ b/VERSION	2026-10-22 11:56:03.110030399 +0000
+@@ -1 +1 @@
+-7.0.80
++7.0.81
+diff -ruN a/engine/audio/tts.py b/engine/audio/tts.py
+--- a/engine/audio/tts.py	2026-10-22 11:56:03.086030278 +0000
++++ b/engine/audio/tts.py	2026-10-22 11:56:03.110030399 +0000
+@@ -118,6 +118,7 @@
+ GEMINI_TTS_TIMEOUT = (30, 240)        # (connect, read) seconds per part
+ GEMINI_TTS_ATTEMPTS = 3
+ GEMINI_TTS_RETRY_STATUS = {408, 429, 500, 502, 503, 504}
++GEMINI_TTS_MINUTE_WAIT = 65          # seconds; a per-minute 429 clears after one window
+ 
+ 
+ def split_speech_text(text: str, limit: int = GEMINI_TTS_CHUNK_CHARS) -> list[str]:
+@@ -147,6 +148,18 @@
+     return parts
+ 
+ 
++class GeminiQuotaExceeded(RuntimeError):
++    """The daily Gemini TTS quota for this project and model is used up. Retrying cannot succeed today."""
++
++
++def _is_daily_quota(status_code, body: str) -> bool:
++    """HTTP 429 that names a per-day limit (7.0.81). Per-minute limits are retried after a wait."""
++    if status_code != 429:
++        return False
++    text = (body or "").lower()
++    return "per day" in text or "perday" in text or "per_day" in text
++
++
+ class GeminiTTSProvider:
+     name = "gemini"
+ 
+@@ -207,14 +220,23 @@
+         }
+         headers = {"x-goog-api-key": key, "Content-Type": "application/json", "Api-Revision": "2026-05-20"}
+         last = "no response"
++        wait = 0
+         for attempt in range(1, GEMINI_TTS_ATTEMPTS + 1):
+             try:
+                 response = requests.post(GEMINI_TTS_URL, headers=headers, json=payload, timeout=GEMINI_TTS_TIMEOUT)
+                 if response.status_code >= 400:
+-                    detail = (response.text or "")[:300]
++                    body = response.text or ""
++                    detail = body[:300]
++                    if _is_daily_quota(response.status_code, body):
++                        # 7.0.81: every retry of a daily-limit 429 is another counted request, so stop here.
++                        raise GeminiQuotaExceeded(
++                            f"Gemini TTS daily request limit reached for {model} ({detail[:220]}). "
++                            "The batch stopped; no more requests were sent.")
+                     if response.status_code not in GEMINI_TTS_RETRY_STATUS:
+                         raise RuntimeError(f"Gemini TTS rejected the request (HTTP {response.status_code}): {detail}")
+                     last = f"HTTP {response.status_code}: {detail[:120]}"
++                    # A per-minute limit clears after one window; a short retry would hit it again.
++                    wait = GEMINI_TTS_MINUTE_WAIT if response.status_code == 429 else 0
+                 else:
+                     audio = self._audio_data(response.json())
+                     if audio:
+@@ -225,7 +247,8 @@
+             except requests.RequestException as error:
+                 last = f"{type(error).__name__}: {str(error)[:120]}"
+             if attempt < GEMINI_TTS_ATTEMPTS:
+-                time.sleep(min(20, 4 * attempt))
++                time.sleep(wait or min(20, 4 * attempt))
++                wait = 0
+         raise RuntimeError(f"Gemini TTS failed for a {len(text)}-character part after "
+                            f"{GEMINI_TTS_ATTEMPTS} attempts: {last}")
+ 
+@@ -280,7 +303,12 @@
+             digest = hashlib.sha256(piece.encode("utf-8")).hexdigest()[:12]
+             part = os.path.join(parts_dir, f"part-{index:03d}-{digest}.mp3")
+             if not (os.path.isfile(part) and os.path.getsize(part) >= 1024):
+-                raw = self._speak_part(piece, key, model, provider_voice, style)
++                try:
++                    raw = self._speak_part(piece, key, model, provider_voice, style)
++                except GeminiQuotaExceeded as error:
++                    raise GeminiQuotaExceeded(
++                        f"{error} {index} of {len(parts_text)} narration parts are saved and will be reused; "
++                        "the next run continues from part " + str(index + 1) + ".") from error
+                 self._part_to_mp3(raw, part)
+             part_files.append(part)
+         _concat_mp3(part_files, out)
+@@ -534,6 +562,8 @@
+             # 7.0.80: no English fallback for Odia. Say what the user can do next.
+             try:
+                 return providers[p].synth(text, voice, out, rate, **kwargs)
++            except GeminiQuotaExceeded:
++                raise  # 7.0.81: a daily limit is not a voice problem; saved parts are kept for the next run
+             except Exception as error:
+                 raise RuntimeError(
+                     f"Odia narration could not be voiced by Gemini ({str(error)[:300]}). No English fallback is used. "
+diff -ruN a/tests/test_v781_quota_retry.py b/tests/test_v781_quota_retry.py
+--- a/tests/test_v781_quota_retry.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v781_quota_retry.py	2026-10-22 11:56:03.122030459 +0000
+@@ -0,0 +1,106 @@
++"""v7.0.81: a daily Gemini TTS limit (HTTP 429 'requests per day') stops the run at once.
++
++7.0.80 retried every 429 three times; each retry is a counted request, so one exhausted daily quota
++turned into three wasted requests per failing part. A per-minute 429 is still retried, after a wait.
++No network: requests.post is replaced.
++"""
++import base64
++
++import pytest
++import requests
++
++import engine.audio.tts as TTS
++
++DAILY_BODY = ('{"error":{"message":"Rate limit exceeded for model gemini-3.8-flash-tts (limit: 10 requests per day '
++              'on Free Tier). Please retry later.","status":"RESOURCE_EXHAUSTED"}}')
++MINUTE_BODY = '{"error":{"message":"Rate limit exceeded: 10 requests per minute.","status":"RESOURCE_EXHAUSTED"}}'
++
++
++class FakeResponse:
++    def __init__(self, status=200, body=None, text=""):
++        self.status_code = status
++        self._body = body
++        self.text = text
++
++    def json(self):
++        return self._body
++
++
++def _ok():
++    return FakeResponse(200, {"audio": base64.b64encode(b"\x00\x20" * 12000).decode()})
++
++
++@pytest.fixture
++def gemini(monkeypatch):
++    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
++    sleeps = []
++    monkeypatch.setattr(TTS.time, "sleep", lambda seconds: sleeps.append(seconds))
++    calls = []
++
++    def install(responses):
++        calls.clear()
++        queue = list(responses)
++
++        def fake_post(url, headers=None, json=None, timeout=None):
++            calls.append(json)
++            item = queue.pop(0) if queue else _ok()
++            if isinstance(item, BaseException):
++                raise item
++            return item
++
++        monkeypatch.setattr(requests, "post", fake_post)
++        return calls
++
++    return install, sleeps
++
++
++def test_daily_limit_is_sent_once_and_stops_the_run(gemini, tmp_path):
++    install, sleeps = gemini
++    calls = install([FakeResponse(429, {"error": {}}, DAILY_BODY)] * 3)
++    with pytest.raises(TTS.GeminiQuotaExceeded, match="daily request limit reached"):
++        TTS.GeminiTTSProvider().synth("Short line.", "voice", str(tmp_path / "out.mp3"), language="en", style="")
++    assert len(calls) == 1          # no retries: each retry would be another counted request
++    assert sleeps == []
++
++
++def test_per_minute_limit_waits_a_minute_and_retries(gemini, tmp_path):
++    install, sleeps = gemini
++    calls = install([FakeResponse(429, {"error": {}}, MINUTE_BODY), _ok()])
++    result = TTS.GeminiTTSProvider().synth("Short line.", "voice", str(tmp_path / "out.mp3"), language="en", style="")
++    assert len(calls) == 2
++    assert sleeps == [TTS.GEMINI_TTS_MINUTE_WAIT]
++    assert result["duration"] > 0
++
++
++def test_daily_limit_partway_keeps_saved_parts_and_resumes(gemini, tmp_path):
++    install, _ = gemini
++    text = " ".join(f"This is sentence number {i} of the narration." for i in range(200))
++    total = len(TTS.split_speech_text(text))
++    out = str(tmp_path / "out.mp3")
++    calls = install([_ok(), FakeResponse(429, {"error": {}}, DAILY_BODY)])
++    with pytest.raises(TTS.GeminiQuotaExceeded) as info:
++        TTS.GeminiTTSProvider().synth(text, "voice", out, language="en", style="")
++    assert len(calls) == 2
++    assert "1 of " + str(total) + " narration parts are saved" in str(info.value)
++    assert "continues from part 2" in str(info.value)
++    # The next run (after the quota resets) sends only the parts that were not saved.
++    calls = install([])
++    result = TTS.GeminiTTSProvider().synth(text, "voice", out, language="en", style="")
++    assert len(calls) == total - 1
++    assert result["duration"] > 0
++
++
++def test_odia_daily_limit_is_reported_as_a_quota_not_a_voice_file_problem(gemini, tmp_path):
++    install, _ = gemini
++    install([FakeResponse(429, {"error": {}}, DAILY_BODY)])
++    with pytest.raises(TTS.GeminiQuotaExceeded, match="daily request limit reached"):
++        TTS.synthesize_narration("ଆମେ କଥା କହିବା।", "gemini-native-odia", str(tmp_path / "o.mp3"),
++                                 provider="gemini", language="or", style="")
++
++
++def test_other_rejections_still_fail_at_once(gemini, tmp_path):
++    install, _ = gemini
++    calls = install([FakeResponse(400, None, "bad request")])
++    with pytest.raises(RuntimeError, match="rejected the request \\(HTTP 400\\)"):
++        TTS.GeminiTTSProvider().synth("Short line.", "voice", str(tmp_path / "out.mp3"), language="en", style="")
++    assert len(calls) == 1
+diff -ruN a/tools/update_v779_to_v780.py b/tools/update_v779_to_v780.py
+--- a/tools/update_v779_to_v780.py	2026-10-22 11:56:03.098030338 +0000
++++ b/tools/update_v779_to_v780.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,168 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.80 update (Odia Gemini TTS over REST with timed retries and cached parts, duplicate-free
+-batch reuse when only hooks are missing, wrong-script narration blocked before TTS) to a v7.0.79 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.80 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.80/tools/update_v779_to_v780.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.80/tools/update_v779_to_v780.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'ODIA_TTS_BATCH_REUSE_V7_0_80.md',
+-    'VERSION',
+-    'engine/audio/tts.py',
+-    'engine/speech_cards.py',
+-    'tests/test_v778_odia_fixes.py',
+-    'tests/test_v780_batch_reuse.py',
+-    'tests/test_v780_tts_resilience.py',
+-    'tools/update_v779_to_v780.py',
+-]
+-# Files as they exist in 7.0.79: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['49de81a43a2e93ced4be13b78be0c43b1ded6b7172049506c45399b8525b4470'],
+-    'engine/audio/tts.py': ['7185ba5ba29d6cbb23c724bbeed464ba7d886aab8656a226395d56b07bcb3764'],
+-    'engine/speech_cards.py': ['51aec735c30120d7e1a54543833f5973bf5c563c040a935d030be1a6536b1242'],
+-    'tests/test_v778_odia_fixes.py': ['ba7c317fc48553c8bf23341e4189c9fdb4abb8221ae31025a61a373dd8ffa68c'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.79', '7.0.80')  # 7.0.80 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
+-    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.79 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.79':
+-            break
+-    return ('This update requires an installed 7.0.79 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.80 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.80 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.80 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.79-to-v7.0.80-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.80. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN a/tools/update_v780_to_v781.py b/tools/update_v780_to_v781.py
+--- a/tools/update_v780_to_v781.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v780_to_v781.py	2026-10-22 11:56:03.122030459 +0000
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.81 update (a daily Gemini TTS limit stops the run at once instead of being retried
++three times; per-minute limits wait a minute) to a v7.0.80 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.81 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.81/tools/update_v780_to_v781.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.81/tools/update_v780_to_v781.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'QUOTA_RETRY_V7_0_81.md',
++    'VERSION',
++    'engine/audio/tts.py',
++    'tests/test_v781_quota_retry.py',
++    'tools/update_v780_to_v781.py',
++]
++# Files as they exist in 7.0.80: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['751b49c552573d93ccae841381aaad1365dc2235153d1317111d71bddd7ed41e'],
++    'engine/audio/tts.py': ['c084d3fc65bd691808883c05869b14bd88d7ccbf6cf36bd64cf4d4a5c3629958'],
++}
++ACCEPTED_INSTALLS = ('7.0.80', '7.0.81')  # 7.0.81 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
++    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.80 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.80':
++            break
++    return ('This update requires an installed 7.0.80 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.81 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.81 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.81 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.80-to-v7.0.81-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.81. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

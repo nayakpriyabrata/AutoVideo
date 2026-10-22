@@ -1,0 +1,1224 @@
+diff -ruN a/GEMINI_SUBMIT_AND_CARDS_V7_0_79.md b/GEMINI_SUBMIT_AND_CARDS_V7_0_79.md
+--- a/GEMINI_SUBMIT_AND_CARDS_V7_0_79.md	1970-01-01 00:00:00.000000000 +0000
++++ b/GEMINI_SUBMIT_AND_CARDS_V7_0_79.md	2026-10-22 08:30:48.000000000 +0000
+@@ -0,0 +1,60 @@
++# AutoVideoAI 7.0.79: Gemini Web send check, text cards that do not stop the set, Odia captions
++
++Update from 7.0.78 with `tools/update_v778_to_v779.py`. Code and documentation only. Saved jobs, outputs,
++browser profiles, music, characters and channel profiles are never copied, moved or deleted.
++
++## What was wrong (from the 7.0.78 dashboard log)
++
++1. **Gemini Web prompt was pasted but not sent.** The send step treated any click that did not raise as a
++   success. An unsent prompt then waited the full 300 seconds for an answer that never came, and the job
++   stopped with no error on the dashboard.
++2. **One bad text card stopped the whole set.** A card whose spoken anchor was too short or too long raised
++   "Choose a spoken anchor lasting 1.5-6 seconds" for every card, so the dashboard stayed at
++   "drafting timed cards" with a red box.
++3. **Odia captions could not use speech recognition.** Groq rejects Odia (HTTP 400) and the local Whisper
++   install fails in the user's environment, so the caption step ended in fallbacks.
++
++## What changed
++
++- **Send is verified.** After the click, the composer is read. If the prompt is still there, Enter is pressed
++  once. If it is still there, the run fails at once with a clear Gemini Web message, instead of waiting 300 s.
++  An unreadable composer is never treated as sent, unless Gemini shows it is generating an answer.
++- **Text cards are dropped one at a time.** An unusable card is removed and its reason is recorded; the rest of
++  the set is kept. A long spoken phrase is clamped to 6 seconds instead of rejected. Overlapping cards keep the
++  earlier one. If the cards cover too much of the video, the longest are trimmed.
++- **Wrong-script cards are dropped in Odia and Hindi editions.** Card copy in the wrong script is removed and
++  reported. If every card is in the wrong script and the first answer came back quickly (under 90 s), the
++  draft is requested once more with a correction. A slow answer is not asked for again.
++- **Saved results that lost every card are retried.** A saved text-card result with no cards left and a
++  recorded drop reason is not reused on the next run.
++- **Odia captions skip speech recognition in auto mode.** Groq and local Whisper are not called for Odia; the
++  timing is estimated from the reviewed script. An explicit Groq or local choice for Odia fails with a clear
++  message instead of a silent fallback.
++
++## Limits, stated plainly
++
++- Odia caption timing is **estimated, not measured**. The 2-3 second transcript lag reported for Odia is not
++  confirmed fixed by this release. The Odia voice file from the user's job has not been reviewed yet.
++- Dropped text cards are shown in the job's `speech_cards.json` under `dropped_cards` and printed in the log.
++  They are not yet shown in the dashboard.
++
++## Tests
++
++- `tests/test_v779_submit_cards_timing.py`: 17 tests, all passing. On the 7.0.78 code 16 of them fail (the one
++  that passes is the English Groq check, which is expected), so they catch the original bugs.
++- Eight older tests were updated to the new behaviour: four anchor checks in `test_v765`, one single-card check
++  in `test_v774`, the Odia refusal in `test_v778` (now a drop with a reason), and two Gemini fake-page checks in
++  `test_v576` (the fake send step now takes the prompt).
++- Known failures that already fail on the untouched 7.0.78 code (not caused by this release): 9 in
++  `test_card_typography`, 2 in `test_presentation_dashboard`, 2 in `test_v580_production`, 1 in
++  `test_v731_dashboard_uploads`, 2 in `test_v733_publication_review`, 1 in `test_v735_bounded_upload`,
++  1 in `test_v753_workflow`, 4 in `test_v758_uploads_picker`. These are not part of the Odia work.
++- The full suite needs `ffmpeg` and `ffprobe` on the PATH (some tests render short clips); without them the run is not valid.
++
++## Updating from 7.0.78
++
++    python3 ../AutoVideoAI-v7.0.79/tools/update_v778_to_v779.py .            # dry run
++    python3 ../AutoVideoAI-v7.0.79/tools/update_v778_to_v779.py . --apply    # install
++
++Stop the dashboard first and restart it afterwards. From 7.0.77, first run the 7.0.78 updater from the 7.0.78 zip
++folder, as the updater's message says. The updater refuses to replace a file you have changed locally.
+diff -ruN a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-22 07:43:50.000000000 +0000
++++ b/RELEASE_MANIFEST.json	2026-10-22 08:30:58.000000000 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.78",
+-  "built_at": "2026-10-22T07:43:50+00:00",
++  "version": "7.0.79",
++  "built_at": "2026-10-22T08:30:58+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -248,6 +248,11 @@
+       "sha256": "6bde7d3c90cc8a7f811c95940d3d1a81da496e1d9d56076597634604ea5c8b0b"
+     },
+     {
++      "path": "GEMINI_SUBMIT_AND_CARDS_V7_0_79.md",
++      "bytes": 4231,
++      "sha256": "84bc373f3aa452cf9e325bc54fe52fbb3403562475a0183e610fb50f76a54f8d"
++    },
++    {
+       "path": "HOOKS_V7_0_76.md",
+       "bytes": 2242,
+       "sha256": "b33ab0465cf769d62bfa2a7b437865896785d126cc519ea4177407a28c06cace"
+@@ -865,7 +870,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "711cd6876daf7c9cedc0bf233356dccbf5782f735df8116b211436d41df0290e"
++      "sha256": "49de81a43a2e93ced4be13b78be0c43b1ded6b7172049506c45399b8525b4470"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -1209,8 +1214,8 @@
+     },
+     {
+       "path": "engine/captions.py",
+-      "bytes": 25677,
+-      "sha256": "98667a8d2eed11b23fd78d1bb49a59929e5c383ba187fc21a3c0b3259a56d36d"
++      "bytes": 26379,
++      "sha256": "271094d69e477e2a077f220d7fe0357fea7057ee0a5a1b7ab7f294ea6fdd70c8"
+     },
+     {
+       "path": "engine/cast.py",
+@@ -1599,8 +1604,8 @@
+     },
+     {
+       "path": "engine/providers/gemini_web.py",
+-      "bytes": 36325,
+-      "sha256": "fadb7ffd1c230bee7593581bd3f32b4bfb844d08cd96c7c03d0129677d8afe2f"
++      "bytes": 38405,
++      "sha256": "68c53208a2ac5457d02ba7e597d7ffeaf4a781515d3727b2d2782ae0179490ed"
+     },
+     {
+       "path": "engine/providers/image_provider.py",
+@@ -1759,8 +1764,8 @@
+     },
+     {
+       "path": "engine/speech_cards.py",
+-      "bytes": 32590,
+-      "sha256": "ede2944ce7de00b3cf6d15f5710a61d0452bc8ce423c15bd3b313b61441e97f8"
++      "bytes": 35181,
++      "sha256": "51aec735c30120d7e1a54543833f5973bf5c563c040a935d030be1a6536b1242"
+     },
+     {
+       "path": "engine/stock_video.py",
+@@ -2294,8 +2299,8 @@
+     },
+     {
+       "path": "tests/test_v576_gemini_capture_cleanup.py",
+-      "bytes": 2875,
+-      "sha256": "073b7502eefcfcb16663872576b5f9b888394d314065be3b82d8f022103cd20d"
++      "bytes": 2882,
++      "sha256": "1bd33abdadcd1f221b8812d885a3dce3b61e8abc477c447bdb0ede37b82fc78c"
+     },
+     {
+       "path": "tests/test_v577_gemini_hybrid_clips.py",
+@@ -2689,8 +2694,8 @@
+     },
+     {
+       "path": "tests/test_v765_speech_gemini.py",
+-      "bytes": 5832,
+-      "sha256": "e69c8773665030202b06ade9907b25921151a201f068d285e68575ffa81101b7"
++      "bytes": 5990,
++      "sha256": "554a2d39931764f03b8cb2a64f98521a6498c38e0699112db6cbe81f4adde09f"
+     },
+     {
+       "path": "tests/test_v766_channel_desk.py",
+@@ -2769,8 +2774,8 @@
+     },
+     {
+       "path": "tests/test_v774_educational_cards.py",
+-      "bytes": 12782,
+-      "sha256": "210a05d592a33dbd1b7cf1a91c002ca347dfc09b6987d8a5c90d403bca7f3e68"
++      "bytes": 12841,
++      "sha256": "22f46d0fb9beafbd3b9146aefa91cb1385f2a17999525d04c7ce055faf739be4"
+     },
+     {
+       "path": "tests/test_v776_hooks.py",
+@@ -2784,8 +2789,13 @@
+     },
+     {
+       "path": "tests/test_v778_odia_fixes.py",
+-      "bytes": 9676,
+-      "sha256": "34ca0766b157043d9adf1f4c02336b831538f2ae5db6ec9b624187ec9efae125"
++      "bytes": 9853,
++      "sha256": "ba7c317fc48553c8bf23341e4189c9fdb4abb8221ae31025a61a373dd8ffa68c"
++    },
++    {
++      "path": "tests/test_v779_submit_cards_timing.py",
++      "bytes": 11101,
++      "sha256": "fa34438d0c6985ffb4d10adb5a4853e3b6145e9d7ded20398fb3e4242037b20b"
+     },
+     {
+       "path": "tests/test_web_media_helper.py",
+@@ -2878,9 +2888,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v777_to_v778.py",
+-      "bytes": 7961,
+-      "sha256": "28f084544073496e13ec887603814097b988ac1517160cc9147b2ba48fbc155a"
++      "path": "tools/update_v778_to_v779.py",
++      "bytes": 8426,
++      "sha256": "fc06886c6d6eb478c831a8c764fa6b407edfe82375e6d6669278d2e5429825ea"
+     },
+     {
+       "path": "topics.csv",
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION	2026-10-22 07:38:46.000000000 +0000
++++ b/VERSION	2026-10-22 08:30:10.000000000 +0000
+@@ -1 +1 @@
+-7.0.78
++7.0.79
+diff -ruN a/engine/captions.py b/engine/captions.py
+--- a/engine/captions.py	2026-10-22 07:21:24.000000000 +0000
++++ b/engine/captions.py	2026-10-22 08:21:54.000000000 +0000
+@@ -14,6 +14,11 @@
+ from .runtime_log import runtime_print as print
+ 
+ 
++# Languages no speech-recognition provider here transcribes (Groq rejects Odia with HTTP 400).
++# Their captions use voiced-span timing from the narration instead of a doomed provider call.
++ASR_UNSUPPORTED_LANGUAGES = frozenset({"or"})
++
++
+ class CaptionProviderError(RuntimeError):
+     """Explicitly requested caption timing provider is unavailable or failed."""
+ 
+@@ -498,10 +503,16 @@
+             raise CaptionProviderError("--caption-provider script-timed requires the authored script text")
+         words = script_timed_word_timestamps(script_text, _audio_duration(audio_path))
+         engine = "script-timed"
++    lang = str(language or "en").lower().split("-")[0]
++    asr_ok = lang not in ASR_UNSUPPORTED_LANGUAGES
++    if not asr_ok and p in ("groq", "local", "faster-whisper"):
++        raise CaptionProviderError(f"Explicit caption provider '{p}' does not transcribe {lang}; use auto or script-timed")
++    if not asr_ok and p == "auto":
++        print(f"Speech recognition does not cover {lang}; timing the captions from the narration audio instead.")
+     if p == "groq" and not os.getenv("GROQ_API_KEY"):
+         raise CaptionProviderError("--caption-provider groq was requested but GROQ_API_KEY is not configured")
+ 
+-    if words is None and p in ("auto", "groq") and os.getenv("GROQ_API_KEY"):
++    if words is None and asr_ok and p in ("auto", "groq") and os.getenv("GROQ_API_KEY"):
+         try:
+             print(f"Transcribing timing with Groq {groq_model}...")
+             words = _groq_word_timestamps(audio_path, groq_model, language, script_text)
+@@ -512,7 +523,7 @@
+             print(f"Groq transcription failed ({str(e)[:130]}) -> local Whisper fallback")
+             words = None
+ 
+-    if words is None and p in ("auto", "local", "faster-whisper"):
++    if words is None and asr_ok and p in ("auto", "local", "faster-whisper"):
+         try:
+             words = _local_word_timestamps(audio_path, model_size, language)
+             if words:
+diff -ruN a/engine/providers/gemini_web.py b/engine/providers/gemini_web.py
+--- a/engine/providers/gemini_web.py	2026-10-22 07:16:32.000000000 +0000
++++ b/engine/providers/gemini_web.py	2026-10-22 08:21:24.000000000 +0000
+@@ -363,21 +363,65 @@
+             except Exception as e:
+                 raise GeminiWebUIChanged(f"Could not enter Gemini prompt: {e}") from e
+ 
+-    def _submit(self):
++    def _composer_text(self, box):
++        """Visible text of the composer, or None when it cannot be read."""
++        for read in (lambda: box.inner_text(timeout=1000), lambda: box.input_value(timeout=1000)):
++            try:
++                value = read()
++            except Exception:
++                continue
++            if isinstance(value, str):
++                return value
++        return None
++
++    def _prompt_was_sent(self, prompt: str, wait_seconds: float = 6.0) -> bool:
++        """True only when the composer no longer holds the prompt, or Gemini started generating.
++
++        A click that lands on the wrong control, or does nothing, leaves the prompt in the
++        composer. An unreadable composer is never taken as proof that a send happened.
++        """
++        head = self._clean_text(prompt)[:60]
++        deadline = time.time() + max(0.5, wait_seconds)
++        while True:
++            box = self._prompt_box(timeout_ms=600)
++            if box is not None:
++                text = self._composer_text(box)
++                if text is not None and (not text.strip() or head not in self._clean_text(text)):
++                    return True
++            try:
++                if self._generation_in_progress():
++                    return True
++            except Exception:
++                pass
++            if time.time() >= deadline:
++                return False
++            time.sleep(0.5)
++
++    def _submit(self, prompt: str = ""):
++        """Send the filled prompt and verify that the composer released it.
++
++        Order: the visible send button, then Enter in the composer if the prompt is still
++        there. Nothing is reported as submitted until the composer shows it was taken.
++        """
+         btn = self._try_resolve("send_button", timeout_ms=1800)
+         if btn is not None:
+             try:
+                 btn.click(timeout=3000)
+-                return
++                if self._prompt_was_sent(prompt):
++                    return
+             except Exception:
+                 pass
+         box = self._prompt_box(timeout_ms=1800)
+         if box is None:
+-            raise GeminiWebUIChanged("Gemini send control was not found")
++            raise GeminiWebUIChanged("Gemini send control was not found; the prompt was not sent and no response was awaited")
+         try:
+             box.press("Enter")
+         except Exception as e:
+             raise GeminiWebUIChanged(f"Could not submit Gemini prompt: {e}") from e
++        if not self._prompt_was_sent(prompt):
++            raise GeminiWebUIChanged(
++                "Gemini did not send the prompt: it is still in the composer. Nothing was submitted and no response was awaited. "
++                "Click Send in the Gemini tab or retry the step.")
+ 
+     def start_fresh_chat(self):
+         """Open a blank Gemini page and wait a bounded time for its composer.
+@@ -623,7 +667,7 @@
+             if attachments:
+                 self._attach_review_video(attachments)
+             self._fill_prompt(prompt)
+-            self._submit()
++            self._submit(prompt)
+             submitted = True
+             if self._cleanup_requested():
+                 print("[Gemini] Temporary chat cleanup armed for this submitted chat.")
+diff -ruN a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py	2026-10-22 07:19:20.000000000 +0000
++++ b/engine/speech_cards.py	2026-10-22 08:28:48.000000000 +0000
+@@ -8,6 +8,7 @@
+ import hashlib
+ import json
+ import math
++import time
+ from pathlib import Path
+ 
+ from .render.educational_cards import SINGLE_KINDS, MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS
+@@ -84,41 +85,65 @@
+     return first, last
+ 
+ 
+-def anchor_cards(draft, words, duration, educational=False):
+-    """Single-line cards. Educational videos use takeaway, tip or warning kinds only."""
++def _anchor_one(row, words, duration, educational):
++    """One drafted card. Raises ValueError only for this card; the caller drops it."""
++    if not isinstance(row, dict):
++        raise ValueError('card is not an object')
++    first, last = _word_span(row, words)
++    text = row.get('text')
++    if not isinstance(text, str) or not 1 <= len(text.strip()) <= 80 or '\n' in text:
++        raise ValueError('copy must be a short single line of at most 80 characters')
++    if educational:
++        kind = row.get('kind') or 'takeaway'
++        if kind not in SINGLE_KINDS:
++            raise ValueError('educational single cards must be takeaway, tip or warning')
++    else:
++        kind = 'keypoint'
++    start, end = float(words[first]['start']), float(words[last]['end'])
++    end = min(duration, max(end, start + 2.0, start + len(text.split()) / 2.8))
++    # A long spoken phrase is clamped to a 6 s card rather than rejected.
++    end = min(end, start + 6.0)
++    if end - start < 1.5:
++        raise ValueError('the spoken anchor is shorter than 1.5 seconds')
++    return {'text': text.strip(), 'start': round(start, 3), 'end': round(end, 3),
++            'start_word': first, 'end_word': last, 'kind': kind,
++            'spoken_anchor': ' '.join(w['word'] for w in words[first:last+1])}
++
++
++def anchor_cards(draft, words, duration, educational=False, report=None):
++    """Single-line cards. Educational videos use takeaway, tip or warning kinds only.
++
++    A card that cannot be placed on the narration is dropped and its reason is added to
++    ``report`` (a list, when given). One bad card never stops the rest of the set.
++    """
+     validate_words(words, duration)
+     rows = draft.get('cards') if isinstance(draft, dict) else None
+     if rows is None:
+         rows = []
+     if not isinstance(rows, list) or len(rows) > 18:
+         raise ValueError('Gemini must return at most 18 sparse cards')
++    dropped = report if report is not None else []
+     cards = []
+-    for row in rows:
+-        if not isinstance(row, dict):
+-            raise ValueError('Each card must be an object')
+-        first, last = _word_span(row, words)
+-        text = row.get('text')
+-        if not isinstance(text, str) or not 1 <= len(text.strip()) <= 80 or '\n' in text:
+-            raise ValueError('Card copy must be a short single line, at most 80 characters')
+-        if educational:
+-            kind = row.get('kind') or 'takeaway'
+-            if kind not in SINGLE_KINDS:
+-                raise ValueError('Educational single cards must be takeaway, tip or warning; lists go in the series')
+-        else:
+-            kind = 'keypoint'
+-        start, end = float(words[first]['start']), float(words[last]['end'])
+-        end = min(duration, max(end, start + 2.0, start + len(text.split()) / 2.8))
+-        if end-start < 1.5 or end-start > 6:
+-            raise ValueError('Choose a spoken anchor lasting 1.5–6 seconds')
+-        cards.append({'text': text.strip(), 'start': round(start, 3), 'end': round(end, 3),
+-                      'start_word': first, 'end_word': last, 'kind': kind,
+-                      'spoken_anchor': ' '.join(w['word'] for w in words[first:last+1])})
++    for index, row in enumerate(rows):
++        try:
++            cards.append(_anchor_one(row, words, duration, educational))
++        except (ValueError, KeyError, IndexError, TypeError) as error:
++            dropped.append({'index': index, 'reason': str(error)})
+     cards.sort(key=lambda c: c['start'])
+-    for before, after in zip(cards, cards[1:]):
+-        if after['start'] < before['end'] + .15:
+-            raise ValueError('Speech cards overlap; use fewer cards or different spoken anchors')
+-    if sum(c['end']-c['start'] for c in cards) > max(6, duration*.30):
+-        raise ValueError('Cards cover too much of the video; keep them sparse')
++    # Overlapping cards: keep the earlier one and drop the later.
++    kept = []
++    for card in cards:
++        if kept and card['start'] < kept[-1]['end'] + .15:
++            dropped.append({'index': None, 'reason': 'overlaps an earlier card', 'text': card['text']})
++            continue
++        kept.append(card)
++    cards = kept
++    # Coverage: drop the longest cards until the set is sparse again.
++    limit = max(6, duration * .30)
++    while cards and sum(c['end'] - c['start'] for c in cards) > limit:
++        longest = max(range(len(cards)), key=lambda i: cards[i]['end'] - cards[i]['start'])
++        dropped.append({'index': None, 'reason': 'too much of the video covered', 'text': cards[longest]['text']})
++        del cards[longest]
+     return cards
+ 
+ 
+@@ -199,6 +224,33 @@
+     return [t for t in texts if t.strip()]
+ 
+ 
++RETRY_MAX_SECONDS = 90
++
++
++def _drop_wrong_language(draft, language):
++    """Remove cards, and the points series, whose copy is not in the edition's script.
++
++    Returns (draft, dropped). English editions are returned unchanged.
++    """
++    if language == 'en' or not isinstance(draft, dict):
++        return draft, []
++    from .languages import script_language
++    out = dict(draft)
++    dropped, kept = [], []
++    for index, card in enumerate(draft.get('cards') or []):
++        text = card.get('text') if isinstance(card, dict) else None
++        if isinstance(text, str) and text.strip() and script_language(text) != language:
++            dropped.append({'index': index, 'reason': f'copy is not in {language}', 'text': text[:60]})
++        else:
++            kept.append(card)
++    out['cards'] = kept
++    series = draft.get('series')
++    if isinstance(series, dict) and any(script_language(t) != language for t in _card_texts({'series': series})):
++        out['series'] = None
++        dropped.append({'index': None, 'reason': f'points series is not in {language}'})
++    return out, dropped
++
++
+ def _wrong_language_texts(draft, language):
+     """Copy that is not written in the edition's own script.
+ 
+@@ -221,7 +273,8 @@
+     key = fingerprint(audio, words, script, variant)
+     if target.is_file():
+         prior = json.loads(target.read_text(encoding='utf-8'))
+-        if prior.get('fingerprint') == key:
++        # A saved result that lost every card to the language check is retried, not reused.
++        if prior.get('fingerprint') == key and (prior.get('cards') or not prior.get('dropped_cards')):
+             anchor_cards(prior, words, duration, educational)
+             if educational and prior.get('series'):
+                 anchor_series(prior, words, duration)
+@@ -240,22 +293,25 @@
+         from .providers.gemini_web import gemini_web_generate
+         return gemini_web_generate(BASE_PROMPT, text, cleanup=cleanup)
+ 
++    started = time.time()
+     raw = _draft(user)
+     save(target.with_name('speech_cards-draft.json'), {'response': raw, 'fingerprint': key, 'provider': provider})
+     draft = _extract_json(raw)
+-    if _wrong_language_texts(draft, language):
+-        # One retry with a direct correction; the wrong-script draft is never shipped.
++    texts = _card_texts(draft)
++    wrong = _wrong_language_texts(draft, language)
++    # Retry once, only when the whole draft is in the wrong script and the first answer came back quickly.
++    # A slow Gemini Web answer is not asked for again (that would double a multi-minute wait); partly wrong
++    # copy is dropped instead, so the rest of the set is still used.
++    if texts and len(wrong) == len(texts) and time.time() - started <= RETRY_MAX_SECONDS:
+         correction = (f'\nCorrection: the previous draft wrote card text outside {name}. Rewrite every card, title and '
+                       f'point in {name} script, keeping the same timing and word IDs.')
+         raw = _draft(user + correction)
+         save(target.with_name('speech_cards-draft.json'), {'response': raw, 'fingerprint': key, 'provider': provider,
+                                                             'retry': 'language'})
+         draft = _extract_json(raw)
+-        wrong = _wrong_language_texts(draft, language)
+-        if wrong:
+-            raise ValueError(f'Text-card copy is not in {name} after a retry (for example {wrong[0][:60]!r}). '
+-                             'Regenerate the text cards for this language.')
+-    cards = anchor_cards(draft, words, duration, educational)
++    draft, language_dropped = _drop_wrong_language(draft, language)
++    card_report = []
++    cards = anchor_cards(draft, words, duration, educational, report=card_report)
+     series = anchor_series(draft, words, duration) if educational else None
+     dropped = 0
+     if series:
+@@ -265,7 +321,9 @@
+               'duration': duration, 'language': language, 'timing_source': timing_source,
+               'review_required': True, 'educational': bool(educational), 'draft_provider': provider if educational else 'gemini-web',
+               'series': _series_record(series) if series else None, 'dropped_overlapping_cards': dropped,
+-              'cards': cards}
++              'cards': cards, 'dropped_cards': card_report + language_dropped}
++    for item in result['dropped_cards']:
++        print('[Text cards] dropped one card: ' + str(item.get('reason')))
+     save(target, result)
+     return result
+ 
+diff -ruN a/tests/test_v576_gemini_capture_cleanup.py b/tests/test_v576_gemini_capture_cleanup.py
+--- a/tests/test_v576_gemini_capture_cleanup.py	2026-10-22 07:16:32.000000000 +0000
++++ b/tests/test_v576_gemini_capture_cleanup.py	2026-10-22 08:28:48.000000000 +0000
+@@ -8,7 +8,7 @@
+     browser._page = type("Page", (), {"url": "https://gemini.google.com/app"})()
+     monkeypatch.setattr(browser, "start_fresh_chat", lambda: None)
+     monkeypatch.setattr(browser, "_fill_prompt", lambda prompt: None)
+-    monkeypatch.setattr(browser, "_submit", lambda: setattr(browser._page, "url", "https://gemini.google.com/app/test"))
++    monkeypatch.setattr(browser, "_submit", lambda prompt: setattr(browser._page, "url", "https://gemini.google.com/app/test"))
+     monkeypatch.setattr(browser, "_save_captured_response", lambda text: None)
+     monkeypatch.setattr(browser, "_generation_in_progress", lambda: False)
+     sequence = iter(responses)
+diff -ruN a/tests/test_v765_speech_gemini.py b/tests/test_v765_speech_gemini.py
+--- a/tests/test_v765_speech_gemini.py	2026-10-22 07:16:32.000000000 +0000
++++ b/tests/test_v765_speech_gemini.py	2026-10-22 08:28:50.000000000 +0000
+@@ -15,8 +15,11 @@
+ 
+ 
+ @pytest.mark.parametrize('first,last',[(True,2),(-1,2),(0,40),(8,1)])
+-def test_invalid_anchors_rejected(first,last):
+-    with pytest.raises(ValueError):anchor_cards({'cards':[{'text':'Test','start_word':first,'end_word':last}]},words(),30)
++def test_invalid_anchors_dropped_with_reason(first,last):
++    # One unusable card is dropped and reported; it no longer aborts the whole card set.
++    report=[]
++    assert anchor_cards({'cards':[{'text':'Test','start_word':first,'end_word':last}]},words(),30,report=report)==[]
++    assert len(report)==1 and report[0]['reason']
+ 
+ 
+ def test_changed_audio_invalidates_cards(tmp_path):
+diff -ruN a/tests/test_v774_educational_cards.py b/tests/test_v774_educational_cards.py
+--- a/tests/test_v774_educational_cards.py	2026-10-22 07:16:32.000000000 +0000
++++ b/tests/test_v774_educational_cards.py	2026-10-22 08:28:50.000000000 +0000
+@@ -98,9 +98,10 @@
+ def test_single_cards_are_takeaway_tip_or_warning_only():
+     rows = {'cards': [{'kind': 'tip', 'text': 'Drink water before coffee', 'start_word': 2, 'end_word': 5}]}
+     assert anchor_cards(rows, words(), DURATION, educational=True)[0]['kind'] == 'tip'
+-    with pytest.raises(ValueError):
+-        anchor_cards({'cards': [{'kind': 'points', 'text': 'List', 'start_word': 0, 'end_word': 4}]},
+-                     words(), DURATION, educational=True)
++    report = []
++    assert anchor_cards({'cards': [{'kind': 'points', 'text': 'List', 'start_word': 0, 'end_word': 4}]},
++                        words(), DURATION, educational=True, report=report) == []
++    assert len(report) == 1 and report[0]['reason']
+ 
+ 
+ def test_other_video_types_stay_plain_keypoints():
+diff -ruN a/tests/test_v778_odia_fixes.py b/tests/test_v778_odia_fixes.py
+--- a/tests/test_v778_odia_fixes.py	2026-10-22 07:23:42.000000000 +0000
++++ b/tests/test_v778_odia_fixes.py	2026-10-22 08:28:52.000000000 +0000
+@@ -151,14 +151,16 @@
+     assert [c['text'] for c in result['cards']] == [ODIA_CARD]
+ 
+ 
+-def test_odia_copy_that_stays_english_is_refused(tmp_path, monkeypatch):
++def test_odia_copy_that_stays_english_is_dropped_with_reason(tmp_path, monkeypatch):
++    # 7.0.79: English card copy in an Odia edition is dropped and reported, not raised.
++    # Nothing English reaches the Odia video; the reason is kept in the saved result.
+     import engine.providers.gemini_web as GW
+     monkeypatch.setattr(GW, 'gemini_web_generate', lambda *a, **k: _cards(ENGLISH_CARD))
+     audio = tmp_path / 'narration.mp3'
+     audio.write_bytes(b'x' * 64)
+-    with pytest.raises(ValueError, match='not in Odia'):
+-        SC.prepare(tmp_path, audio, WORDS, 'ନମସ୍କାର', 16.0, 'or')
+-    assert not (tmp_path / 'production' / 'speech_cards.json').exists()
++    result = SC.prepare(tmp_path, audio, WORDS, 'ନମସ୍କାର', 16.0, 'or')
++    assert result['cards'] == []
++    assert any('not in or' in item['reason'] for item in result['dropped_cards'])
+ 
+ 
+ def test_english_cards_are_not_language_checked(tmp_path, monkeypatch):
+diff -ruN a/tests/test_v779_submit_cards_timing.py b/tests/test_v779_submit_cards_timing.py
+--- a/tests/test_v779_submit_cards_timing.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v779_submit_cards_timing.py	2026-10-22 08:28:58.000000000 +0000
+@@ -0,0 +1,287 @@
++"""v7.0.79: Gemini Web sends are verified, unusable text cards are dropped instead of aborting the set,
++Odia captions skip speech recognition, and a slow Gemini answer is not asked for again.
++
++The Gemini tests use a fake page and a fake clock, so no browser or network is needed.
++"""
++import array
++import json
++import math
++import wave
++
++import pytest
++
++from engine import captions as C
++from engine import speech_cards as SC
++import engine.providers.gemini_web as GW
++
++
++class FakeClock:
++    """Replaces ``time`` in a module: time() advances by ``step`` per call, sleep() advances by its argument."""
++
++    def __init__(self, step=0.5):
++        self.now = 1000.0
++        self.step = step
++
++    def time(self):
++        self.now += self.step
++        return self.now
++
++    def sleep(self, seconds):
++        self.now += seconds
++
++
++class Box:
++    """Composer stand-in. ``text`` is what the editor shows; ``readable`` False makes reads fail."""
++
++    def __init__(self, text, readable=True, on_enter=None):
++        self.text = text
++        self.readable = readable
++        self.on_enter = on_enter
++        self.presses = []
++
++    def inner_text(self, timeout=None):
++        if not self.readable:
++            raise RuntimeError('no text')
++        return self.text
++
++    def input_value(self, timeout=None):
++        if not self.readable:
++            raise RuntimeError('no value')
++        return self.text
++
++    def press(self, key):
++        self.presses.append(key)
++        if self.on_enter:
++            self.on_enter(self)
++
++
++class Button:
++    def __init__(self, on_click=None):
++        self.on_click = on_click
++        self.clicks = 0
++
++    def click(self, timeout=None):
++        self.clicks += 1
++        if self.on_click:
++            self.on_click()
++
++
++def _browser(monkeypatch, button, box, generating=False):
++    browser = GW.GeminiWebBrowser.__new__(GW.GeminiWebBrowser)
++    monkeypatch.setattr(browser, '_try_resolve', lambda *a, **k: button, raising=False)
++    monkeypatch.setattr(browser, '_prompt_box', lambda *a, **k: box, raising=False)
++    monkeypatch.setattr(browser, '_generation_in_progress', lambda: generating, raising=False)
++    monkeypatch.setattr(GW, 'time', FakeClock())
++    return browser
++
++
++PROMPT = 'SYSTEM: draft the cards.\nUSER: Language: or\nWrite every card in Odia.'
++
++
++def test_send_click_that_empties_the_composer_is_trusted(monkeypatch):
++    box = Box(PROMPT)
++    button = Button(on_click=lambda: setattr(box, 'text', ''))
++    browser = _browser(monkeypatch, button, box)
++    browser._submit(PROMPT)
++    assert button.clicks == 1
++    assert box.presses == []
++
++
++def test_click_that_does_nothing_is_followed_by_enter(monkeypatch):
++    box = Box(PROMPT, on_enter=lambda b: setattr(b, 'text', ''))
++    button = Button()  # clicking does not send
++    browser = _browser(monkeypatch, button, box)
++    browser._submit(PROMPT)
++    assert button.clicks == 1
++    assert box.presses == ['Enter']
++
++
++def test_prompt_still_in_composer_is_an_error_not_a_silent_submit(monkeypatch):
++    box = Box(PROMPT)  # neither the click nor Enter sends
++    browser = _browser(monkeypatch, Button(), box)
++    with pytest.raises(GW.GeminiWebUIChanged, match='did not send the prompt'):
++        browser._submit(PROMPT)
++    assert box.presses == ['Enter']
++
++
++def test_unreadable_composer_is_never_proof_of_a_send(monkeypatch):
++    box = Box(PROMPT, readable=False)
++    browser = _browser(monkeypatch, Button(), box)
++    with pytest.raises(GW.GeminiWebUIChanged):
++        browser._submit(PROMPT)
++
++
++def test_unreadable_composer_counts_as_sent_only_when_gemini_is_generating(monkeypatch):
++    box = Box(PROMPT, readable=False)
++    browser = _browser(monkeypatch, Button(), box, generating=True)
++    browser._submit(PROMPT)
++    assert box.presses == []
++
++
++def test_missing_send_control_and_composer_fails_before_any_wait(monkeypatch):
++    browser = GW.GeminiWebBrowser.__new__(GW.GeminiWebBrowser)
++    monkeypatch.setattr(browser, '_try_resolve', lambda *a, **k: None, raising=False)
++    monkeypatch.setattr(browser, '_prompt_box', lambda *a, **k: None, raising=False)
++    with pytest.raises(GW.GeminiWebUIChanged, match='send control was not found'):
++        browser._submit(PROMPT)
++
++
++# ---------- text cards: drop the unusable card, keep the set ----------
++
++WORDS = [{'word': f'w{i}', 'start': round(i * .1, 3), 'end': round(i * .1 + .08, 3)} for i in range(160)]
++
++
++def test_long_spoken_phrase_is_clamped_to_six_seconds_not_rejected():
++    draft = {'cards': [{'kind': 'keypoint', 'text': 'A long idea', 'start_word': 0, 'end_word': 80}]}
++    cards = SC.anchor_cards(draft, WORDS, 16.0)
++    assert len(cards) == 1
++    assert cards[0]['end'] - cards[0]['start'] == pytest.approx(6.0, abs=0.01)
++
++
++def test_one_bad_card_is_dropped_and_the_rest_are_kept():
++    draft = {'cards': [
++        {'kind': 'keypoint', 'text': 'Good one', 'start_word': 0, 'end_word': 5},
++        {'kind': 'keypoint', 'text': 'x' * 81, 'start_word': 20, 'end_word': 25},
++        {'kind': 'keypoint', 'text': 'Good two', 'start_word': 60, 'end_word': 65},
++    ]}
++    report = []
++    cards = SC.anchor_cards(draft, WORDS, 16.0, report=report)
++    assert [c['text'] for c in cards] == ['Good one', 'Good two']
++    assert len(report) == 1 and report[0]['index'] == 1
++
++
++def test_overlapping_card_is_dropped_and_reported():
++    draft = {'cards': [
++        {'kind': 'keypoint', 'text': 'First', 'start_word': 0, 'end_word': 20},
++        {'kind': 'keypoint', 'text': 'Second', 'start_word': 5, 'end_word': 25},
++    ]}
++    report = []
++    cards = SC.anchor_cards(draft, WORDS, 16.0, report=report)
++    assert [c['text'] for c in cards] == ['First']
++    assert any(item['reason'] == 'overlaps an earlier card' for item in report)
++
++
++def test_cards_covering_too_much_of_the_video_are_trimmed_not_fatal():
++    # Five non-overlapping 2 s cards (10 s) against a 6 s allowance.
++    draft = {'cards': [{'kind': 'keypoint', 'text': f'Card {i}', 'start_word': i * 30, 'end_word': i * 30 + 3}
++                       for i in range(5)]}
++    report = []
++    cards = SC.anchor_cards(draft, WORDS, 16.0, report=report)
++    assert sum(c['end'] - c['start'] for c in cards) <= max(6, 16.0 * .30) + 1e-6
++    assert any(item['reason'] == 'too much of the video covered' for item in report)
++
++
++# ---------- language retry guard and wrong-script drops ----------
++
++ODIA = 'ଗଭୀର ଶ୍ୱାସ ନିଅନ୍ତୁ'
++ENGLISH = 'Breathe slowly'
++
++
++def _prepare_with(monkeypatch, tmp_path, replies, clock):
++    monkeypatch.setattr(SC, 'time', clock)
++    calls = []
++    queue = list(replies)
++
++    def fake(system, user, cleanup='delete-after-read'):
++        calls.append(user)
++        return queue.pop(0)
++
++    monkeypatch.setattr(GW, 'gemini_web_generate', fake)
++    audio = tmp_path / 'narration.mp3'
++    audio.write_bytes(b'x' * 64)
++    result = SC.prepare(tmp_path, audio, WORDS, 'ନମସ୍କାର', 16.0, 'or')
++    return result, calls
++
++
++def _cards_json(*rows):
++    return json.dumps({'cards': [{'kind': 'takeaway', 'text': text, 'start_word': start, 'end_word': start + 2}
++                                 for text, start in rows], 'series': None})
++
++
++def test_slow_wrong_script_answer_is_not_asked_again_and_is_dropped(monkeypatch, tmp_path):
++    clock = FakeClock(step=200.0)  # every clock read is 200 s later: the first answer "took" minutes
++    result, calls = _prepare_with(monkeypatch, tmp_path, [_cards_json((ENGLISH, 140))], clock)
++    assert len(calls) == 1
++    assert result['cards'] == []
++    assert result['dropped_cards'] and 'not in or' in result['dropped_cards'][0]['reason']
++
++
++def test_partly_wrong_answer_keeps_the_odia_cards_without_a_retry(monkeypatch, tmp_path):
++    clock = FakeClock(step=0.5)
++    reply = json.dumps({'cards': [
++        {'kind': 'takeaway', 'text': ODIA, 'start_word': 140, 'end_word': 142},
++        {'kind': 'takeaway', 'text': ENGLISH, 'start_word': 20, 'end_word': 22},
++    ], 'series': None})
++    result, calls = _prepare_with(monkeypatch, tmp_path, [reply], clock)
++    assert len(calls) == 1
++    assert [c['text'] for c in result['cards']] == [ODIA]
++    assert len(result['dropped_cards']) == 1
++
++
++def test_all_dropped_result_is_not_reused_on_the_next_run(monkeypatch, tmp_path):
++    first, calls = _prepare_with(monkeypatch, tmp_path, [_cards_json((ENGLISH, 140))], FakeClock(step=200.0))
++    assert first['cards'] == [] and len(calls) == 1
++    # Same audio and script: the saved empty result must not be returned as if it were final.
++    second, calls_again = _prepare_with(monkeypatch, tmp_path, [_cards_json((ODIA, 140))], FakeClock(step=0.5))
++    assert len(calls_again) == 1
++    assert [c['text'] for c in second['cards']] == [ODIA]
++
++
++def test_fully_wrong_quick_answer_is_retried_once(monkeypatch, tmp_path):
++    clock = FakeClock(step=0.5)
++    result, calls = _prepare_with(monkeypatch, tmp_path,
++                                  [_cards_json((ENGLISH, 140)), _cards_json((ODIA, 140))], clock)
++    assert len(calls) == 2
++    assert [c['text'] for c in result['cards']] == [ODIA]
++
++
++# ---------- captions: no speech recognition for Odia ----------
++
++
++def _wav(path, seconds=8.0):
++    samples = array.array('h')
++    for i in range(int(seconds * 16000)):
++        samples.append(int(0.3 * 32767 * math.sin(2 * math.pi * 220 * i / 16000)) if (i // 8000) % 2 == 0 else 0)
++    with wave.open(str(path), 'wb') as w:
++        w.setnchannels(1)
++        w.setsampwidth(2)
++        w.setframerate(16000)
++        w.writeframes(samples.tobytes())
++    return path
++
++
++SCRIPT = ' '.join(f'word{i}' for i in range(20)) + '.'
++
++
++def test_auto_skips_groq_and_local_whisper_for_odia(monkeypatch, tmp_path):
++    monkeypatch.setenv('GROQ_API_KEY', 'test-key')
++    audio = _wav(tmp_path / 'narration.wav')
++    calls = []
++    monkeypatch.setattr(C, '_groq_word_timestamps', lambda *a, **k: calls.append('groq') or [])
++    monkeypatch.setattr(C, '_local_word_timestamps', lambda *a, **k: calls.append('local') or [])
++    words = C.get_word_timestamps(str(audio), provider='auto', script_text=SCRIPT, language='or')
++    assert calls == []
++    assert [w['word'] for w in words] == SCRIPT.split()
++    meta = json.loads((tmp_path / 'narration.wav.words.meta.json').read_text(encoding='utf-8'))
++    assert meta['engine'] in ('script-estimated+voiced-spans', 'script-estimated')
++
++
++def test_explicit_groq_for_odia_is_refused_with_a_clear_message(monkeypatch, tmp_path):
++    monkeypatch.setenv('GROQ_API_KEY', 'test-key')
++    audio = _wav(tmp_path / 'narration.wav')
++    with pytest.raises(C.CaptionProviderError, match='does not transcribe or'):
++        C.get_word_timestamps(str(audio), provider='groq', script_text=SCRIPT, language='or')
++
++
++def test_english_still_uses_groq(monkeypatch, tmp_path):
++    monkeypatch.setenv('GROQ_API_KEY', 'test-key')
++    audio = _wav(tmp_path / 'narration.wav')
++    calls = []
++
++    def groq(path, model, language, script):
++        calls.append(language)
++        return [{'word': w, 'start': i * .3, 'end': i * .3 + .25} for i, w in enumerate(SCRIPT.split())]
++
++    monkeypatch.setattr(C, '_groq_word_timestamps', groq)
++    C.get_word_timestamps(str(audio), provider='auto', script_text=SCRIPT, language='en')
++    assert calls == ['en']
+diff -ruN a/tools/update_v777_to_v778.py b/tools/update_v777_to_v778.py
+--- a/tools/update_v777_to_v778.py	2026-10-22 07:38:46.000000000 +0000
++++ b/tools/update_v777_to_v778.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,168 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.78 update (Odia text cards, Odia caption timing and Odia narration direction) to a v7.0.77 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.78 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.78/tools/update_v777_to_v778.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.78/tools/update_v777_to_v778.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'ODIA_FIXES_V7_0_78.md',
+-    'VERSION',
+-    'engine/audio/tts.py',
+-    'engine/captions.py',
+-    'engine/render/indic_font.py',
+-    'engine/speech_cards.py',
+-    'tests/test_v777_edition_cards_hooks.py',
+-    'tests/test_v778_odia_fixes.py',
+-    'tools/update_v777_to_v778.py',
+-]
+-# Files as they exist in 7.0.77: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['73e1e54318c8b5766d7d9914eeeac90045cdc7c13f1aef5422089d75bd3422f0'],
+-    'engine/audio/tts.py': ['290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2'],
+-    'engine/captions.py': ['708f654e7a198e14ffdaca636d69919399bb0cc982ef5e25e8f57cd4f72978fc'],
+-    'engine/render/indic_font.py': ['21d42b33b26cdfbbb7b642cc12207a5596cc90917a151ac7c322b504a1f51202'],
+-    'engine/speech_cards.py': ['b948a77d66bf32e495b3221c263b01d0a65067cd16926861c9087f3a90caf57f'],
+-    'tests/test_v777_edition_cards_hooks.py': ['aee735a170ece5236ba670f756e016f9ca8c477be87eff228dfed60860853ca0'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.77', '7.0.78')  # 7.0.78 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.77 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.77':
+-            break
+-    return ('This update requires an installed 7.0.77 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.78 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.78 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.78 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.77-to-v7.0.78-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.78. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN a/tools/update_v778_to_v779.py b/tools/update_v778_to_v779.py
+--- a/tools/update_v778_to_v779.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v778_to_v779.py	2026-10-22 08:30:24.000000000 +0000
+@@ -0,0 +1,174 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.79 update (Gemini Web send check, text cards dropped instead of aborting the set,
++no speech recognition for Odia captions) to a v7.0.78 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.79 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.79/tools/update_v778_to_v779.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.79/tools/update_v778_to_v779.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'GEMINI_SUBMIT_AND_CARDS_V7_0_79.md',
++    'VERSION',
++    'engine/captions.py',
++    'engine/providers/gemini_web.py',
++    'engine/speech_cards.py',
++    'tests/test_v576_gemini_capture_cleanup.py',
++    'tests/test_v765_speech_gemini.py',
++    'tests/test_v774_educational_cards.py',
++    'tests/test_v778_odia_fixes.py',
++    'tests/test_v779_submit_cards_timing.py',
++    'tools/update_v778_to_v779.py',
++]
++# Files as they exist in 7.0.78: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['711cd6876daf7c9cedc0bf233356dccbf5782f735df8116b211436d41df0290e'],
++    'engine/captions.py': ['98667a8d2eed11b23fd78d1bb49a59929e5c383ba187fc21a3c0b3259a56d36d'],
++    'engine/providers/gemini_web.py': ['fadb7ffd1c230bee7593581bd3f32b4bfb844d08cd96c7c03d0129677d8afe2f'],
++    'engine/speech_cards.py': ['ede2944ce7de00b3cf6d15f5710a61d0452bc8ce423c15bd3b313b61441e97f8'],
++    'tests/test_v576_gemini_capture_cleanup.py': ['073b7502eefcfcb16663872576b5f9b888394d314065be3b82d8f022103cd20d'],
++    'tests/test_v765_speech_gemini.py': ['e69c8773665030202b06ade9907b25921151a201f068d285e68575ffa81101b7'],
++    'tests/test_v774_educational_cards.py': ['210a05d592a33dbd1b7cf1a91c002ca347dfc09b6987d8a5c90d403bca7f3e68'],
++    'tests/test_v778_odia_fixes.py': ['34ca0766b157043d9adf1f4c02336b831538f2ae5db6ec9b624187ec9efae125'],
++}
++ACCEPTED_INSTALLS = ('7.0.78', '7.0.79')  # 7.0.79 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.78 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.78':
++            break
++    return ('This update requires an installed 7.0.78 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.79 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.79 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.79 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.78-to-v7.0.79-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.79. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

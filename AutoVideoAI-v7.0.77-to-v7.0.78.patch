@@ -1,0 +1,988 @@
+diff -ruN a/ODIA_FIXES_V7_0_78.md b/ODIA_FIXES_V7_0_78.md
+--- /dev/null
++++ b/ODIA_FIXES_V7_0_78.md
+@@ -0,0 +1,37 @@
++# AutoVideoAI 7.0.78: Odia text cards, Odia caption timing and Odia narration
++
++Update from 7.0.77 with `tools/update_v777_to_v778.py`. Code and documentation only. Saved jobs, outputs, browser profiles, music, characters and channel profiles are never touched.
++
++## What was wrong and what changed
++
++1. **Odia text cards overlapped.** Indic glyphs were positioned from the baseline, but Pillow positions text from the ascender line. Odia vowel signs and conjuncts therefore sat one ascender too high, over the title or the line above. `engine/render/indic_font.py` now positions glyphs from the ascender line and reports real font metrics. Hindi (Devanagari) uses the same class when Raqm is not installed, so Hindi cards are corrected too.
++
++2. **Odia caption timing drifted.** The shared Odia job had no usable provider timings (Gemini TTS returns none, and the transcription providers produced none for Odia), so Odia captions were spread across the whole file by character count. The spread ignored pauses, so captions ran later and later. `engine/captions.py` now detects the voiced parts of the narration and places the script words inside them. A word boundary near a detected pause snaps to that pause, so no word straddles a pause. Timings cached by 7.0.77 for this fallback are recomputed once. Timings from a real provider are kept.
++
++3. **Odia caption repair crashed.** When ASR anchors looked implausible on audio of 30 s or more, `align_words_to_script` referenced undefined names (`audio_path`, `detail`). It now returns the estimated timing.
++
++4. **Odia and Hindi text-card copy could be written in English.** The drafter received only the code `or`. It is now told the language by name and must write every card, title and point in that script. Copy that is not in the edition's script is retried once with a direct correction. If the retry is also wrong, the drafting step stops with a clear message and nothing is shipped. English editions are not checked.
++
++5. **Odia narration was not told its language.** The Gemini TTS request carried only the English narrator style. It now names Odia (or Hindi) and asks for native pronunciation without translation. The instruction is kept even when a caller supplies its own style.
++
++## Checks
++
++- `tests/test_v778_odia_fixes.py`: 11 tests (timing on synthetic speech with pauses, schedule boundaries, stale cache recompute, card language retry and refusal, TTS language direction, the caption repair crash, and Indic glyph bounds for Odia and Devanagari).
++- Synthetic speech with pauses (four phrases, 0.9 s pauses): worst word-start drift 0.18 s, down from 0.88 s with the 7.0.77 spread. This is a test signal, not a measurement of real Odia narration.
++- Odia series and single card rendered at 1080×1920: titles, points and the highlight bar no longer overlap.
++
++## Not verified here
++
++- Real Odia narration. Measured Odia word timing needs the Odia voice file from a real job; the caption lag fix must be confirmed on one.
++- Gemini TTS accent and pronunciation for Odia. The language instruction is in place; listen to one render.
++- Gemini Web card drafting in Odia. The check and retry are in place; confirm the first Odia edition's cards.
++- Raqm-enabled Pillow. This build was tested with the fallback path; the Raqm path is unchanged.
++
++## Updating
++
++From a 7.0.77 installation:
++
++    python3 ../AutoVideoAI-v7.0.78/tools/update_v777_to_v778.py .
++    python3 ../AutoVideoAI-v7.0.78/tools/update_v777_to_v778.py . --apply
++
++Stop the dashboard before `--apply`. From 7.0.76 or earlier, the updater prints the earlier steps to run first.
+diff -ruN a/VERSION b/VERSION
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.77
++7.0.78
+diff -ruN a/engine/audio/tts.py b/engine/audio/tts.py
+--- a/engine/audio/tts.py
++++ b/engine/audio/tts.py
+@@ -174,6 +174,13 @@
+             "warm, confident documentary narrator; conversational and human; medium energy; "
+             "natural sentence pauses; never salesy or robotic"
+         )
++        # Name the spoken language explicitly. Without it the English narrator
++        # style is the only instruction, and Odia text can be read with the
++        # wrong language or accent. Kept even when a caller supplies a style.
++        spoken = {"or": "Odia (Oriya)", "hi": "Hindi"}.get(str(kwargs.get("language") or "en").lower())
++        if spoken:
++            style = (f"Speak the entire text in {spoken} with native pronunciation. Do not translate it "
++                     f"or read it in English or another language. " + style)
+         payload = {
+             "model": model,
+             "input": [{
+diff -ruN a/engine/captions.py b/engine/captions.py
+--- a/engine/captions.py
++++ b/engine/captions.py
+@@ -26,8 +26,102 @@
+     return [x for x in re.findall(r"\S+", str(text or "")) if _norm_token(x)]
+ 
+ 
++def speech_spans(audio_path: str, merge_gap: float = 0.18, min_span: float = 0.08) -> list[tuple[float, float]]:
++    """Return voiced (speech) intervals of a narration file, in seconds.
++
++    Used only when no provider returned word timings (for example Odia, which
++    neither Groq nor local Whisper transcribes).  Silence between sentences is
++    kept out of the word budget, so the estimated words stay in step with the
++    real pauses instead of drifting later with every pause.  Returns [] when the
++    audio cannot be decoded; callers then keep the plain duration spread.
++    """
++    try:
++        import subprocess
++        import numpy as np
++        from .audio.tts import _ffmpeg_bin
++        ff = _ffmpeg_bin()
++        if not ff or not os.path.exists(audio_path):
++            return []
++        raw = subprocess.run([ff, "-v", "error", "-i", audio_path, "-ac", "1", "-ar", "16000",
++                              "-f", "s16le", "-"], capture_output=True, timeout=180).stdout
++        x = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
++        frame = 320  # 20 ms at 16 kHz
++        m = x.size // frame
++        if m < 5:
++            return []
++        rms = np.sqrt((x[:m * frame].reshape(m, frame) ** 2).mean(axis=1) + 1e-12)
++        db = 20.0 * np.log10(rms)
++        peak = float(np.percentile(db, 98))
++        voiced = db > max(peak - 30.0, -50.0)
++        spans: list[list[float]] = []
++        i = 0
++        while i < m:
++            if voiced[i]:
++                j = i
++                while j < m and voiced[j]:
++                    j += 1
++                spans.append([i * 0.02, j * 0.02])
++                i = j
++            else:
++                i += 1
++        merged: list[list[float]] = []
++        for s, e in spans:
++            if merged and s - merged[-1][1] < merge_gap:
++                merged[-1][1] = e
++            else:
++                merged.append([s, e])
++        return [(round(s, 3), round(e, 3)) for s, e in merged if e - s >= min_span]
++    except Exception:
++        return []
++
++
++def _spans_schedule(weights: list[float], spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
++    """Place weighted words inside voiced spans; each word starts/ends in speech.
++
++    Word boundaries are first placed by character weight on the voiced timeline
++    (silence removed).  A boundary that falls within half an average word of a
++    detected pause is snapped to that pause, so the first word after a pause
++    starts after it rather than sliding back across it.  No word straddles a pause.
++    """
++    lengths = [e - s for s, e in spans]
++    voiced = sum(lengths)
++    n = len(weights)
++    total_w = float(sum(weights)) or 1.0
++    bounds = [0.0]
++    cum = 0.0
++    for wt in weights[:-1]:
++        cum += wt
++        bounds.append(cum / total_w * voiced)
++    bounds.append(voiced)
++    tol = 0.5 * voiced / max(1, n)
++    acc = 0.0
++    for length in lengths[:-1]:
++        acc += length
++        if n < 2:
++            break
++        k = min(range(1, n), key=lambda i: abs(bounds[i] - acc))
++        if abs(bounds[k] - acc) <= tol:
++            bounds[k] = acc
++    for k in range(1, n + 1):
++        bounds[k] = max(bounds[k], bounds[k - 1])
++
++    def real_at(tv: float, start: bool) -> float:
++        # A voiced-time point on a span boundary is a word start (next span)
++        # or a word end (previous span), so no word straddles a pause.
++        acc_len = 0.0
++        for s, e in spans:
++            length = e - s
++            if (tv < acc_len + length) if start else (tv <= acc_len + length):
++                return s + (tv - acc_len)
++            acc_len += length
++        return spans[-1][1]
++
++    return [(real_at(bounds[k], True), real_at(bounds[k + 1], False)) for k in range(n)]
++
++
+ def align_words_to_script(script_text: str, asr_words: list[dict],
+-                          audio_duration: float | None = None) -> list[dict]:
++                          audio_duration: float | None = None,
++                          spans: list[tuple[float, float]] | None = None) -> list[dict]:
+     """Replace ASR wording with exact script wording while retaining timing.
+ 
+     Exact/near sequence matches anchor the timeline. Script words missed or
+@@ -58,6 +152,9 @@
+         # Exact text with estimated uniform timing is still better than invented
+         # subtitle words or no captions at all.
+         weights = [max(1, len(_norm_token(x))) for x in src]
++        if spans:
++            return [{"word": token, "start": round(a, 3), "end": round(b, 3)}
++                    for token, (a, b) in zip(src, _spans_schedule(weights, spans))]
+         total = float(sum(weights))
+         cur = 0.0
+         out = []
+@@ -135,9 +232,7 @@
+         fallback = script_timed_word_timestamps(script_text, audio_duration)
+         if fallback:
+             print("Caption timing repair: implausible ASR anchors; using estimated script timing. Exact word sync needs review.")
+-            from .production import save
+-        save(audio_path + '.words.meta.json', {'timing_source': 'estimated', 'reason': detail})
+-        return fallback
++            return fallback
+     return out
+ 
+ 
+@@ -374,7 +469,16 @@
+     silently using a different engine.
+     """
+     cache = audio_path + ".words.json"
+-    if os.path.exists(cache) and not force:
++    # Timings cached by older builds came from the plain full-length spread
++    # (engine "script-estimated").  Recompute them once with the voiced-span
++    # schedule; provider-based timings stay cached.
++    stale_estimate = False
++    try:
++        with open(audio_path + ".words.meta.json", encoding="utf-8") as f:
++            stale_estimate = json.load(f).get("engine") == "script-estimated"
++    except Exception:
++        stale_estimate = False
++    if os.path.exists(cache) and not force and not stale_estimate:
+         try:
+             words = json.load(open(cache, encoding="utf-8"))
+             if words:
+@@ -421,8 +525,14 @@
+ 
+     dur = _audio_duration(audio_path)
+     if script_text and align_script:
+-        words = align_words_to_script(script_text, words or [], dur)
+-        engine = (engine + "+script-align") if engine else "script-estimated"
++        spans = None if words else speech_spans(audio_path)
++        words = align_words_to_script(script_text, words or [], dur, spans=spans or None)
++        if engine:
++            engine = engine + "+script-align"
++        elif spans:
++            engine = "script-estimated+voiced-spans"
++        else:
++            engine = "script-estimated"
+ 
+     if not words:
+         if p in ("groq", "local", "faster-whisper", "script-timed", "script", "none"):
+diff -ruN a/engine/render/indic_font.py b/engine/render/indic_font.py
+--- a/engine/render/indic_font.py
++++ b/engine/render/indic_font.py
+@@ -28,10 +28,19 @@
+         except (AttributeError,ValueError):
+             pass
+         self._freetype = freetype
++        # Pillow positions text from the ascender line, so glyph offsets and
++        # getmetrics() must use the same origin. Measuring from the baseline put
++        # Odia glyphs one ascender too high, which overlapped titles and lines.
++        self._ascent = int(round(self._ft.size.ascender / 64))
++        self._descent = int(round(self._ft.size.descender / 64))
+         # Cache rendered text per font instance. A class-level lru_cache on a
+         # method keeps each `self` alive in its global cache until eviction.
+         self._render_cache = OrderedDict()
+ 
++    def getmetrics(self):
++        """(ascent, descent) in pixels, as Pillow expects from a FreeType font."""
++        return (self._ascent, -self._descent)
++
+     def getname(self):
+         return (self._ft.family_name.decode(),self._ft.style_name.decode())
+ 
+@@ -61,7 +70,7 @@
+             self._ft.load_glyph(info.codepoint,self._freetype.FT_LOAD_RENDER)
+             slot=self._ft.glyph;bitmap=slot.bitmap
+             px=int(round((x+pos.x_offset)/64))+slot.bitmap_left
+-            py=-int(round((y+pos.y_offset)/64))-slot.bitmap_top
++            py=self._ascent-int(round((y+pos.y_offset)/64))-slot.bitmap_top
+             if bitmap.rows and bitmap.width:
+                 # FreeType grayscale pitch can include padding.
+                 raw=np.array(bitmap.buffer,dtype=np.uint8).reshape(bitmap.rows,abs(bitmap.pitch))[:,:bitmap.width]
+diff -ruN a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py
++++ b/engine/speech_cards.py
+@@ -182,6 +182,36 @@
+     return _draft_generate(provider or 'gemini-web', system, user, cleanup=cleanup)
+ 
+ 
++LANGUAGE_NAMES = {'en': 'English', 'hi': 'Hindi (Devanagari script)', 'or': 'Odia (Oriya script, U+0B00-U+0B7F)'}
++
++
++def _card_texts(draft):
++    """Every piece of on-screen copy the drafter returned (cards, series title and points)."""
++    texts = []
++    for card in (draft or {}).get('cards') or []:
++        if isinstance(card, dict):
++            texts.append(str(card.get('text') or card.get('title') or ''))
++    series = (draft or {}).get('series') or {}
++    if isinstance(series, dict):
++        texts.append(str(series.get('title') or ''))
++        texts += [str(p.get('text') or p.get('title') or '') if isinstance(p, dict) else str(p)
++                  for p in series.get('points') or []]
++    return [t for t in texts if t.strip()]
++
++
++def _wrong_language_texts(draft, language):
++    """Copy that is not written in the edition's own script.
++
++    English editions are not checked.  Odia and Hindi cards must contain at
++    least one native-script character, so an English draft cannot ship inside
++    an Odia video.
++    """
++    if language == 'en':
++        return []
++    from .languages import script_language
++    return [t for t in _card_texts(draft) if script_language(t) != language]
++
++
+ def prepare(root, audio, words, script, duration, language, cleanup='delete-after-read', timing_source='measured',
+             educational=False, topic='', provider='gemini-web'):
+     from .production import save
+@@ -199,15 +229,32 @@
+     validate_words(words, duration)
+     from .planning.script_engine import _extract_json
+     indexed = [{'id': i, 'word': w['word'], 'start': w['start'], 'end': w['end']} for i,w in enumerate(words)]
+-    user = (f'Language: {language}\nMeasured duration: {duration:.3f}s\nReviewed script:\n{script}\n'
++    name = LANGUAGE_NAMES.get(language, language)
++    user = (f'Language: {language} ({name})\nWrite every card, title and point in {name}. Do not write card copy in English '
++            f'unless the language is English.\nMeasured duration: {duration:.3f}s\nReviewed script:\n{script}\n'
+             'Timed narration words:\n'+json.dumps(indexed, ensure_ascii=False))
+-    if educational:
+-        raw = _draft_text(provider, educational_prompt(topic), user, cleanup)
+-    else:
++
++    def _draft(text):
++        if educational:
++            return _draft_text(provider, educational_prompt(topic), text, cleanup)
+         from .providers.gemini_web import gemini_web_generate
+-        raw = gemini_web_generate(BASE_PROMPT, user, cleanup=cleanup)
++        return gemini_web_generate(BASE_PROMPT, text, cleanup=cleanup)
++
++    raw = _draft(user)
+     save(target.with_name('speech_cards-draft.json'), {'response': raw, 'fingerprint': key, 'provider': provider})
+     draft = _extract_json(raw)
++    if _wrong_language_texts(draft, language):
++        # One retry with a direct correction; the wrong-script draft is never shipped.
++        correction = (f'\nCorrection: the previous draft wrote card text outside {name}. Rewrite every card, title and '
++                      f'point in {name} script, keeping the same timing and word IDs.')
++        raw = _draft(user + correction)
++        save(target.with_name('speech_cards-draft.json'), {'response': raw, 'fingerprint': key, 'provider': provider,
++                                                            'retry': 'language'})
++        draft = _extract_json(raw)
++        wrong = _wrong_language_texts(draft, language)
++        if wrong:
++            raise ValueError(f'Text-card copy is not in {name} after a retry (for example {wrong[0][:60]!r}). '
++                             'Regenerate the text cards for this language.')
+     cards = anchor_cards(draft, words, duration, educational)
+     series = anchor_series(draft, words, duration) if educational else None
+     dropped = 0
+diff -ruN a/tests/test_v777_edition_cards_hooks.py b/tests/test_v777_edition_cards_hooks.py
+--- a/tests/test_v777_edition_cards_hooks.py
++++ b/tests/test_v777_edition_cards_hooks.py
+@@ -72,16 +72,33 @@
+     return bundle
+ 
+ 
++# 7.0.78: Hindi and Odia copy must be written in its own script, so the fake drafters answer in that script.
++NATIVE_COPY = {
++    'hi': {'Breathe slowly': 'गहरी सांस लें', 'Name the feeling': 'भावना पहचानें', 'Take one small step': 'एक छोटा कदम उठाएं',
++           'Sleep early tonight': 'आज जल्दी सोएं', 'Calm steps': 'शांत रहने के कदम', 'Plain card': 'सादा कार्ड'},
++    'or': {'Breathe slowly': 'ଗଭୀର ଶ୍ୱାସ ନିଅନ୍ତୁ', 'Name the feeling': 'ଅନୁଭୂତି ଚିହ୍ନନ୍ତୁ', 'Take one small step': 'ଗୋଟିଏ ଛୋଟ ପଦକ୍ଷେପ ନିଅନ୍ତୁ',
++           'Sleep early tonight': 'ଆଜି ଶୀଘ୍ର ଶୋଇପଡ଼ନ୍ତୁ', 'Calm steps': 'ଶାନ୍ତ ରହିବାର ପଦକ୍ଷେପ', 'Plain card': 'ସାଧାରଣ କାର୍ଡ'},
++}
++
++
++def _in_edition_language(raw, user):
++    import re
++    match = re.search(r'Language: (\w+)', str(user))
++    for english, native in NATIVE_COPY.get(match.group(1) if match else 'en', {}).items():
++        raw = raw.replace(english, native)
++    return raw
++
++
+ def _fake_drafters(monkeypatch, *, cards=True, hooks=True, calls=None):
+     calls = calls if calls is not None else []
+ 
+     def card_draft(provider, system, user, cleanup):
+         calls.append(('cards', provider))
+-        return CARDS_DRAFT
++        return _in_edition_language(CARDS_DRAFT, user)
+ 
+     def plain_draft(system, user, cleanup=None, **kwargs):
+         calls.append(('plain-cards', None))
+-        return json.dumps({'cards': [{'text': 'Plain card', 'start_word': 2, 'end_word': 4}]})
++        return _in_edition_language(json.dumps({'cards': [{'text': 'Plain card', 'start_word': 2, 'end_word': 4}]}), user)
+ 
+     def hook_draft(provider, system, user, cleanup='delete-after-read'):
+         calls.append(('hooks', provider))
+@@ -119,7 +136,7 @@
+     result = SC.complete_edition_cards(bundle, 'keep')
+     assert calls == [('cards', 'chatgpt-web')]
+     saved = json.loads((folder / 'production' / 'speech_cards.json').read_text(encoding='utf-8'))
+-    assert saved['educational'] is True and saved['series']['title'] == 'Calm steps'
++    assert saved['educational'] is True and saved['series']['title'] == NATIVE_COPY['hi']['Calm steps']
+     assert result['cards'] and result['cards'][0]['kind'] == 'takeaway'
+ 
+ 
+@@ -130,7 +147,7 @@
+     bundle = _raw_bundle(folder, audio, words_path, 'or', text_cards=True, educational=False)
+     result = SC.complete_edition_cards(bundle, 'keep')
+     assert calls == [('plain-cards', None)]
+-    assert result['cards'][0]['text'] == 'Plain card'
++    assert result['cards'][0]['text'] == NATIVE_COPY['or']['Plain card']
+ 
+ 
+ @needs_ffmpeg
+@@ -296,11 +313,14 @@
+ def test_tools_folder_ships_only_the_current_updater():
+     # A release folder (the zip carries RELEASE_MANIFEST.json) ships only the current updater. An installed copy keeps
+     # the updaters it already had, because updates never delete files, so only the current one is required there.
++    version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
++    major, _minor, patch = (int(x) for x in version.split('.'))
++    current = f'update_v{major}{patch - 1}_to_v{major}{patch}.py'  # 7.0.78 -> update_v777_to_v778.py
+     updaters = sorted(p.name for p in (ROOT / 'tools').glob('update_v*.py'))
+-    assert 'update_v776_to_v777.py' in updaters
++    assert current in updaters
+     manifest = ROOT / 'RELEASE_MANIFEST.json'
+-    if manifest.is_file() and json.loads(manifest.read_text(encoding='utf-8'))['version'] == (ROOT / 'VERSION').read_text(encoding='utf-8').strip():
+-        assert updaters == ['update_v776_to_v777.py']
++    if manifest.is_file() and json.loads(manifest.read_text(encoding='utf-8'))['version'] == version:
++        assert updaters == [current]
+ 
+ 
+ # ---------- FFmpeg: the edition video shows what the job chose ----------
+diff -ruN a/tests/test_v778_odia_fixes.py b/tests/test_v778_odia_fixes.py
+--- /dev/null
++++ b/tests/test_v778_odia_fixes.py
+@@ -0,0 +1,227 @@
++"""v7.0.78: Odia text cards, Odia caption timing and Odia narration direction.
++
++* Caption timing: when no provider returns word timings (Odia has none), script
++  words are placed inside the measured voiced spans of the narration, so pauses
++  stay at their real positions instead of the words drifting later.  Timings
++  cached by 7.0.77 ("script-estimated") are recomputed once.
++* Text cards: the drafter is told the edition language by name; Odia and Hindi
++  copy that is not in the edition's script is retried once and never shipped.
++* Narration: the Gemini TTS request names Odia or Hindi explicitly.
++
++Offline tests use fake drafters and a fake HTTP response.  The timing test makes
++real WAV audio and decodes it with the bundled FFmpeg when one is available.
++"""
++import array
++import json
++import math
++import sys
++import wave
++from pathlib import Path
++
++import pytest
++
++from engine import captions as C
++from engine import speech_cards as SC
++from engine.audio import tts as TTS
++from engine.audio.tts import _ffmpeg_bin
++
++needs_ffmpeg = pytest.mark.skipif(_ffmpeg_bin() is None, reason='FFmpeg decoder required')
++
++ODIA_CARD = 'ଗଭୀର ଶ୍ୱାସ ନିଅନ୍ତୁ'
++ENGLISH_CARD = 'Breathe slowly'
++WORDS = [{'word': f'w{i}', 'start': round(i * .1, 3), 'end': round(i * .1 + .08, 3)} for i in range(160)]
++
++
++def _cards(text):
++    return json.dumps({'cards': [{'kind': 'takeaway', 'text': text, 'start_word': 140, 'end_word': 142}],
++                       'series': None})
++
++
++def _audio(path: Path, pattern):
++    """Write a mono 16 kHz WAV: pattern is [(seconds, voiced_bool), ...]."""
++    samples = array.array('h')
++    for seconds, voiced in pattern:
++        n = int(round(seconds * 16000))
++        for i in range(n):
++            samples.append(int(0.3 * 32767 * math.sin(2 * math.pi * 220 * i / 16000)) if voiced else 0)
++    with wave.open(str(path), 'wb') as w:
++        w.setnchannels(1)
++        w.setsampwidth(2)
++        w.setframerate(16000)
++        w.writeframes(samples.tobytes())
++    return path
++
++
++def _phrase_audio(path: Path):
++    """Four phrases of five words, 0.06 s apart, with 0.9 s pauses between phrases.
++
++    Word length drives word duration (0.10 s + 0.035 s per character), like real speech.
++    """
++    pattern, truth, t = [], [], 0.0
++    for phrase in range(4):
++        for word in range(5):
++            index = phrase * 5 + word
++            seconds = 0.10 + 0.035 * len(f'word{index}')
++            truth.append(t)
++            pattern.append((seconds, True))
++            t += seconds
++            if word < 4:
++                pattern.append((0.06, False))
++                t += 0.06
++        if phrase < 3:
++            pattern.append((0.9, False))
++            t += 0.9
++    _audio(path, pattern)
++    return truth
++
++
++SCRIPT = ' '.join(f'word{i}' + ('.' if (i + 1) % 5 == 0 else '') for i in range(20))
++
++
++@needs_ffmpeg
++def test_voiced_spans_keep_script_words_in_step_with_pauses(tmp_path):
++    audio = tmp_path / 'narration.wav'
++    truth = _phrase_audio(audio)
++    spans = C.speech_spans(str(audio))
++    assert len(spans) >= 4, spans
++    duration = truth[-1] + 0.30 + 0.0
++    placed = C.align_words_to_script(SCRIPT, [], duration, spans=spans)
++    assert [w['word'] for w in placed] == SCRIPT.split()
++    starts = [w['start'] for w in placed]
++    worst = max(abs(a - b) for a, b in zip(starts, truth))
++    assert worst < 0.2, f'word start drifted {worst:.2f}s'
++    # The 7.0.77 full-length spread drifts well past that on the same audio.
++    spread = [w['start'] for w in C.align_words_to_script(SCRIPT, [], duration)]
++    assert max(abs(a - b) for a, b in zip(spread, truth)) > 0.5
++
++
++def test_spans_schedule_stays_inside_speech():
++    spans = [(0.0, 1.0), (2.0, 3.0)]
++    placed = C._spans_schedule([1, 1, 1, 1], spans)
++    for a, b in placed:
++        inside = any(s - 1e-9 <= a and b <= e + 1e-9 for s, e in spans)
++        assert inside, (a, b)
++    assert placed[0][0] == pytest.approx(0.0)
++    assert placed[-1][1] == pytest.approx(3.0)
++
++
++@needs_ffmpeg
++def test_stale_estimated_cache_is_recomputed_and_provider_cache_is_kept(tmp_path, monkeypatch):
++    monkeypatch.delenv('GROQ_API_KEY', raising=False)
++    audio = tmp_path / 'narration.wav'
++    _phrase_audio(audio)
++    cache = Path(str(audio) + '.words.json')
++    meta = Path(str(audio) + '.words.meta.json')
++    cache.write_text(json.dumps([{'word': 'stale', 'start': 0.0, 'end': 9.0}]), encoding='utf-8')
++    meta.write_text(json.dumps({'engine': 'script-estimated', 'script_aligned': True}), encoding='utf-8')
++
++    def no_local(*a, **k):
++        raise RuntimeError('no local ASR for this language')
++
++    monkeypatch.setattr(C, '_local_word_timestamps', no_local)
++    words = C.get_word_timestamps(str(audio), provider='auto', script_text=SCRIPT, language='or')
++    assert [w['word'] for w in words] == SCRIPT.split()
++    assert json.loads(meta.read_text(encoding='utf-8'))['engine'] == 'script-estimated+voiced-spans'
++
++    # Timings from a real provider are never recomputed.
++    cache.write_text(json.dumps([{'word': 'word0', 'start': 0.1, 'end': 0.4}]), encoding='utf-8')
++    meta.write_text(json.dumps({'engine': 'faster-whisper:small', 'script_aligned': True}), encoding='utf-8')
++    called = []
++    monkeypatch.setattr(C, '_local_word_timestamps', lambda *a, **k: called.append(1) or [])
++    kept = C.get_word_timestamps(str(audio), provider='auto', script_text=SCRIPT, language='or')
++    assert called == []
++    assert kept[0]['start'] == pytest.approx(0.1, abs=0.01)
++
++
++def test_odia_draft_is_retried_once_and_the_odia_copy_is_kept(tmp_path, monkeypatch):
++    import engine.providers.gemini_web as GW
++    calls = []
++    replies = [_cards(ENGLISH_CARD), _cards(ODIA_CARD)]
++
++    def fake(system, user, cleanup='delete-after-read'):
++        calls.append(user)
++        return replies[len(calls) - 1]
++
++    monkeypatch.setattr(GW, 'gemini_web_generate', fake)
++    audio = tmp_path / 'narration.mp3'
++    audio.write_bytes(b'x' * 64)
++    result = SC.prepare(tmp_path, audio, WORDS, 'ନମସ୍କାର', 16.0, 'or')
++    assert len(calls) == 2
++    assert 'Odia' in calls[0] and 'Correction' in calls[1]
++    assert [c['text'] for c in result['cards']] == [ODIA_CARD]
++
++
++def test_odia_copy_that_stays_english_is_refused(tmp_path, monkeypatch):
++    import engine.providers.gemini_web as GW
++    monkeypatch.setattr(GW, 'gemini_web_generate', lambda *a, **k: _cards(ENGLISH_CARD))
++    audio = tmp_path / 'narration.mp3'
++    audio.write_bytes(b'x' * 64)
++    with pytest.raises(ValueError, match='not in Odia'):
++        SC.prepare(tmp_path, audio, WORDS, 'ନମସ୍କାର', 16.0, 'or')
++    assert not (tmp_path / 'production' / 'speech_cards.json').exists()
++
++
++def test_english_cards_are_not_language_checked(tmp_path, monkeypatch):
++    import engine.providers.gemini_web as GW
++    calls = []
++    monkeypatch.setattr(GW, 'gemini_web_generate', lambda *a, **k: calls.append(1) or _cards(ENGLISH_CARD))
++    audio = tmp_path / 'narration.mp3'
++    audio.write_bytes(b'x' * 64)
++    result = SC.prepare(tmp_path, audio, WORDS, 'Hello there', 16.0, 'en')
++    assert len(calls) == 1
++    assert result['cards'][0]['text'] == ENGLISH_CARD
++
++
++@pytest.mark.parametrize('language,name', [('or', 'Odia'), ('hi', 'Hindi')])
++def test_gemini_tts_names_the_spoken_language(monkeypatch, tmp_path, language, name):
++    import requests
++    seen = {}
++
++    class Resp:
++        status_code = 500
++        text = 'stop after capture'
++
++    def capture(url, headers=None, json=None, timeout=None):
++        seen['style'] = json['input'][0]['content'][0]['annotations'][0]['style']
++        return Resp()
++
++    monkeypatch.setitem(sys.modules, 'google', None)  # force the REST path
++    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
++    monkeypatch.setattr(requests, 'post', capture)
++    with pytest.raises(RuntimeError):
++        TTS.GeminiTTSProvider().synth('text', 'voice', str(tmp_path / 'out.mp3'), language=language, style='')
++    assert name in seen['style']
++    assert 'Do not translate' in seen['style']
++    assert 'documentary narrator' in seen['style']
++
++
++def test_implausible_asr_timings_repair_without_a_name_error():
++    """7.0.77 raised NameError here (audio_path/detail undefined) instead of repairing the timings."""
++    script = ' '.join(f'w{i}' for i in range(30)) + '.'
++    asr = [{'word': 'w0', 'start': 0.0, 'end': 0.2}, {'word': 'w10', 'start': 40.0, 'end': 40.2},
++           {'word': 'w20', 'start': 80.0, 'end': 80.2}]
++    out = C.align_words_to_script(script, asr, 90.0)
++    assert [w['word'] for w in out] == script.split()
++    assert out[-1]['end'] > 85.0
++
++
++@pytest.mark.parametrize('font_file,sample', [
++    ('NotoSansOriya-Variable.ttf', 'ଶାନ୍ତ ଗଭୀର ଉପାୟ'),
++    ('NotoSansDevanagari-Variable.ttf', 'नमस्ते दुनिया'),
++])
++def test_indic_font_glyphs_sit_inside_the_ascender_line(font_file, sample):
++    """7.0.77 drew Indic glyphs one ascender too high and gave Pillow no metrics,
++    so Odia/Hindi titles overlapped the lines beneath them."""
++    from PIL import Image, ImageDraw
++    from engine.render.indic_font import IndicFont
++    path = Path(__file__).resolve().parents[1] / 'assets' / 'fonts' / font_file
++    face = IndicFont(path, 66, bold=True)
++    ascent, descent = face.getmetrics()
++    assert ascent > 0 and descent > 0
++    img = Image.new('L', (900, 200), 0)
++    ImageDraw.Draw(img).text((10, 40), sample, font=face, fill=255)
++    rows = [y for y in range(img.height) if img.crop((0, y, img.width, y + 1)).getbbox()]
++    assert rows, 'no ink drawn'
++    top, bottom = rows[0] - 40, rows[-1] - 40
++    assert top >= 0, f'glyph ink rises {-top}px above the ascender line'
++    assert bottom <= ascent + descent, 'glyph ink falls below the font box'
+diff -ruN a/tools/update_v776_to_v777.py b/tools/update_v776_to_v777.py
+--- a/tools/update_v776_to_v777.py
++++ /dev/null
+@@ -1,169 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.77 update (language editions follow the job's text-card, hook and educational choices) to a v7.0.76 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.77 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.77/tools/update_v776_to_v777.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.77/tools/update_v776_to_v777.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'EDITION_CARDS_HOOKS_V7_0_77.md',
+-    'VERSION',
+-    'app.py',
+-    'engine/factory.py',
+-    'engine/finishing_studio.py',
+-    'engine/language_editions.py',
+-    'engine/render/hook_cards.py',
+-    'engine/speech_cards.py',
+-    'tests/test_v777_edition_cards_hooks.py',
+-    'tools/update_v776_to_v777.py',
+-]
+-# Files as they exist in 7.0.76: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['61a4b881caa988583017f1f49ea24f973699fd16da4d3d817db18ca27512ef0f'],
+-    'app.py': ['92056026c9c84acaae5dd3a166fa63742ec802ec48b5aec0646626c4b624937e'],
+-    'engine/factory.py': ['68bc023b211a7932b3fb33e5693308444519e53208f46004f58a87a72d258c8a'],
+-    'engine/finishing_studio.py': ['46210950ba6a49ce6f4ea9d60228f7ecf71152dd50ce9fa3e002da43acc7f648'],
+-    'engine/language_editions.py': ['31c503e2c23569e32a6ac26a07bd935a59c38159d7506609a620b1a98cf968df'],
+-    'engine/speech_cards.py': ['4b827c7d2faf06ae337096c570dcea465f80e02c5c9d4314b60aa9e913b01ce7'],
+-    'engine/render/hook_cards.py': ['eaab91da7b814174bb083ded3ba06edbfb4e29def24a6e5f051fc699395b26c8'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.76', '7.0.77')  # 7.0.77 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.76 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.76':
+-            break
+-    return ('This update requires an installed 7.0.76 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.77 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.77 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.77 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.76-to-v7.0.77-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.77. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN a/tools/update_v777_to_v778.py b/tools/update_v777_to_v778.py
+--- /dev/null
++++ b/tools/update_v777_to_v778.py
+@@ -0,0 +1,168 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.78 update (Odia text cards, Odia caption timing and Odia narration direction) to a v7.0.77 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.78 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.78/tools/update_v777_to_v778.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.78/tools/update_v777_to_v778.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'ODIA_FIXES_V7_0_78.md',
++    'VERSION',
++    'engine/audio/tts.py',
++    'engine/captions.py',
++    'engine/render/indic_font.py',
++    'engine/speech_cards.py',
++    'tests/test_v777_edition_cards_hooks.py',
++    'tests/test_v778_odia_fixes.py',
++    'tools/update_v777_to_v778.py',
++]
++# Files as they exist in 7.0.77: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['73e1e54318c8b5766d7d9914eeeac90045cdc7c13f1aef5422089d75bd3422f0'],
++    'engine/audio/tts.py': ['290e134984eb5da398b4c6e10b2037bc72c8a166f8e5eaccc6d2bd85975cd5c2'],
++    'engine/captions.py': ['708f654e7a198e14ffdaca636d69919399bb0cc982ef5e25e8f57cd4f72978fc'],
++    'engine/render/indic_font.py': ['21d42b33b26cdfbbb7b642cc12207a5596cc90917a151ac7c322b504a1f51202'],
++    'engine/speech_cards.py': ['b948a77d66bf32e495b3221c263b01d0a65067cd16926861c9087f3a90caf57f'],
++    'tests/test_v777_edition_cards_hooks.py': ['aee735a170ece5236ba670f756e016f9ca8c477be87eff228dfed60860853ca0'],
++}
++ACCEPTED_INSTALLS = ('7.0.77', '7.0.78')  # 7.0.78 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.77 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.77':
++            break
++    return ('This update requires an installed 7.0.77 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.78 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.78 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.78 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.77-to-v7.0.78-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.78. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

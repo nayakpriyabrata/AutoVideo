@@ -1,0 +1,928 @@
+diff --git a/.env.example b/.env.example
+--- a/.env.example
++++ b/.env.example
+@@ -9,6 +9,11 @@
+ GEMINI_SCRIPT_MODEL=
+ GEMINI_CLIP_MODEL=
+ GEMINI_TTS_VOICE=Kore
++# 7.0.82: narration part size for Gemini TTS, 500-6000 characters (default 2400). Smaller parts mean more requests.
++# GEMINI_TTS_CHUNK_CHARS=2400
++# Optional extra key profiles for per-language TTS routes in Create step 4. Each key must belong to a
++# Google project you own and pay for. Separate free-tier projects do not add daily quota.
++# GEMINI_API_KEY_PAID=
+ 
+ # ---------- Groq: script fallback + excellent caption timing ----------
+ GROQ_API_KEY=
+diff --git a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json
++++ b/RELEASE_MANIFEST.json
+@@ -1,11 +1,11 @@
+ {
+-  "version": "7.0.81",
+-  "built_at": "2026-10-22T11:55:45+00:00",
++  "version": "7.0.82",
++  "built_at": "2026-10-23T10:17:22+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+-      "bytes": 2289,
+-      "sha256": "a75f8f9d191e336e02eed524151bb8308b4a2134add5f3ff7b315ecef1e39a01"
++      "bytes": 2650,
++      "sha256": "ccd5da6bd2c281123062887df7ae7cda72c4c0dc76b44c9d22daecb3f6e741fc"
+     },
+     {
+       "path": ".github/workflows/tests.yml",
+@@ -458,6 +458,11 @@
+       "sha256": "9a51d0fa79a5ca79618794f6fb140c27c0fc1b24e8a7ad92f6d5b004eb3d706a"
+     },
+     {
++      "path": "TTS_ROUTES_V7_0_82.md",
++      "bytes": 2827,
++      "sha256": "05c45413f6238aa1bb2f56e89dc65761bb696ec9fecf3550a0b17ebd33537ed6"
++    },
++    {
+       "path": "UI_UX_AUDIT.md",
+       "bytes": 8652,
+       "sha256": "238e55dd10f4f1d2003a158fe666d649d42108dc61741948c72e7ca5c977016e"
+@@ -880,7 +885,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "a09b797eab63a0df0d5dec2bcb3b441a394ba9878d7f76c0a4a37c9dcf862126"
++      "sha256": "1c0503da2dceefde568875c8c39d620d235ff7dd72fdc71f2bd3be685131a583"
+     },
+     {
+       "path": "VIDEO_DOWNLOAD_RECOVERY_V7_0_44.md",
+@@ -919,8 +924,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 220380,
+-      "sha256": "3c5f6edfa061ae4769cac1a9c623bbca5025b6d6f7d9bad1dd474b76430dd6b1"
++      "bytes": 221921,
++      "sha256": "08d46c0dc9971d3d6b1bfa77b30a38c31cb7cfa5aeadd2852246c9d814c3e079"
+     },
+     {
+       "path": "architecture.md",
+@@ -1184,8 +1189,8 @@
+     },
+     {
+       "path": "engine/audio/tts.py",
+-      "bytes": 31626,
+-      "sha256": "ec78ca99d1dd3b3ffefca749128481f86eda46c598d3f03dc2226b8fb341890b"
++      "bytes": 34346,
++      "sha256": "0f4d1bf11865ce5166e24ba609429f2535844e7062e4e1a8f01425a2145fcf17"
+     },
+     {
+       "path": "engine/auto_resume.py",
+@@ -1304,8 +1309,8 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 283021,
+-      "sha256": "e25d498dae2f88c59f4ff5b6a51ba42ab31028095fbc1619d791877a7f4dd218"
++      "bytes": 283165,
++      "sha256": "6ef541ca30b232b9bac59454258a9053c61f686003baf8f1b1c87e3352008d5c"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+@@ -1449,8 +1454,8 @@
+     },
+     {
+       "path": "engine/languages.py",
+-      "bytes": 2269,
+-      "sha256": "a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c"
++      "bytes": 2595,
++      "sha256": "28179d59a110554a44fc5d953a5ae837fef8cb0829f954bf6391a688712cbee2"
+     },
+     {
+       "path": "engine/local_edit_ui.py",
+@@ -2823,6 +2828,11 @@
+       "sha256": "89156341220c0700b3f4c97584245f273e774aa9c3737cdb88a085aef1176aaf"
+     },
+     {
++      "path": "tests/test_v782_tts_routes.py",
++      "bytes": 7024,
++      "sha256": "333eac4295e895a25ce16f8d1d3aa0a19f85bdeaa2546a7675bc6d64fc927823"
++    },
++    {
+       "path": "tests/test_web_media_helper.py",
+       "bytes": 4375,
+       "sha256": "2f79d4e367d243ed30c9725b766958e74e8d2b8e93520e61c44c13f61a0997f6"
+@@ -2913,9 +2923,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v780_to_v781.py",
+-      "bytes": 7634,
+-      "sha256": "08f942e9a905593bff8648e1a6ce526b4f768387a20f595970e9adc58ccb6aa8"
++      "path": "tools/update_v781_to_v782.py",
++      "bytes": 8137,
++      "sha256": "2a822fa76f15360f8472ce8ce3bb8195d127c3276d18688b1600519c6b0adff0"
+     },
+     {
+       "path": "topics.csv",
+diff --git a/TTS_ROUTES_V7_0_82.md b/TTS_ROUTES_V7_0_82.md
+--- /dev/null
++++ b/TTS_ROUTES_V7_0_82.md
+@@ -0,0 +1,49 @@
++# Gemini TTS routes and part size (v7.0.82)
++
++## Why each language used three requests
++
++- **7.0.67 to 7.0.79:** Gemini received each whole narration in one request. A long Odia narration timed out at
++  180 seconds in the 7.0.79 run, so 7.0.80 split narration into 1,200-character parts. One request was sent per part.
++- **7.0.82:** the default part size is 2,400 characters, about 2 to 3 minutes of speech. A narration of
++  about 5,000 characters is now 2 or 3 requests, not 4 or 5. Google's documented input limit is 8,192 tokens per request.
++- **Tuning:** `GEMINI_TTS_CHUNK_CHARS` in `.env` sets the size, from 500 to 6,000. Smaller parts mean more requests.
++
++## Per-language routes and key profiles
++
++- Create, step 4: after the batch TTS provider, each selected language has a **Gemini route** dropdown.
++  Options are `Batch setting above`, `Flash · default key`, `Flash-Lite · default key`, and the same two for
++  each key profile found in `.env`.
++- Each Gemini model has its own daily limit. On the AI Studio rate-limit page for this project, Gemini 3.8 Flash TTS
++  and Gemini 3.8 Flash-Lite TTS both show 10 requests per day on the free tier. A language routed to
++  Flash-Lite does not use up Flash's allowance.
++- `.env`:
++  - `GEMINI_API_KEY` is the profile `default`.
++  - `GEMINI_API_KEY_<NAME>` adds the profile `<name>`, for example `GEMINI_API_KEY_PAID`.
++  - Use keys only for Google projects you own and pay for. Two free-tier projects do not add their daily
++    limits together; the limit is per project and per model. Keys are never shown in the UI.
++- Routes are stored as `gemini`, `gemini-lite`, `gemini@<profile>` or `gemini-lite@<profile>`. A batch with
++  per-language routes is stored as `{"default": ..., "<language>": ...}`. The batch key and the job settings
++  include this value, so changing a route starts a new batch.
++- A profile on a non-Gemini route is refused. A missing profile fails before any request is sent.
++- Daily-limit errors name the key profile and the number of parts already saved.
++
++## Suggested free-tier plan (not verified live)
++
++With 2,400-character parts, a 5,000-character narration needs about 2 or 3 requests. Three languages on one
++route can exceed 10 requests per day. A split that fits without billing:
++
++- English and Hindi on `Flash · default key`.
++- Odia on `Flash-Lite · default key`.
++
++Check Flash-Lite Odia quality on a short sample before relying on it. The Odia narration needs review either way.
++
++## Not verified
++
++- Live timing of 2,400-character requests against the 240-second read timeout.
++- Odia quality on Flash-Lite.
++- Behaviour of paid keys: no paid key was tested here.
++
++## Not included
++
++- Pooling several free-tier accounts to multiply the daily limit. This is quota circumvention.
++- A request counter that warns before a batch starts. This is the next step.
+diff --git a/VERSION b/VERSION
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.81
++7.0.82
+diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -694,6 +694,24 @@
+         st.caption('First review the exact narration for every selected edition. Then one action prepares every voice and word timing before Gemini receives any text-card request. No visual generation starts here.')
+         tts_provider = st.selectbox('TTS provider for the selected language batch', ['auto','gemini','gemini-lite','groq','elevenlabs','kokoro','edge','gtts'], key='studio-batch-tts', disabled=not studio_voice_on)
+         st.write('Edition languages: ' + ', '.join(LANGUAGES[x].label for x in batch_languages))
++        # 7.0.82: each language may use its own Gemini route (model and .env key profile). Each route keeps
++        # its own daily quota, so Flash-Lite and a second billed profile can carry a language on a busy day.
++        from engine.audio.tts import gemini_key_profiles
++        route_choices = {'Batch setting above': ''}
++        for profile_name in gemini_key_profiles():
++            suffix = '' if profile_name == 'default' else '@' + profile_name
++            key_label = 'default key' if profile_name == 'default' else profile_name + ' key'
++            route_choices['Flash · ' + key_label] = 'gemini' + suffix
++            route_choices['Flash-Lite · ' + key_label] = 'gemini-lite' + suffix
++        language_routes = {}
++        if studio_voice_on and len(route_choices) > 1:
++            st.caption('Gemini route per language (optional). Key profiles come from .env: GEMINI_API_KEY is the default, and GEMINI_API_KEY_<NAME> adds a profile. Use keys for projects you own and pay for; separate free-tier projects do not add daily quota.')
++            route_columns = st.columns(len(batch_languages))
++            for column, lang in zip(route_columns, batch_languages):
++                chosen = column.selectbox(LANGUAGES[lang].label + ' TTS route', list(route_choices), key='studio-route-' + lang)
++                if route_choices[chosen]:
++                    language_routes[lang] = route_choices[chosen]
++        tts_provider_value = {'default': tts_provider, **language_routes} if language_routes else tts_provider
+         speech_cards_enabled = st.checkbox('Use speech-timed Gemini cards in this production', value=False, key='studio-speech-cards', disabled=not studio_voice_on)
+         hooks_enabled = st.checkbox('Add Gemini Web hooks where the narration needs them', value=False, key='studio-hooks-enabled', disabled=not studio_voice_on,
+             help='Gemini Web drafts up to 6 short hook lines after the narration words and text cards are ready. Each is a pop pill near the top and never covers a text card. Needs a voiceover.')
+@@ -712,7 +730,7 @@
+                 from engine.finishing_studio import shared_root
+                 batch_script = load_plan(approved_plan_path).get('narration','').strip()
+                 localization_path = shared_root()/'speech_preparation'/'scripts'/localization_key(batch_script,language_code,batch_languages)
+-                batch_path = shared_root()/'speech_preparation'/batch_key(batch_script,language_code,batch_languages,tts_provider,narration_input_path.strip())
++                batch_path = shared_root()/'speech_preparation'/batch_key(batch_script,language_code,batch_languages,tts_provider_value,narration_input_path.strip())
+             except Exception as error:st.error(str(error))
+         if st.button('Prepare selected language scripts for review · no TTS',key='studio-localize-scripts',disabled=not(studio_voice_on and batch_script and localization_path)):
+             try:
+@@ -754,7 +772,7 @@
+                     bar.progress(max(0,min(100,int(pct))));message.write(label+(' · '+detail if detail else ''))
+                 with production_slot(batch_path):
+                     from engine.render.educational_cards import is_educational
+-                    prepare_batch(batch_path,batch_script,language_code,batch_languages,provider=tts_provider,
++                    prepare_batch(batch_path,batch_script,language_code,batch_languages,provider=tts_provider_value,
+                         audio_path=narration_input_path.strip() or None,cleanup=draft_cleanup,progress=batch_progress,localized_scripts=reviewed_language_scripts,
+                         text_cards=bool(st.session_state.get('studio-cards-'+studio_audio_mode, studio_voice_on)),
+                         hooks=bool(studio_voice_on and st.session_state.get('studio-hooks-enabled', False)),
+@@ -903,7 +921,7 @@
+                         "theme": theme, "duration": int(duration), "profile": profile,
+                         "language":language_code, "destination":None if destination=='automatic' else destination,
+                         "approved_plan_path":approved_plan_path.strip(), "narration_input_path":narration_input_path.strip(),
+-                        "script_provider": script_provider, "tts_provider": tts_provider,
++                        "script_provider": script_provider, "tts_provider": tts_provider_value,
+                         "render_quality": render_quality, "flow_image_workers": flow_workers,
+                         "frame_source": frame_source, "flow_approval": flow_approval, "flow_approval_cards": int(flow_approval_cards),
+                         "flow_video_mode": flow_video_mode,
+diff --git a/engine/audio/tts.py b/engine/audio/tts.py
+--- a/engine/audio/tts.py
++++ b/engine/audio/tts.py
+@@ -112,20 +112,76 @@
+ 
+ 
+ GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+-# 7.0.80: one request per sentence group. A 330-second Odia narration in one request timed out at 180 s
+-# (the 7.0.79 run). Each part is cached on disk, so a retry redoes only the part that failed.
+-GEMINI_TTS_CHUNK_CHARS = 1200
++# 7.0.82: 2400 characters (about 2-3 minutes of speech) per request. 7.0.80 used 1200, which made three
++# requests per language. Google accepts 8,192 input tokens per request. Set GEMINI_TTS_CHUNK_CHARS in
++# .env to tune it (500-6000). Each part is cached on disk, so a retry redoes only the part that failed.
++GEMINI_TTS_CHUNK_CHARS = 2400
+ GEMINI_TTS_TIMEOUT = (30, 240)        # (connect, read) seconds per part
+ GEMINI_TTS_ATTEMPTS = 3
+ GEMINI_TTS_RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+ GEMINI_TTS_MINUTE_WAIT = 65          # seconds; a per-minute 429 clears after one window
+-
+-
+-def split_speech_text(text: str, limit: int = GEMINI_TTS_CHUNK_CHARS) -> list[str]:
++GEMINI_PROFILE_ENV = re.compile(r"^GEMINI_API_KEY_([A-Z0-9_]+)$")
++
++
++def gemini_chunk_chars() -> int:
++    """Narration part size in characters, read from .env at call time (7.0.82)."""
++    try:
++        value = int(str(os.getenv("GEMINI_TTS_CHUNK_CHARS", "")).strip() or GEMINI_TTS_CHUNK_CHARS)
++    except ValueError:
++        value = GEMINI_TTS_CHUNK_CHARS
++    return min(max(value, 500), 6000)
++
++
++def gemini_key_profiles() -> list[str]:
++    """Key profiles configured in .env (7.0.82). Names only; key values are never returned.
++
++    ``GEMINI_API_KEY`` is the profile ``default``. ``GEMINI_API_KEY_<NAME>`` is the profile ``<name>``.
++    Every profile should belong to a Google project you own and pay for. Two free-tier projects do not
++    add quota together; the daily limit is per project and per model.
++    """
++    names = []
++    if str(os.getenv("GEMINI_API_KEY", "")).strip():
++        names.append("default")
++    for variable, value in os.environ.items():
++        match = GEMINI_PROFILE_ENV.match(variable)
++        if match and str(value).strip():
++            names.append(match.group(1).lower())
++    return names
++
++
++def gemini_api_key(profile: str = "default") -> str:
++    profile = str(profile or "default").strip().lower()
++    variable = "GEMINI_API_KEY" if profile == "default" else f"GEMINI_API_KEY_{profile.upper()}"
++    key = str(os.getenv(variable, "")).strip()
++    if not key:
++        raise RuntimeError(
++            f"{variable} is not configured. Add it to .env (key profile '{profile}'), or choose another "
++            "Gemini key profile. Run 'python3 cli.py v3 env-doctor' to check which .env file was loaded.")
++    return key
++
++
++def split_route(provider) -> tuple[str, str]:
++    """'gemini@paid' -> ('gemini', 'paid'); 'gemini' -> ('gemini', ''); None -> ('auto', '')."""
++    text = str(provider or "auto").strip().lower() or "auto"
++    base, _, profile = text.partition("@")
++    return base.strip() or "auto", profile.strip()
++
++
++def provider_for_language(provider, language: str) -> str:
++    """A batch provider is a string, or a dict such as {'default': 'auto', 'or': 'gemini-lite@paid'} (7.0.82)."""
++    if isinstance(provider, dict):
++        from ..languages import language_pack
++        code = language_pack(language).code
++        return str(provider.get(code) or provider.get("default") or "auto")
++    return str(provider or "auto")
++
++
++def split_speech_text(text: str, limit=None) -> list[str]:
+     """Split narration into parts of at most ``limit`` characters, on sentence ends where possible.
+ 
+     Sentence ends include the Devanagari/Odia danda (।) and the double danda (॥).
+     """
++    limit = int(limit or gemini_chunk_chars())
+     sentences = [s.strip() for s in re.split(r"(?<=[.!?।॥])\s+", str(text or "").strip()) if s.strip()]
+     parts: list[str] = []
+     current = ""
+@@ -163,8 +219,9 @@
+ class GeminiTTSProvider:
+     name = "gemini"
+ 
+-    def __init__(self, lite: bool = False):
++    def __init__(self, lite: bool = False, profile: str = ""):
+         self.lite = lite
++        self.profile = str(profile or "default").strip().lower()
+ 
+     @staticmethod
+     def _audio_data(obj):
+@@ -273,11 +330,7 @@
+             pass
+ 
+     def synth(self, text: str, voice: str, out: str, rate: str = "+0%", **kwargs) -> dict:
+-        key = os.getenv("GEMINI_API_KEY", "")
+-        if not key:
+-            raise RuntimeError(
+-                "GEMINI_API_KEY is not configured. Run 'python3 cli.py v3 env-doctor' "
+-                "to verify which .env file and provider variables AutoVideoAI detected.")
++        key = gemini_api_key(self.profile)
+         model = kwargs.get("model") or (
+             "gemini-3.8-flash-lite-tts" if self.lite else "gemini-3.8-flash-tts")
+         provider_voice = kwargs.get("provider_voice") or os.getenv("GEMINI_TTS_VOICE", "Kore")
+@@ -307,8 +360,8 @@
+                     raw = self._speak_part(piece, key, model, provider_voice, style)
+                 except GeminiQuotaExceeded as error:
+                     raise GeminiQuotaExceeded(
+-                        f"{error} {index} of {len(parts_text)} narration parts are saved and will be reused; "
+-                        "the next run continues from part " + str(index + 1) + ".") from error
++                        f"{error} Key profile '{self.profile}'. {index} of {len(parts_text)} narration parts "
++                        "are saved and will be reused; the next run continues from part " + str(index + 1) + ".") from error
+                 self._part_to_mp3(raw, part)
+             part_files.append(part)
+         _concat_mp3(part_files, out)
+@@ -528,9 +581,13 @@
+     option has failed. Explicit provider selection is strict except ``edge``,
+     which retains a final gTTS compatibility fallback.
+     """
+-    p = str(provider or "auto").lower()
+     from ..languages import language_pack, check_tts_language
+     language = language_pack(language).code
++    # 7.0.82: a route may name a Gemini key profile, e.g. 'gemini-lite@paid'. A batch may pass a dict of routes.
++    route = provider_for_language(provider, language).strip().lower()
++    p, profile = split_route(route)
++    if profile and p not in ("gemini", "gemini-lite"):
++        raise RuntimeError(f"Key profile '{profile}' applies only to Gemini TTS routes, not '{p}'")
+     check_tts_language(p, language, voice)
+     if language == 'or' and p == 'auto':
+         if not os.getenv('GEMINI_API_KEY'):
+@@ -539,8 +596,8 @@
+     kwargs = {"language": language, "style": style, "model": model or None,
+               "provider_voice": provider_voice or None}
+     providers = {
+-        "gemini": GeminiTTSProvider(False),
+-        "gemini-lite": GeminiTTSProvider(True),
++        "gemini": GeminiTTSProvider(False, profile),
++        "gemini-lite": GeminiTTSProvider(True, profile),
+         "elevenlabs": ElevenLabsTTSProvider(),
+         "groq": GroqTTSProvider(),
+         "kokoro": KokoroProvider(),
+@@ -551,7 +608,7 @@
+     }
+     if p != "auto":
+         if p not in providers:
+-            raise RuntimeError(f"Unknown TTS provider: {provider}")
++            raise RuntimeError(f"Unknown TTS provider: {route}")
+         if p == "edge":
+             try:
+                 return providers[p].synth(text, voice, out, rate, **kwargs)
+diff --git a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py
++++ b/engine/factory.py
+@@ -1048,7 +1048,9 @@
+                 turns_path = os.path.join(D['root'], 'speaker_turns.json')
+                 if os.path.isfile(turns_path):
+                     from .cast import synthesize_turns
+-                    return synthesize_turns(json.load(open(turns_path,encoding='utf-8'))['turns'], voice_path, m.language, settings.get('tts_provider','auto'))
++                    from .audio.tts import provider_for_language
++                    return synthesize_turns(json.load(open(turns_path,encoding='utf-8'))['turns'], voice_path, m.language,
++                                            provider_for_language(settings.get('tts_provider','auto'), m.language))
+                 if settings.get('narration_input_path'):
+                     from .audio.tts import _audio_to_mp3, _mp3_len
+                     local_audio = os.path.abspath(os.path.expanduser(settings['narration_input_path']))
+diff --git a/engine/languages.py b/engine/languages.py
+--- a/engine/languages.py
++++ b/engine/languages.py
+@@ -50,6 +50,11 @@
+ 
+ def check_tts_language(provider, language, voice=''):
+     code = language_pack(language).code
++    # 7.0.82: a route may carry a Gemini key profile ('gemini-lite@paid') or be a per-language dict.
++    if isinstance(provider, dict):
++        from .audio.tts import provider_for_language
++        provider = provider_for_language(provider, code)
++    provider = str(provider or '').split('@', 1)[0].strip().lower() or provider
+     if code == 'or' and provider not in ('auto', 'gemini', 'gemini-lite', 'import', 'mock'):
+         raise ValueError('Odia requires a verified Gemini TTS model or an imported native narration; this provider has not been validated for Odia')
+     if code == 'hi' and provider == 'groq':
+diff --git a/tests/test_v782_tts_routes.py b/tests/test_v782_tts_routes.py
+--- /dev/null
++++ b/tests/test_v782_tts_routes.py
+@@ -0,0 +1,156 @@
++"""v7.0.82: Gemini TTS parts default to 2400 characters, and each language route can name a .env key profile.
++
++Keys belong to billed projects the user owns. No network: requests.post and the audio helpers are replaced.
++"""
++import base64
++
++import pytest
++import requests
++
++import engine.audio.tts as TTS
++from engine.languages import check_tts_language
++
++SECRET_DEFAULT = "default-secret-value"
++SECRET_PAID = "paid-secret-value"
++DAILY_BODY = ('{"error":{"message":"Rate limit exceeded for model gemini-3.8-flash-tts (limit: 10 requests per day '
++              'on Free Tier).","status":"RESOURCE_EXHAUSTED"}}')
++
++
++class FakeResponse:
++    def __init__(self, status=200, body=None, text=""):
++        self.status_code = status
++        self._body = body
++        self.text = text
++
++    def json(self):
++        return self._body
++
++
++@pytest.fixture
++def clean_env(monkeypatch):
++    import os
++    for name in list(os.environ):
++        if name == "GEMINI_API_KEY" or name.startswith("GEMINI_API_KEY_") or name == "GEMINI_TTS_CHUNK_CHARS":
++            monkeypatch.delenv(name, raising=False)
++    return monkeypatch
++
++
++@pytest.fixture
++def fake_audio(monkeypatch):
++    """Skip ffmpeg: every part becomes a small placeholder file."""
++    monkeypatch.setattr(TTS.GeminiTTSProvider, "_part_to_mp3",
++                        staticmethod(lambda raw, part: open(part, "wb").write(b"x" * 2048)))
++
++    def concat(parts, out):
++        with open(out, "wb") as handle:
++            for part in parts:
++                handle.write(open(part, "rb").read())
++
++    monkeypatch.setattr(TTS, "_concat_mp3", concat)
++    monkeypatch.setattr(TTS, "_mp3_len", lambda path: 3.0)
++    monkeypatch.setattr(TTS.time, "sleep", lambda seconds: None)
++
++
++@pytest.fixture
++def capture_posts(monkeypatch):
++    calls = []
++
++    def fake_post(url, headers=None, json=None, timeout=None):
++        calls.append({"key": (headers or {}).get("x-goog-api-key"), "model": json["model"]})
++        return FakeResponse(200, {"audio": base64.b64encode(b"\x00\x20" * 6000).decode()})
++
++    monkeypatch.setattr(requests, "post", fake_post)
++    return calls
++
++
++def test_default_part_size_is_2400_and_env_can_tune_it(clean_env):
++    assert TTS.gemini_chunk_chars() == 2400
++    clean_env.setenv("GEMINI_TTS_CHUNK_CHARS", "3000")
++    assert TTS.gemini_chunk_chars() == 3000
++    clean_env.setenv("GEMINI_TTS_CHUNK_CHARS", "100")
++    assert TTS.gemini_chunk_chars() == 500
++    clean_env.setenv("GEMINI_TTS_CHUNK_CHARS", "huge")
++    assert TTS.gemini_chunk_chars() == 2400
++
++
++def test_a_five_thousand_character_narration_is_three_parts_not_five(clean_env):
++    text = " ".join(f"This is sentence number {i} about the daily habit." for i in range(110))
++    assert 4900 <= len(text) <= 5600
++    parts = TTS.split_speech_text(text)
++    assert all(len(part) <= 2400 for part in parts)
++    assert 2 <= len(parts) <= 3
++    assert " ".join(parts) == text
++
++
++def test_profiles_list_names_without_leaking_key_values(clean_env):
++    clean_env.setenv("GEMINI_API_KEY", SECRET_DEFAULT)
++    clean_env.setenv("GEMINI_API_KEY_PAID", SECRET_PAID)
++    clean_env.setenv("GEMINI_API_KEY_EMPTY", "  ")
++    profiles = TTS.gemini_key_profiles()
++    assert profiles == ["default", "paid"]
++    assert SECRET_DEFAULT not in repr(profiles) and SECRET_PAID not in repr(profiles)
++
++
++def test_missing_profile_error_names_the_variable_not_a_value(clean_env):
++    clean_env.setenv("GEMINI_API_KEY", SECRET_DEFAULT)
++    with pytest.raises(RuntimeError, match="GEMINI_API_KEY_OTHER is not configured"):
++        TTS.gemini_api_key("other")
++    assert TTS.gemini_api_key("default") == SECRET_DEFAULT
++
++
++def test_route_parsing_and_per_language_dict(clean_env):
++    assert TTS.split_route("gemini-lite@Paid") == ("gemini-lite", "paid")
++    assert TTS.split_route("gemini") == ("gemini", "")
++    assert TTS.split_route(None) == ("auto", "")
++    routes = {"default": "auto", "or": "gemini-lite@paid"}
++    assert TTS.provider_for_language(routes, "or") == "gemini-lite@paid"
++    assert TTS.provider_for_language(routes, "en") == "auto"
++    assert TTS.provider_for_language("gemini", "hi") == "gemini"
++
++
++def test_check_tts_language_accepts_gemini_profiles_for_odia(clean_env):
++    check_tts_language("gemini-lite@paid", "or")
++    check_tts_language({"default": "auto", "or": "gemini@paid"}, "or")
++    with pytest.raises(ValueError, match="Odia requires"):
++        check_tts_language("edge@paid", "or")
++    with pytest.raises(ValueError, match="Odia requires"):
++        check_tts_language({"default": "auto", "or": "groq"}, "or")
++
++
++def test_each_route_sends_its_own_key_and_model(clean_env, fake_audio, capture_posts, tmp_path):
++    clean_env.setenv("GEMINI_API_KEY", SECRET_DEFAULT)
++    clean_env.setenv("GEMINI_API_KEY_PAID", SECRET_PAID)
++    TTS.synthesize_narration("Short English narration.", "x", str(tmp_path / "en.mp3"), provider="gemini", language="en")
++    TTS.synthesize_narration("ଓଡ଼ିଆ ବାକ୍ୟ ଏଠାରେ ଅଛି।", "gemini-native-odia", str(tmp_path / "or.mp3"),
++                             provider="gemini-lite@paid", language="or")
++    assert capture_posts[0] == {"key": SECRET_DEFAULT, "model": "gemini-3.8-flash-tts"}
++    assert capture_posts[1] == {"key": SECRET_PAID, "model": "gemini-3.8-flash-lite-tts"}
++
++
++def test_dict_routes_send_each_language_to_its_own_route(clean_env, fake_audio, capture_posts, tmp_path):
++    clean_env.setenv("GEMINI_API_KEY", SECRET_DEFAULT)
++    clean_env.setenv("GEMINI_API_KEY_PAID", SECRET_PAID)
++    routes = {"default": "gemini", "or": "gemini-lite@paid"}
++    TTS.synthesize_narration("Hello there.", "x", str(tmp_path / "en.mp3"), provider=routes, language="en")
++    TTS.synthesize_narration("ଓଡ଼ିଆ ବାକ୍ୟ।", "gemini-native-odia", str(tmp_path / "or.mp3"), provider=routes, language="or")
++    assert [call["key"] for call in capture_posts] == [SECRET_DEFAULT, SECRET_PAID]
++    assert [call["model"] for call in capture_posts] == ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
++
++
++def test_profile_on_a_non_gemini_route_is_refused(clean_env, tmp_path):
++    with pytest.raises(RuntimeError, match="applies only to Gemini"):
++        TTS.synthesize_narration("Hello.", "x", str(tmp_path / "a.mp3"), provider="edge@paid", language="en")
++
++
++def test_missing_profile_fails_before_any_request(clean_env, capture_posts, tmp_path):
++    clean_env.setenv("GEMINI_API_KEY", SECRET_DEFAULT)
++    with pytest.raises(RuntimeError, match="GEMINI_API_KEY_PAID is not configured"):
++        TTS.synthesize_narration("Hello.", "x", str(tmp_path / "a.mp3"), provider="gemini@paid", language="en")
++    assert capture_posts == []
++
++
++def test_daily_limit_message_names_the_key_profile(clean_env, monkeypatch, tmp_path):
++    clean_env.setenv("GEMINI_API_KEY_PAID", SECRET_PAID)
++    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(429, {"error": {}}, DAILY_BODY))
++    with pytest.raises(TTS.GeminiQuotaExceeded, match="Key profile 'paid'"):
++        TTS.synthesize_narration("Hello.", "x", str(tmp_path / "a.mp3"), provider="gemini-lite@paid", language="en")
+diff --git a/tools/update_v780_to_v781.py b/tools/update_v780_to_v781.py
+--- a/tools/update_v780_to_v781.py
++++ /dev/null
+@@ -1,164 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.81 update (a daily Gemini TTS limit stops the run at once instead of being retried
+-three times; per-minute limits wait a minute) to a v7.0.80 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.81 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.81/tools/update_v780_to_v781.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.81/tools/update_v780_to_v781.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'QUOTA_RETRY_V7_0_81.md',
+-    'VERSION',
+-    'engine/audio/tts.py',
+-    'tests/test_v781_quota_retry.py',
+-    'tools/update_v780_to_v781.py',
+-]
+-# Files as they exist in 7.0.80: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['751b49c552573d93ccae841381aaad1365dc2235153d1317111d71bddd7ed41e'],
+-    'engine/audio/tts.py': ['c084d3fc65bd691808883c05869b14bd88d7ccbf6cf36bd64cf4d4a5c3629958'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.80', '7.0.81')  # 7.0.81 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
+-    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
+-    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.80 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.80':
+-            break
+-    return ('This update requires an installed 7.0.80 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.81 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.81 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.81 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.80-to-v7.0.81-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.81. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v781_to_v782.py b/tools/update_v781_to_v782.py
+--- /dev/null
++++ b/tools/update_v781_to_v782.py
+@@ -0,0 +1,173 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.82 update (Gemini TTS parts of 2,400 characters; per-language Gemini routes with key
++profiles from .env; Flash-Lite routes) to a v7.0.81 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.82 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.82/tools/update_v781_to_v782.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.82/tools/update_v781_to_v782.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'TTS_ROUTES_V7_0_82.md',
++    'VERSION',
++    'app.py',
++    'engine/audio/tts.py',
++    'engine/factory.py',
++    'engine/languages.py',
++    '.env.example',
++    'tests/test_v782_tts_routes.py',
++    'tools/update_v781_to_v782.py',
++]
++# Files as they exist in 7.0.81: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['a09b797eab63a0df0d5dec2bcb3b441a394ba9878d7f76c0a4a37c9dcf862126'],
++    'engine/audio/tts.py': ['ec78ca99d1dd3b3ffefca749128481f86eda46c598d3f03dc2226b8fb341890b'],
++    'engine/languages.py': ['a5c1fd2bfd28255fb3fe42f2dc081087507a75b98fb5dcda017431ba1b996a6c'],
++    'engine/factory.py': ['e25d498dae2f88c59f4ff5b6a51ba42ab31028095fbc1619d791877a7f4dd218'],
++    'app.py': ['3c5f6edfa061ae4769cac1a9c623bbca5025b6d6f7d9bad1dd474b76430dd6b1'],
++    '.env.example': ['a75f8f9d191e336e02eed524151bb8308b4a2134add5f3ff7b315ecef1e39a01'],
++}
++ACCEPTED_INSTALLS = ('7.0.81', '7.0.82')  # 7.0.82 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
++    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
++    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.81 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.81':
++            break
++    return ('This update requires an installed 7.0.81 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.82 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.82 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.82 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.81-to-v7.0.82-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.82. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

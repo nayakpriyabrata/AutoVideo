@@ -1,0 +1,805 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/AUTO_RESUME_DOWNLOAD_V7_0_87.md b/AUTO_RESUME_DOWNLOAD_V7_0_87.md
+--- a/AUTO_RESUME_DOWNLOAD_V7_0_87.md	1970-01-01 00:00:00.000000000 +0000
++++ b/AUTO_RESUME_DOWNLOAD_V7_0_87.md	2026-10-24 06:29:03.247350187 +0000
+@@ -0,0 +1,55 @@
++# AutoVideo 7.0.87: automatic resume after an interrupted Flow image download
++
++## What was wrong
++
++Job `20261024-101502-7-small-daily-habits-tha-debf` stopped with "automatic pause is disabled" after
++`shot_006` failed. The log showed `FlowBrowserClosedError: Image download target closed` on every
++download attempt, and each time the browser target closed about two seconds after the download event.
++Auto-resume never started, for three reasons:
++
++1. **The retry decision looked at the wrong error.** The image recovery wraps the browser-closed error in
++   `FlowRequestPending("Image recovery checkpoint retained: ...")`. The strict frame failure treated every
++   `FlowRequestPending` as final, so the job failed immediately.
++2. **A blocked saved request was never retried.** Even after a retry, `run_job` reconciled the saved
++   request, found the download still interrupted, and stopped with "Saved request unresolved". That stop was
++   not recorded as recoverable, so the Studio supervisor never picked the job up.
++3. **Manual runs did not record the wait.** `cli.py v3 resume` and the automation helpers called `run_job`
++   directly. Only the Studio job thread recorded the stop, so a manual run could never hand over to the
++   supervisor.
++
++## What changed
++
++- **Download-only retry.** A saved image whose download was interrupted (browser closed, network, or service
++  busy) is retried automatically. The retry only reopens the exact saved project, waits, and downloads. It
++  never uploads, fills, or sends a prompt, and never spends credits.
++- **Blocked but recoverable requests wait.** When the only blocker is such a download interruption, the job
++  records an automatic-resume wait and returns `paused`. Studio's supervisor retries it with backoff
++  (2, 5, 10, 20, 30, 60 minutes, up to 8 automatic resumes), while Studio is running and the computer is awake.
++- **Unchanged protections.** A submitted request whose download is unknown still stops for a manual decision.
++  Sign-in, quota, approval and missing-file stops are never retried. A pending request with no recoverable
++  cause still stops with no wait.
++- **Every caller records the outcome.** The CLI create and resume commands and the automation helpers call
++  the same recording step as the Studio job thread.
++- **Diagnostic.** The "Image download target closed" message now includes the download URL scheme
++  (`https`, `blob`, `data`, `other`, or `unavailable`). It never shows the URL. The scheme shows why the HTTPS
++  fallback could not run. Please send it with the next runtime log.
++
++## Still open
++
++- The download target closes right after the download event. The cause is not confirmed. The scheme
++  diagnostic will show whether the browser hands over a `blob:` URL, which the HTTPS fallback cannot read.
++- The storyboard scan also treats temporary `*.probe-*.jpg` download files as frames. A probe that matches a
++  reference image is quarantined, which is correct. The behaviour is noisy but not the cause of this failure.
++- Video recovery has the same wrapper pattern but is not covered by this automatic retry. The change is limited
++  to image downloads.
++
++## For the failed job (20261024-101502-7-small-daily-habits-tha-debf)
++
++Nothing needs to change in the job. Its saved request is download-only. Either run
++`python3 cli.py v3 resume 20261024-101502-7-small-daily-habits-tha-debf` once Chrome is open and Flow is signed in,
++or keep Studio open and let the automatic resume run.
++
++## Upgrade
++
++From a 7.0.86 installation, run `python3 ../AutoVideoAI-v7.0.87/tools/update_v786_to_v787.py .` for a dry run,
++then add `--apply`. Stop the dashboard first. Chunk size for Gemini TTS remains 2400 characters by default.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/VERSION b/VERSION
+--- a/VERSION	2026-10-24 06:29:03.231350107 +0000
++++ b/VERSION	2026-10-24 06:29:03.251350208 +0000
+@@ -1 +1 @@
+-7.0.86
++7.0.87
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/cli.py b/cli.py
+--- a/cli.py	2026-10-24 06:29:03.231350107 +0000
++++ b/cli.py	2026-10-24 06:29:03.255350227 +0000
+@@ -741,7 +741,7 @@
+         if args.plan_only:
+             print("(plan-only created the job configuration only; run 'v3 resume' to execute script/TTS/media generation)")
+             return
+-        print(f.run_job(job, progress_cb=cb))
++        print(_run_and_record(f, job, cb))
+     elif args.cmd == "create-config":
+         import yaml
+         from engine.studio_config import load_video_config, config_to_factory_kwargs
+@@ -764,7 +764,7 @@
+         if args.plan_only or cfg.get("plan_only"):
+             print(f"Resume later: python3 cli.py v3 resume {job}")
+             return
+-        print(f.run_job(job, progress_cb=cb))
++        print(_run_and_record(f, job, cb))
+     elif args.cmd == "themes":
+         from engine.studio_config import THEMES
+         for name, values in THEMES.items():
+@@ -795,7 +795,7 @@
+         if args.flow_pause_on_unresolved_request is not None:
+             f.set_flow_pause_on_unresolved_request(
+                 args.job_id, args.flow_pause_on_unresolved_request)
+-        print(f.run_job(args.job_id, progress_cb=cb))
++        print(_run_and_record(f, args.job_id, cb))
+     elif args.cmd == "recover-flow-video":
+         print(f.recover_flow_video(args.job_id, shot_id=args.shot_id or None,
+                                    wait_seconds=args.wait_seconds,
+@@ -1056,6 +1056,17 @@
+ 
+ 
+ 
++def _run_and_record(f, job_id, progress_cb):
++    """Run a job from the CLI and record its automatic-resume state, as the Studio job thread does."""
++    from engine.auto_resume import after_run
++    result = f.run_job(job_id, progress_cb=progress_cb)
++    try:
++        after_run(f, job_id, result)
++    except Exception as error:  # the run result is still returned; the record is best-effort
++        print(f"[auto-resume] could not record state for {job_id}: {type(error).__name__}: {error}")
++    return result
++
++
+ from engine.automation import (create_video_from_topic, bulk_create_from_csv,
+                                fetch_trending_topics, prepare_flow_shots)
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/auto_resume.py b/engine/auto_resume.py
+--- a/engine/auto_resume.py	2026-10-24 06:29:03.235350126 +0000
++++ b/engine/auto_resume.py	2026-10-24 06:29:03.255350227 +0000
+@@ -42,14 +42,18 @@
+     request is never retried here: it may already have consumed credits, so it
+     keeps the existing manual path.
+     """
+-    from .automatic_recovery import can_recover
++    from .automatic_recovery import can_recover, recoverable_download_interruption
+     from .providers.flow_browser import FlowRequestPending
+     if pause_requested:
+         return 'pause'
+     if settings.get('flow_auto_recovery', True) is not True:
+         return 'fail'
+-    if original is None or isinstance(original, FlowRequestPending):
++    if original is None:
+         return 'fail'
++    # v7.0.87: a saved image whose download was interrupted arrives wrapped in a
++    # pending checkpoint. Its exact request is recovered download-only, so retry.
++    if isinstance(original, FlowRequestPending):
++        return 'retry' if recoverable_download_interruption(original) else 'fail'
+     return 'retry' if can_recover(original) else 'fail'
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/automatic_recovery.py b/engine/automatic_recovery.py
+--- a/engine/automatic_recovery.py	2026-10-24 06:29:03.235350126 +0000
++++ b/engine/automatic_recovery.py	2026-10-24 06:29:03.255350227 +0000
+@@ -23,6 +23,26 @@
+         'restore its project binding'))
+ 
+ 
++CHECKPOINT_PREFIX = 'Image recovery checkpoint retained'
++
++
++def recoverable_download_interruption(error):
++    """True when a saved exact image request was only interrupted during download.
++
++    flow_image_transaction.recover() re-raises the last browser/network/busy error
++    as FlowRequestPending('Image recovery checkpoint retained: ...') from it. The
++    request is already recorded and recovery is download-only (no upload, fill or
++    Send), so it is safe for automatic resume. Plain pending or submitted requests
++    are not covered: they may already have consumed credits.
++    """
++    from .providers.flow_browser import (FlowRequestPending, FlowBrowserClosedError,
++                                         FlowTransientNetworkError, FlowServiceBusy)
++    if not isinstance(error, FlowRequestPending) or not str(error).startswith(CHECKPOINT_PREFIX):
++        return False
++    cause = error.__cause__
++    return isinstance(cause, (FlowBrowserClosedError, FlowTransientNetworkError, FlowServiceBusy)) and can_recover(cause)
++
++
+ def checkpoint(factory, job_id):
+     """Only validated saved frames and accepted takes count as progress."""
+     root = Path(factory.pm.job_dir(job_id))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/automation.py b/engine/automation.py
+--- a/engine/automation.py	2026-10-24 06:29:03.235350126 +0000
++++ b/engine/automation.py	2026-10-24 06:29:03.255350227 +0000
+@@ -239,12 +239,23 @@
+     job_id = f.create_job(topic, video_type, duration_sec, aspect,
+                            voice=voice, content_type=content_type, tone=tone,
+                            preset=preset, profile=profile, dry_run=dry_run)
+-    return f.run_job(job_id, progress_cb=progress_cb)
++    return _run_recorded(f, job_id, progress_cb)
++
++
++def _run_recorded(f, job_id, progress_cb):
++    # v7.0.87: record the automatic-resume state for direct runs, as the Studio job thread does.
++    from .auto_resume import after_run
++    result = f.run_job(job_id, progress_cb=progress_cb)
++    try:
++        after_run(f, job_id, result)
++    except Exception as error:
++        print(f'[auto-resume] could not record state for {job_id}: {type(error).__name__}: {error}')
++    return result
+ 
+ 
+ def v3_resume(job_id: str, progress_cb=None) -> dict:
+     from .factory import Factory
+-    return Factory().run_job(job_id, progress_cb=progress_cb)
++    return _run_recorded(Factory(), job_id, progress_cb)
+ 
+ 
+ def v3_render(job_id: str, quality: str = "standard", progress_cb=None) -> dict:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-24 06:29:03.235350126 +0000
++++ b/engine/factory.py	2026-10-24 06:29:03.255350227 +0000
+@@ -848,11 +848,13 @@
+             # Never infer from a missing local file that a remote Flow request
+             # failed; remote assets may already exist and consume credits.
+             from .flow_resume_safety import require_safe_job, check_job
++            from .progress import JobProgress
++            reconciled = None
++            recovery_progress = None  # created lazily: JobProgress sets process-wide runtime-log variables
+             if check_job(self.pm.job_dir(job_id))['unresolved_count']:
+                 from .flow_resume_recovery import reconcile_job
+-                from .progress import JobProgress
+                 recovery_progress = JobProgress(self.pm.job_dir(job_id), progress_cb)
+-                reconcile_job(self.pm.job_dir(job_id), self._settings(job_id), recovery_progress.emit)
++                reconciled = reconcile_job(self.pm.job_dir(job_id), self._settings(job_id), recovery_progress.emit)
+             try:
+                 require_safe_job(self.pm.job_dir(job_id))
+             except Exception:
+@@ -860,6 +862,29 @@
+                 current.status = "paused"
+                 self.pm.save_manifest(current)
+                 self.db.upsert(job_id, status="paused")
++                if recovery_progress is None:
++                    recovery_progress = JobProgress(self.pm.job_dir(job_id), progress_cb)
++                # v7.0.87: when the only blocker is a saved image whose download was
++                # interrupted, schedule a download-only automatic resume. Nothing is
++                # uploaded, filled or sent; the exact request is kept.
++                if (reconciled and reconciled.get("recoverable_only")
++                        and self._settings(job_id).get("flow_auto_recovery", True) is True):
++                    from .automatic_recovery import checkpoint
++                    from .auto_resume import note_recoverable_failure
++                    frames, accepted = checkpoint(self, job_id)
++                    note_recoverable_failure(
++                        self.pm.job_dir(job_id),
++                        "Saved image download interrupted; automatic download-only resume scheduled. "
++                        "No new Flow request is submitted.",
++                        progress=[len(frames), len(accepted)])
++                    self.pm.log(job_id, "flow_resume_auto_wait",
++                                {"journals": [row["journal"] for row in reconciled.get("unresolved", [])]})
++                    recovery_progress.emit("Automatic resume scheduled", 0,
++                                           "Saved exact request kept; download-only retry")
++                    # Returned, not raised: every caller records it with auto_resume.after_run.
++                    return {"job_id": job_id, "status": "paused",
++                            "message": "Saved image download interrupted; automatic download-only resume scheduled.",
++                            "resume": f"python3 cli.py v3 resume {job_id}"}
+                 recovery_progress.emit("Recovery needs attention", 0,
+                                        "Saved request unresolved; no new generation started")
+                 raise
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/flow_resume_recovery.py b/engine/flow_resume_recovery.py
+--- a/engine/flow_resume_recovery.py	2026-10-24 06:29:03.235350126 +0000
++++ b/engine/flow_resume_recovery.py	2026-10-24 06:29:03.255350227 +0000
+@@ -82,7 +82,11 @@
+                 raise RuntimeError('Request lacks a supported recovery context')
+             events.append({'journal': row['journal'], 'status': 'recovered'})
+         except Exception as error:
+-            events.append({'journal': row['journal'], 'status': 'pending', 'reason': str(error)[:500]})
++            # v7.0.87: a download interruption on an exact saved request is retried
++            # automatically (download-only); the flag tells run_job it may wait.
++            from .automatic_recovery import recoverable_download_interruption
++            events.append({'journal': row['journal'], 'status': 'pending', 'reason': str(error)[:500],
++                           'recoverable': recoverable_download_interruption(error)})
+         finally:
+             if provider:
+                 try: provider.close()
+@@ -110,5 +114,8 @@
+                 allow_new=settings.get('flow_replace_unresolved_images', False))
+             events.append({'replacement_recovery': replacement})
+     report = check_job(root)
++    recoverable = {e['journal'] for e in events if e.get('status') == 'pending' and e.get('recoverable')}
++    report['recoverable_only'] = bool(report['unresolved']) and all(
++        row['journal'] in recoverable for row in report['unresolved'])
+     write_json(root / 'logs' / 'resume-reconciliation.json', {'events': events, **report})
+     return report
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-24 06:29:03.239350147 +0000
++++ b/engine/providers/flow_browser.py	2026-10-24 06:29:03.259350248 +0000
+@@ -2933,7 +2933,15 @@
+                 # Attempt that bounded transfer before discarding the event.
+                 if self._save_image_download_url(download, out_path):
+                     return out_path
+-                raise FlowBrowserClosedError("Image download target closed; reconnect and recover the saved exact request")
++                # v7.0.87: scheme code only (never the URL) to show why the HTTPS fallback could not run.
++                try:
++                    from urllib.parse import urlsplit
++                    scheme = urlsplit(str(getattr(download, "url", "") or "")).scheme.lower()
++                except Exception:
++                    scheme = "unavailable"
++                scheme = scheme if scheme in ("https", "blob", "data", "unavailable") else "other"
++                raise FlowBrowserClosedError("Image download target closed (URL scheme=" + scheme + "); "
++                                             "reconnect and recover the saved exact request")
+             print(f"[Flow] Browser image artifact needs fallback: {native_detail}")
+             if not self._save_image_download_url(download, out_path):
+                 from urllib.parse import urlsplit
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tests/test_v787_auto_resume_download.py b/tests/test_v787_auto_resume_download.py
+--- a/tests/test_v787_auto_resume_download.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v787_auto_resume_download.py	2026-10-24 06:29:03.267350288 +0000
+@@ -0,0 +1,136 @@
++"""v7.0.87: a saved image whose download was interrupted resumes automatically (download-only).
++
++The regression: recover() wraps the browser-closed error in FlowRequestPending, and the strict
++frame failure treated any FlowRequestPending as final, so no automatic retry ever started.
++No browser or network: Flow providers and generation are faked. Nothing here submits a request.
++"""
++import json
++from pathlib import Path
++from types import SimpleNamespace as NS
++
++import pytest
++
++from engine import auto_resume as ar
++from engine.factory import Factory
++from engine.providers.flow_browser import (FlowBrowserClosedError, FlowRequestPending,
++                                           FlowServiceBusy, FlowReferenceUnavailable)
++from engine.automatic_recovery import recoverable_download_interruption
++
++SETTINGS = {'flow_auto_recovery': True}
++
++
++def checkpoint_error(cause):
++    """Mirror flow_image_transaction.recover(): the last error is re-raised as a pending checkpoint."""
++    try:
++        raise FlowRequestPending('Image recovery checkpoint retained: ' + str(cause)) from cause
++    except FlowRequestPending as pending:
++        return pending
++
++
++def test_download_checkpoint_is_retried_but_plain_pending_and_auth_are_not():
++    assert ar.strict_failure_action(SETTINGS, checkpoint_error(FlowBrowserClosedError(
++        'Image download target closed; reconnect and recover the saved exact request')), False) == 'retry'
++    assert ar.strict_failure_action(SETTINGS, checkpoint_error(FlowServiceBusy('high demand')), False) == 'retry'
++    # Unchanged: a submitted request whose download is unknown may have spent credits.
++    assert ar.strict_failure_action(SETTINGS, FlowRequestPending('submitted, download unknown'), False) == 'fail'
++    # Checkpoint around a non-browser cause, or around an auth/quota-style reason: no unattended retry.
++    assert ar.strict_failure_action(SETTINGS, checkpoint_error(RuntimeError('boom')), False) == 'fail'
++    assert ar.strict_failure_action(SETTINGS, checkpoint_error(
++        FlowBrowserClosedError('sign in required')), False) == 'fail'
++    assert ar.strict_failure_action({'flow_auto_recovery': False}, checkpoint_error(
++        FlowBrowserClosedError('x')), False) == 'fail'
++
++
++def test_exact_strict_chain_from_the_user_log_is_retried():
++    # RuntimeError(...) from checkpoint from FlowBrowserClosedError: the chain in the failed job.
++    try:
++        try:
++            raise FlowBrowserClosedError('Image download target closed; reconnect and recover the saved exact request')
++        except FlowBrowserClosedError as last:
++            raise FlowRequestPending('Image recovery checkpoint retained: ' + str(last)) from last
++    except FlowRequestPending as pending:
++        try:
++            raise RuntimeError('Strict --frame-source flow: shot_006 opening frame failed after 1 attempts.') from pending
++        except RuntimeError as error:
++            assert recoverable_download_interruption(error.__cause__)
++            assert ar.strict_failure_action(SETTINGS, error.__cause__, False) == 'retry'
++
++
++class FakeProvider:
++    def __init__(self):
++        self.closed = 0
++
++    def _ensure(self):
++        return self
++
++    def close(self):
++        self.closed += 1
++
++
++def make_job(tmp_path, monkeypatch):
++    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
++    f = Factory(str(tmp_path / 'outputs'), str(tmp_path / 'data/jobs.db'))
++    job = f.create_job('Download interruption resume', dry_run=True)
++    root = Path(f.pm.job_dir(job))
++    journal = root / 'storyboard' / 'shot_006_open.jpg.flow-request.json'
++    journal.parent.mkdir(parents=True, exist_ok=True)
++    journal.write_text(json.dumps({
++        'schema_version': 1, 'scope': 'isolated_image_v1', 'kind': 'image', 'status': 'pending',
++        'phase': 'submitted', 'request_hash': 'h', 'project_name': 'AutoVideo-Image-test',
++        'project_url': 'https://flow.google.com/project/e4596779-749d-4f16-bdd2-f2fd15d085b9',
++        'reference_hashes': {}, 'submitted_prompt': 'p', 'source_prompt': 'p', 'shot_id': 'shot_006',
++        'vertical': False, 'signature': ''}))
++    import engine.providers.flow_browser as fb
++    monkeypatch.setattr(fb, 'FlowBrowserProvider', FakeProvider)
++    return f, job, root
++
++
++def test_blocked_download_checkpoint_schedules_download_only_wait(tmp_path, monkeypatch):
++    import engine.flow_image_transaction as tx
++    calls = []
++    def fake_generate(provider, shot, compiled, output, vertical, request_hash):
++        calls.append(output)  # download-only recovery attempt; never a new submission
++        raise checkpoint_error(FlowBrowserClosedError('Image download target closed'))
++    monkeypatch.setattr(tx, 'generate', fake_generate)
++    f, job, root = make_job(tmp_path, monkeypatch)
++
++    result = f.run_job(job, progress_cb=None)
++    assert result['status'] == 'paused' and 'download-only' in result['message']
++    assert len(calls) == 1
++    journal = json.loads((root / 'storyboard/shot_006_open.jpg.flow-request.json').read_text())
++    assert journal['status'] == 'pending' and journal['phase'] == 'submitted'  # request kept
++
++    # Studio's job thread and the CLI both record the returned result with after_run.
++    state = ar.after_run(f, job, result, None, now=1000.0)
++    assert state['state'] == 'waiting' and state['attempts'] == 1
++    assert state['next_at'] == 1000.0 + ar.BACKOFF_MINUTES[0] * 60
++    assert 'download-only' in state['reason'] or 'interrupted' in state['reason']
++    report = json.loads((root / 'logs/resume-reconciliation.json').read_text())
++    assert report['recoverable_only'] is True and report['unresolved_count'] == 1
++
++
++def test_plain_pending_request_still_stops_without_a_wait(tmp_path, monkeypatch):
++    import engine.flow_image_transaction as tx
++    monkeypatch.setattr(tx, 'generate', lambda *a, **k: (_ for _ in ()).throw(
++        FlowRequestPending('submitted, download unknown')))
++    f, job, root = make_job(tmp_path, monkeypatch)
++    with pytest.raises(Exception):
++        f.run_job(job, progress_cb=None)
++    state = ar.after_run(f, job, None, 'Saved request unresolved', now=1000.0)
++    assert state['state'] == 'stopped'
++
++
++def test_cli_and_automation_paths_record_the_wait(tmp_path, monkeypatch):
++    import engine.flow_image_transaction as tx
++    monkeypatch.setattr(tx, 'generate', lambda *a, **k: (_ for _ in ()).throw(
++        checkpoint_error(FlowBrowserClosedError('Image download target closed'))))
++    f, job, root = make_job(tmp_path, monkeypatch)
++    import cli
++    result = cli._run_and_record(f, job, None)
++    assert result['status'] == 'paused'
++    assert ar.load(root)['state'] == 'waiting'
++
++
++def test_reference_failures_are_not_treated_as_download_checkpoint():
++    assert not recoverable_download_interruption(FlowReferenceUnavailable('Overlay blocks reference upload'))
++    assert not recoverable_download_interruption(checkpoint_error(FlowReferenceUnavailable('x')))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tools/update_v785_to_v786.py b/tools/update_v785_to_v786.py
+--- a/tools/update_v785_to_v786.py	2026-10-24 06:29:03.243350167 +0000
++++ b/tools/update_v785_to_v786.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,183 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.86 update (voices first: Create step 4 generates the voices without Gemini card requests;
+-text cards are drafted only on request, or by a job for its own settings; with text cards off no card request is
+-sent; a voices-only batch can be attached to a job) to a v7.0.85 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.86 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.86/tools/update_v785_to_v786.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.86/tools/update_v785_to_v786.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'OPTIONAL_CARDS_V7_0_86.md',
+-    'VERSION',
+-    'app.py',
+-    'engine/factory.py',
+-    'engine/production.py',
+-    'engine/speech_batches.py',
+-    'engine/speech_cards.py',
+-    'tests/test_v767_language_editions.py',
+-    'tests/test_v785_voice_reuse.py',
+-    'tests/test_v786_optional_cards.py',
+-    'tools/update_v785_to_v786.py',
+-]
+-# Files as they exist in 7.0.85: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['233bc1a487c4c238306df4fa7d39890866c7dcbad5523a97ada04995eb465ef3'],
+-    'app.py': ['936672a70469b65144588ea439d7b5423df4b15c32a4a089d24af6dbf0645e94'],
+-    'engine/factory.py': ['6ef541ca30b232b9bac59454258a9053c61f686003baf8f1b1c87e3352008d5c'],
+-    'engine/production.py': ['1ac81c1872ceb91479f64bbfb100ccdbb4d14d9e467fdeba108d186a36afc14f'],
+-    'engine/speech_batches.py': ['fd1cc7db7ff78c95e530f32195bd23f423dbf4f629eafa8fe970a0857bc0fcfd'],
+-    'engine/speech_cards.py': ['0fc4550ffb719dada286929d3939254409467952ca346fc6456b320b622915af'],
+-    'tests/test_v767_language_editions.py': ['4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa'],
+-    'tests/test_v785_voice_reuse.py': ['69670763faaa00f9271dd6f0558e519f57815978aa90fe62dd204872a98362a1'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.85', '7.0.86')  # 7.0.86 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
+-    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
+-    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
+-    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
+-    ('7.0.81', '7.0.82', 'tools/update_v781_to_v782.py'),
+-    ('7.0.82', '7.0.83', 'tools/update_v782_to_v783.py'),
+-    ('7.0.83', '7.0.84', 'tools/update_v783_to_v784.py'),
+-    ('7.0.84', '7.0.85', 'tools/update_v784_to_v785.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.85 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.85':
+-            break
+-    return ('This update requires an installed 7.0.85 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.86 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.86 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.86 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.85-to-v7.0.86-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.86. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tools/update_v786_to_v787.py b/tools/update_v786_to_v787.py
+--- a/tools/update_v786_to_v787.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v786_to_v787.py	2026-10-24 06:29:03.267350288 +0000
+@@ -0,0 +1,184 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.87 update (automatic resume after an interrupted Flow image download: a saved exact image
++whose download was interrupted is retried download-only, never re-submitted; a blocked but recoverable request
++is scheduled for automatic resume; CLI and automation runs record that wait) to a v7.0.86 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.87 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.87/tools/update_v786_to_v787.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.87/tools/update_v786_to_v787.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'AUTO_RESUME_DOWNLOAD_V7_0_87.md',
++    'VERSION',
++    'cli.py',
++    'engine/auto_resume.py',
++    'engine/automatic_recovery.py',
++    'engine/automation.py',
++    'engine/factory.py',
++    'engine/flow_resume_recovery.py',
++    'engine/providers/flow_browser.py',
++    'tests/test_v787_auto_resume_download.py',
++    'tools/update_v786_to_v787.py',
++]
++# Files as they exist in 7.0.86: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['545848c5f2609e2e463e9f0e0d788fb9e2d8eda28a79e5f26d375f3eb3183f2e'],
++    'cli.py': ['9316cd597bf3e788439b1d20202af0a4871b5421c958294ffa7cd577698debbc'],
++    'engine/auto_resume.py': ['e25b9eb2e5fd4225434f2603406cbadb9cbf2e1d83a6df0aca0fe99b1697e3e3'],
++    'engine/automatic_recovery.py': ['c1198c7466b7c7f175613fd052693e4339729c25d83c64eb9eaa9e1c5d693832'],
++    'engine/automation.py': ['61f1d15885566868e82e914b9ff805e6db589bd3c48c970037221a163248fcfe'],
++    'engine/factory.py': ['4367e59ac1a88e08cdcdf3657e1d621093dc303bd115e9d3342c7bc12dd83919'],
++    'engine/flow_resume_recovery.py': ['1cd00db0e8e3da08dbdac5d45464023eabb7206b60e5b1cb456bccc35549c2ec'],
++    'engine/providers/flow_browser.py': ['e65365b4ec54af59ce110cf83f72e3024bae2f4b9a2205de372f9551de185564'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.86', '7.0.87')  # 7.0.87 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
++    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
++    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
++    ('7.0.81', '7.0.82', 'tools/update_v781_to_v782.py'),
++    ('7.0.82', '7.0.83', 'tools/update_v782_to_v783.py'),
++    ('7.0.83', '7.0.84', 'tools/update_v783_to_v784.py'),
++    ('7.0.84', '7.0.85', 'tools/update_v784_to_v785.py'),
++    ('7.0.85', '7.0.86', 'tools/update_v785_to_v786.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.86 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.86':
++            break
++    return ('This update requires an installed 7.0.86 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.87 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.87 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.87 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.86-to-v7.0.87-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.87. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

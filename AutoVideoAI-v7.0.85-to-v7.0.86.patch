@@ -1,0 +1,811 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/OPTIONAL_CARDS_V7_0_86.md b/OPTIONAL_CARDS_V7_0_86.md
+--- a/OPTIONAL_CARDS_V7_0_86.md	1970-01-01 00:00:00.000000000 +0000
++++ b/OPTIONAL_CARDS_V7_0_86.md	2026-10-24 05:22:09.382434588 +0000
+@@ -0,0 +1,35 @@
++# AutoVideo 7.0.86 — voices first, text cards optional
++
++## What changed for you
++
++- **Create step 4 now generates the voices only.** The button is "Generate all selected voices (TTS only)". It spends TTS requests and no Gemini Web card requests.
++- **Text cards are your choice.** Once the voices are ready, the batch shows "Draft text cards for these voices (optional · Gemini Web)". Press it when you want the cards, or leave it out. Drafting the cards uses Gemini Web and does not spend TTS.
++- **A job drafts its own cards if you skip the step.** If you attach a voices-only batch and leave text cards on, the job drafts the cards for its own settings from those approved voices, without calling TTS again.
++- **Text cards off means no card request.** With "Include text cards" off, no Gemini Web card request is sent, including the master script's cards.
++- **Jobs & Recovery** shows a voices-only batch as "Voices are ready; text cards are optional". It is not listed as a failure.
++- **Resume keeps your choice.** A resumed batch keeps the text-card setting it was created with.
++
++## Technical notes
++
++- `app.py`, Clip Studio recreation review: the "Review video + propose recreation scenes" button read the B-roll reuse checkbox before it was defined, so the page raised NameError once a clip was confirmed. The review does not depend on B-roll reuse, so that condition was removed.
++
++- `engine/production.py`: `stage_repairs` used `final_path` without declaring it (NameError on the repair path). It now takes `final_path=None`; existing callers are unchanged.
++
++- `engine/speech_cards.py`: `prepare_batch(..., draft_cards=True)`. With `draft_cards=False` the batch stops at phase `voices_ready`, and each bundle gets `cards_ready=False`. The new `draft_batch_cards(folder)` drafts the cards for bundles that are not ready, makes no TTS call, and ends at `ready_for_review`. `attach_prepared_batch` accepts `voices_ready`.
++- `engine/factory.py`: master-card drafting now also requires `presentation.text_cards`.
++- `engine/speech_batches.py`: resume passes the saved `draft_cards` flag; voices-only batches count as ready.
++- `app.py`: step 4 button and draft button; wording for voices-only batches.
++
++## Chunk size (unchanged, stated for the record)
++
++Gemini TTS narration is split into parts of **2400 characters** by default (`GEMINI_TTS_CHUNK_CHARS`). This is the default and has not been confirmed by you.
++
++## Tests
++
++- `tests/test_v786_optional_cards.py` (6 tests): voices-only batch makes zero card calls; drafting cards makes zero TTS calls; a job attaches the voices and drafts its cards with zero TTS; text cards off makes no card call; resume keeps the choice; cards cannot be drafted before voices.
++- `tests/test_v785_voice_reuse.py`: the fake card drafter now sets `cards_ready=True`, as the real function does.
++- `tests/test_v767_language_editions.py`: asserts the new step 4 button label.
++
++## Upgrade
++
++From a 7.0.85 installation, run `python3 ../AutoVideoAI-v7.0.86/tools/update_v785_to_v786.py .` for a dry run, then add `--apply`. Stop the dashboard first.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/VERSION b/VERSION
+--- a/VERSION	2026-10-24 05:22:09.358434468 +0000
++++ b/VERSION	2026-10-24 05:22:09.382434588 +0000
+@@ -1 +1 @@
+-7.0.85
++7.0.86
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/app.py b/app.py
+--- a/app.py	2026-10-24 05:22:09.362434488 +0000
++++ b/app.py	2026-10-24 05:22:09.382434588 +0000
+@@ -766,7 +766,8 @@
+                     st.success('Reviewed scripts saved. TTS will use this exact snapshot.')
+                 except Exception as error:st.error(str(error))
+             if localization_state.get('phase')=='scripts_approved':reviewed_language_scripts=localization_state['scripts']
+-        if st.button('Prepare all selected TTS → then all language text cards', key='studio-prepare-speech-batch', disabled=not(studio_voice_on and batch_script and batch_path and reviewed_language_scripts)):
++        # 7.0.86: voices first. Text cards are optional and are drafted only when you ask for them below.
++        if st.button('Generate all selected voices (TTS only)', key='studio-prepare-speech-batch', disabled=not(studio_voice_on and batch_script and batch_path and reviewed_language_scripts)):
+             try:
+                 from engine.speech_cards import prepare_batch
+                 from engine.production_lock import production_slot
+@@ -780,18 +781,36 @@
+                         text_cards=bool(st.session_state.get('studio-cards-'+studio_audio_mode, studio_voice_on)),
+                         hooks=bool(studio_voice_on and st.session_state.get('studio-hooks-enabled', False)),
+                         educational=is_educational(DEFAULTS['content_type'], DEFAULTS['preset']), topic=topic.strip(),
+-                        card_provider=str(st.session_state.get('studio-draft-provider') or 'gemini-web'))
++                        card_provider=str(st.session_state.get('studio-draft-provider') or 'gemini-web'), draft_cards=False)
+             except Exception as error:st.error(str(error))
+         if batch_path and (batch_path/'batch.json').is_file():
+             try:
+                 candidate=json.loads((batch_path/'batch.json').read_text())
+-                if candidate.get('phase')=='ready_for_review':
++                phase=candidate.get('phase')
++                if phase in ('voices_ready','ready_for_review'):
+                     prepared_batch=candidate
+                     for lang,bundle in prepared_batch['bundles'].items():
+                         with st.expander(lang.upper()+' · voice '+str(round(bundle['duration'],1))+' seconds · '+bundle['timing_source']):
+-                            st.audio(bundle['audio']);st.write(bundle['script']);st.dataframe(bundle['cards'],use_container_width=True)
+-                    use_prepared_batch=st.checkbox('I reviewed these voices, translations and cards; reuse this exact batch',key='studio-use-batch-'+batch_path.name)
+-                else:st.info('Batch checkpoint: '+candidate.get('phase','preparing')+'. Retry the same action to reuse saved narration.')
++                            st.audio(bundle['audio']);st.write(bundle['script'])
++                            if bundle.get('cards_ready', True):st.dataframe(bundle['cards'],use_container_width=True)
++                            else:st.caption('Text cards not drafted yet (optional).')
++                    # 7.0.86: text cards are drafted only on request (Gemini Web), never as part of the voices.
++                    cards_wanted=bool(prepared_batch.get('request',{}).get('text_cards',True))
++                    if phase=='voices_ready' and cards_wanted:
++                        if st.button('Draft text cards for these voices (optional · Gemini Web)',key='studio-draft-batch-cards'):
++                            try:
++                                from engine.speech_cards import draft_batch_cards
++                                from engine.production_lock import production_slot
++                                with production_slot(batch_path):
++                                    draft_batch_cards(batch_path,progress=lambda label,pct,detail='':st.write(label))
++                                st.rerun()
++                            except Exception as error:st.error(str(error))
++                    if phase=='voices_ready':
++                        st.info('Voices are ready. Text cards are optional: draft them here, or leave them out and the job drafts its own cards from these approved voices.')
++                        use_prepared_batch=st.checkbox('I reviewed these voices and translations; reuse this exact batch',key='studio-use-batch-'+batch_path.name)
++                    else:
++                        use_prepared_batch=st.checkbox('I reviewed these voices, translations and cards; reuse this exact batch',key='studio-use-batch-'+batch_path.name)
++                else:st.info('Batch checkpoint: '+str(phase or 'preparing')+'. Retry the same action to reuse saved narration.')
+             except Exception as error:st.error(str(error))
+     with st.expander('Gemini video and project cleanup', expanded=False):
+         gemini_video_count = st.number_input('Use Gemini Web for up to this many AI video shots', min_value=0, max_value=4, value=0,
+@@ -1573,7 +1592,7 @@
+             status = 'ready' if row['ready'] else ('stopped' if row['error'] else (row['phase'] or 'pending'))
+             st.markdown(f"**{row['origin']}** · {labels} · {status} · voices {len(row['done'])}/{len(row['editions'])}")
+             if row['ready']:
+-                st.success('All voices and cards are ready. In Create step 4, tick “reuse this exact batch” to attach it to a new job.')
++                st.success(('Voices are ready; text cards are optional and the job drafts them if needed.' if row['phase'] == 'voices_ready' else 'All voices and cards are ready.') + ' In Create step 4, tick “reuse this exact batch” to attach it to a job.')
+                 continue
+             if row['error']:
+                 st.error(row['error'])
+@@ -2418,7 +2437,8 @@
+     with st.expander('Gemini Web · review this clip before recreation',expanded=True):
+         st.caption('Uploads a small silent proxy of this local clip to your Gemini session, together with the reviewed transcript. The default storyboard below uses transcript only; this optional review examines visual framing and action too.')
+         recreation_cleanup = st.selectbox('Recreation review chat cleanup',['delete-after-read','keep'])
+-        if st.button('Review video + propose recreation scenes',disabled=not (clip and confirmed and transcript_ready and (not reuse_broll or reuse_review))):
++        # 7.0.86: the review does not depend on B-roll reuse (that checkbox is defined further down, so reading it here raised NameError).
++        if st.button('Review video + propose recreation scenes',disabled=not (clip and confirmed and transcript_ready)):
+             try:
+                 from engine.studio_review import review_recreation_clip
+                 with st.spinner('Preparing the clip proxy and asking Gemini to review its visuals…'):
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-24 05:22:09.366434508 +0000
++++ b/engine/factory.py	2026-10-24 05:22:09.386434608 +0000
+@@ -1247,7 +1247,8 @@
+                                       educational=is_educational(m.content_type, getattr(m, 'preset', '')),
+                                       topic=m.topic, card_provider=settings.get('card_draft_provider') or 'gemini-web')
+ 
+-        if settings.get('speech_cards_enabled') and presentation.voiceover and not dry:
++        # 7.0.86: master cards are drafted only when text cards are on; with them off no Gemini card request is sent.
++        if settings.get('speech_cards_enabled') and presentation.voiceover and presentation.text_cards and not dry:
+             from .speech_cards import prepare
+             prog('Drafting Gemini cards from saved narration words', 16)
+             timing = 'unverified'
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/production.py b/engine/production.py
+--- a/engine/production.py	2026-10-24 05:22:09.366434508 +0000
++++ b/engine/production.py	2026-10-24 05:22:09.390434628 +0000
+@@ -330,7 +330,7 @@
+     return report
+ 
+ 
+-def stage_repairs(job_dir, plan_path):
++def stage_repairs(job_dir, plan_path, final_path=None):  # 7.0.86: final_path was used but never declared
+     """Validate all local replacements before committing one override manifest."""
+     root = Path(job_dir).resolve()
+     manifest = read(root / 'production_manifest.json', {})
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/speech_batches.py b/engine/speech_batches.py
+--- a/engine/speech_batches.py	2026-10-24 05:22:09.366434508 +0000
++++ b/engine/speech_batches.py	2026-10-24 05:22:09.390434628 +0000
+@@ -49,7 +49,7 @@
+         'source_script': state.get('source_script', ''),
+         'editions': editions,
+         'phase': state.get('phase', ''),
+-        'ready': state.get('phase') == 'ready_for_review' and len(done) == len(editions),
++        'ready': state.get('phase') in ('voices_ready', 'ready_for_review') and len(done) == len(editions),
+         'done': done,
+         'error': state.get('error', ''),
+         'scripts': scripts,
+@@ -132,6 +132,7 @@
+     audio_path = audio if audio and Path(audio).is_file() else None
+     return prepare_batch(
+         folder, state['source_script'], state['source_language'], editions,
++        draft_cards=request.get('draft_cards', True),
+         provider=chosen, audio_path=audio_path, cleanup=request.get('cleanup', 'delete-after-read'),
+         progress=progress, localized_scripts=scripts, text_cards=request.get('text_cards', True),
+         educational=request.get('educational', False), topic=request.get('topic', ''),
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py	2026-10-24 05:22:09.366434508 +0000
++++ b/engine/speech_cards.py	2026-10-24 05:22:09.390434628 +0000
+@@ -456,6 +456,7 @@
+     else:
+         result=dict(bundle,cards=[])
+     result['hooks_ready']=False;result['hooks_error']=''
++    result['cards_ready']=True  # 7.0.86: cards (or their deliberate absence) are settled for this bundle
+     if bundle.get('hooks'):
+         try:
+             from .video_hooks import draft_hooks
+@@ -597,8 +598,11 @@
+ 
+ 
+ def prepare_batch(root,source_script,source_language,languages,*,provider='auto',audio_path=None,cleanup='delete-after-read',progress=None,localized_scripts=None,
+-                  text_cards=True,educational=False,topic='',card_provider='gemini-web',hooks=False):
+-    """One action, two phases: every language voice first, then separate card requests.
++                  text_cards=True,educational=False,topic='',card_provider='gemini-web',hooks=False,draft_cards=True):
++    """Voices for every language first. Card and hook drafts (Gemini Web) follow only when draft_cards is True.
++
++    7.0.86: draft_cards=False stops after the voices (phase voices_ready). The cards can be drafted later with
++    draft_batch_cards, or by the job itself, so the user decides when Gemini Web card requests are spent.
+ 
+     7.0.83: without explicit scripts, the narration approved in Create step 4 is used. The batch keeps its settings,
+     scripts and any error in batch.json from the start, so Jobs & Recovery can show and resume a batch that stopped.
+@@ -622,7 +626,8 @@
+         if scripts.get(source_language)!=source_script.strip():raise ValueError('Reviewed master script changed; prepare the language scripts again')
+     scripts_hash=hashlib.sha256(json.dumps(scripts,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+     request={'provider':provider,'audio_path':str(audio_path) if audio_path else '','cleanup':cleanup,'text_cards':bool(text_cards),
+-             'educational':bool(educational),'topic':str(topic or ''),'card_provider':str(card_provider or 'gemini-web'),'hooks':bool(hooks)}
++             'educational':bool(educational),'topic':str(topic or ''),'card_provider':str(card_provider or 'gemini-web'),'hooks':bool(hooks),
++             'draft_cards':bool(draft_cards)}
+     state={'source_language':source_language,'source_script':source_script,'editions':editions,'scripts':scripts,'scripts_sha256':scripts_hash,
+            'request':request,'error':'','bundles':{},'phase':'tts'}
+     emit=progress or (lambda *args:None)
+@@ -640,7 +645,11 @@
+             emit('Preparing TTS and word timings',int(45*index/len(editions)),language.upper())
+             state['bundles'][language]=prepare_edition(root,script,language,provider=provider,audio_path=audio_path if language==source_language else None,cleanup=cleanup,draft_cards=False,
+                                                        text_cards=text_cards,educational=educational,topic=topic,card_provider=card_provider,hooks=hooks)
++            state['bundles'][language]['cards_ready']=False
+             save(root/'batch.json',state)
++        if not draft_cards:
++            state['phase']='voices_ready';state['error']='';save(root/'batch.json',state);emit('Voices ready · cards not drafted (optional)',100)
++            return state
+         state['phase']='cards';save(root/'batch.json',state)
+         for index,language in enumerate(editions):
+             emit('All voices ready · drafting timed cards',50+int(45*index/len(editions)),language.upper())
+@@ -654,12 +663,40 @@
+         raise
+ 
+ 
++def draft_batch_cards(folder, progress=None):
++    """Draft the optional cards and hooks for a batch whose voices are ready (7.0.86). No TTS is called."""
++    from .production import save
++    folder = Path(folder)
++    state = json.loads((folder/'batch.json').read_text(encoding='utf-8'))
++    if state.get('phase') not in ('voices_ready', 'ready_for_review'):
++        raise ValueError('Generate the voices first; the cards are drafted from them')
++    cleanup = (state.get('request') or {}).get('cleanup', 'delete-after-read')
++    emit = progress or (lambda *args: None)
++    editions = list(state['editions'])
++    state['phase'] = 'cards'; save(folder/'batch.json', state)
++    try:
++        for index, language in enumerate(editions):
++            bundle = state['bundles'][language]
++            if bundle.get('cards_ready', True) and not (bundle.get('hooks') and not bundle.get('hooks_ready')):
++                continue
++            emit('Drafting text cards from the approved voice', int(100*index/len(editions)), language.upper())
++            state['bundles'][language] = complete_edition_cards(bundle, cleanup)
++            save(folder/'batch.json', state)
++        state['phase'] = 'ready_for_review'; state['error'] = ''; save(folder/'batch.json', state)
++        emit('Text cards ready for review', 100)
++        return state
++    except Exception as error:
++        state['phase'] = 'voices_ready'; state['error'] = ' '.join(str(error).split())[:600]
++        save(folder/'batch.json', state)
++        raise
++
++
+ def attach_prepared_batch(job_root,batch):
+     """Snapshot preflight assets into the job so later cleanup cannot break Resume."""
+     import shutil
+     from .production import save,digest
+     job_root=Path(job_root);bundles={}
+-    if batch.get('phase')!='ready_for_review':raise ValueError('Finish all voices and cards first')
++    if batch.get('phase') not in ('ready_for_review','voices_ready'):raise ValueError('Generate the voices first')
+     for language,bundle in batch['bundles'].items():
+         source=Path(bundle['audio']).parent
+         if digest(bundle['audio'])!=bundle['audio_sha256']:raise ValueError('Prepared voice changed')
+@@ -672,7 +709,7 @@
+     if source_language not in bundles:raise ValueError('Include the production language in the batch')
+     save(job_root/'production/prepared_speech.json',bundles[source_language])
+     cards=Path(bundles[source_language]['audio']).parent/'production/speech_cards.json'
+-    save(job_root/'production/speech_cards.json',json.loads(cards.read_text()))
++    if cards.is_file():save(job_root/'production/speech_cards.json',json.loads(cards.read_text()))
+     return bundles
+ 
+ 
+@@ -704,7 +741,10 @@
+         for lang in editions:
+             bundle=existing[lang]
+             changed=not _bundle_flags_match(bundle,wanted)
+-            if not changed and not (wanted['hooks'] and not bundle.get('hooks_ready')):
++            # 7.0.86: cards left undrafted by an optional voices-only batch are drafted here, for the job's own settings.
++            pending_cards=bool(wanted['text_cards']) and bundle.get('cards_ready') is False
++            pending_hooks=bool(wanted['hooks']) and not bundle.get('hooks_ready')
++            if not changed and not pending_cards and not pending_hooks:
+                 refreshed[lang]=bundle
+                 continue
+             redraw.append(lang)
+@@ -712,7 +752,7 @@
+             update=dict(bundle,text_cards=wanted['text_cards'],educational=wanted['educational'],hooks=wanted['hooks'],
+                         topic=str(topic or bundle.get('topic','') or ''),card_provider=card_provider or bundle.get('card_provider') or 'gemini-web')
+             cleanup=settings.get('gemini_chat_cleanup','keep')
+-            if changed:
++            if changed or pending_cards:
+                 refreshed[lang]=complete_edition_cards(update,cleanup)
+             else:
+                 # 7.0.80: a failed hook draft is recorded and the batch is still reused; cards are not touched.
+@@ -727,7 +767,7 @@
+         if primary:
+             card_file=Path(primary['audio']).parent/'production/speech_cards.json'
+             if card_file.is_file():save(Path(root)/'production/speech_cards.json',json.loads(card_file.read_text()))
+-        data['status']='approved voices reused; cards refreshed for this job' if redraw else 'approved voices reused'
++        data['status']='approved voices reused; cards drafted for this job' if redraw else 'approved voices reused'
+         save(path,data)
+         return
+     if existing and progress:progress('Saved voices do not match this job; generating voices again',14)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tests/test_v767_language_editions.py b/tests/test_v767_language_editions.py
+--- a/tests/test_v767_language_editions.py	2026-10-24 05:22:09.374434548 +0000
++++ b/tests/test_v767_language_editions.py	2026-10-24 05:22:09.394434648 +0000
+@@ -60,4 +60,4 @@
+     source=Path('app.py').read_text(encoding='utf-8')
+     assert source.index('Additional language editions · optional') < source.index('2 · Review script and cast · optional')
+     assert 'Prepare selected language scripts for review · no TTS' in source
+-    assert source.index('Prepare selected language scripts for review · no TTS') < source.index('Prepare all selected TTS → then all language text cards')
++    assert source.index('Prepare selected language scripts for review · no TTS') < source.index('Generate all selected voices (TTS only)')  # 7.0.86
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tests/test_v785_voice_reuse.py b/tests/test_v785_voice_reuse.py
+--- a/tests/test_v785_voice_reuse.py	2026-10-24 05:22:09.374434548 +0000
++++ b/tests/test_v785_voice_reuse.py	2026-10-24 05:22:09.394434648 +0000
+@@ -39,7 +39,7 @@
+     def fake_cards(bundle, cleanup):
+         rec['cards'].append((bundle['language'], bool(bundle.get('text_cards')), bool(bundle.get('educational')),
+                              bool(bundle.get('hooks'))))
+-        return dict(bundle, cards=[], hooks_ready=bool(bundle.get('hooks')))
++        return dict(bundle, cards=[], hooks_ready=bool(bundle.get('hooks')), cards_ready=True)  # as the real function
+ 
+     def fake_loc(*a, **k):
+         rec['loc'].append(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tests/test_v786_optional_cards.py b/tests/test_v786_optional_cards.py
+--- a/tests/test_v786_optional_cards.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v786_optional_cards.py	2026-10-24 05:22:09.394434648 +0000
+@@ -0,0 +1,134 @@
++"""v7.0.86: voices first; text cards are optional and drafted only on request, or by the job for its own settings.
++
++No network: TTS, Gemini Web and cards are faked. Card drafts never call TTS.
++"""
++import json
++from pathlib import Path
++
++import pytest
++
++import engine.speech_cards as SC
++import engine.speech_batches as SB
++from engine.production import save, digest
++
++EN = 'Start with one small habit today. Repeat it for one week.'
++HI = 'आज एक छोटी आदत से शुरुआत करें। एक हफ्ते तक इसे दोहराएँ।'
++OR_GOOD = 'ଆଜି ଏକ ଛୋଟ ଅଭ୍ୟାସରୁ ଆରମ୍ଭ କରନ୍ତୁ। ଏକ ସପ୍ତାହ ଧରି ଏହାକୁ ଦୋହରାନ୍ତୁ।'
++LANGS = ['en', 'hi', 'or']
++
++
++@pytest.fixture
++def world(tmp_path, monkeypatch):
++    monkeypatch.setenv('AUTOVIDEO_SHARED_ROOT', str(tmp_path / 'shared'))
++    rec = {'tts': [], 'cards': []}
++
++    def fake_edition(root, script, language, **kw):
++        rec['tts'].append(language)
++        audio = Path(root) / 'speech-editions' / language / 'fp' / 'voice.mp3'
++        audio.parent.mkdir(parents=True, exist_ok=True)
++        audio.write_bytes(b'x' * 4096)
++        words = audio.parent / 'words.json'
++        words.write_text(json.dumps([{'word': 'a', 'start': 0.0, 'end': 1.0}]))
++        (audio.parent / 'production').mkdir(exist_ok=True)
++        (audio.parent / 'production' / 'speech_cards.json').write_text(json.dumps({'fingerprint': 'f', 'cards': []}))
++        return {'audio': str(audio), 'audio_sha256': digest(audio), 'duration': 3.0, 'script': script,
++                'language': language, 'words': str(words), 'cards': [], 'timing_source': 'test',
++                'text_cards': kw.get('text_cards', True), 'educational': kw.get('educational', False),
++                'hooks': kw.get('hooks', False), 'topic': kw.get('topic', ''),
++                'card_provider': kw.get('card_provider', 'gemini-web')}
++
++    def fake_cards(bundle, cleanup):
++        rec['cards'].append(bundle['language'])
++        return dict(bundle, cards=[], hooks_ready=bool(bundle.get('hooks')), cards_ready=True)
++
++    monkeypatch.setattr(SC, 'prepare_edition', fake_edition)
++    monkeypatch.setattr(SC, 'complete_edition_cards', fake_cards)
++    monkeypatch.setattr(SC, 'validate_words', lambda *a, **k: None)
++    monkeypatch.setattr(SC, 'prepare_localized_scripts',
++                        lambda *a, **k: (_ for _ in ()).throw(AssertionError('no localization expected')))
++    from engine.finishing_studio import shared_root
++    return {'rec': rec, 'shared': shared_root(), 'root': tmp_path}
++
++
++def _voices_only(world, **kw):
++    folder = world['shared'] / 'speech_preparation' / 'batch'
++    scripts = {'en': EN, 'hi': HI, 'or': OR_GOOD}
++    batch = SC.prepare_batch(folder, EN, 'en', LANGS, provider='auto', localized_scripts=scripts,
++                             draft_cards=False, **kw)
++    return folder, batch
++
++
++def test_voices_come_first_and_no_card_request_is_sent(world):
++    folder, batch = _voices_only(world, text_cards=True)
++    assert batch['phase'] == 'voices_ready'
++    assert world['rec']['tts'] == LANGS
++    assert world['rec']['cards'] == []
++    assert all(bundle['cards_ready'] is False for bundle in batch['bundles'].values())
++    rows = SB.list_speech_batches()
++    assert rows[0]['ready'] is True and rows[0]['phase'] == 'voices_ready'
++
++
++def test_cards_drafted_later_on_request_without_any_new_tts(world):
++    folder, _ = _voices_only(world, text_cards=True)
++    world['rec']['tts'].clear()
++    state = SC.draft_batch_cards(folder)
++    assert state['phase'] == 'ready_for_review'
++    assert world['rec']['tts'] == []
++    assert world['rec']['cards'] == LANGS
++    assert all(bundle['cards_ready'] is True for bundle in state['bundles'].values())
++
++
++def test_job_attaches_voices_only_batch_and_drafts_cards_for_its_settings(world, tmp_path):
++    folder, batch = _voices_only(world, text_cards=True)
++    world['rec']['tts'].clear()
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    (job / 'narration').mkdir()
++    bundles = SC.attach_prepared_batch(job, batch)
++    save(job / 'production' / 'language_editions.json', {
++        'source_language': 'en', 'editions': LANGS, 'profiles': {}, 'prepare_audio': True, 'bundles': bundles,
++        'status': 'prepared batch attached', 'text_cards': True, 'hooks_enabled': False, 'educational': False, 'topic': 't'})
++    SC.prepare_selected_editions(job, EN, 'en', {'tts_provider': 'auto', 'gemini_chat_cleanup': 'keep'}, None,
++                                 text_cards=True, hooks=False, educational=False, topic='t')
++    assert world['rec']['tts'] == []
++    assert world['rec']['cards'] == LANGS
++
++
++def test_text_cards_off_means_no_card_request_at_all(world, tmp_path):
++    folder, batch = _voices_only(world, text_cards=False)
++    world['rec']['tts'].clear()
++    job = tmp_path / 'job-off'
++    (job / 'production').mkdir(parents=True)
++    (job / 'narration').mkdir()
++    bundles = SC.attach_prepared_batch(job, batch)
++    save(job / 'production' / 'language_editions.json', {
++        'source_language': 'en', 'editions': LANGS, 'profiles': {}, 'prepare_audio': True, 'bundles': bundles,
++        'status': 'prepared batch attached', 'text_cards': False, 'hooks_enabled': False, 'educational': False, 'topic': 't'})
++    SC.prepare_selected_editions(job, EN, 'en', {'tts_provider': 'auto', 'gemini_chat_cleanup': 'keep'}, None,
++                                 text_cards=False, hooks=False, educational=False, topic='t')
++    assert world['rec']['tts'] == []
++    assert world['rec']['cards'] == []
++
++
++def test_resume_keeps_the_voices_only_choice(world):
++    folder, _ = _voices_only(world, text_cards=True)
++    world['rec']['cards'].clear()
++    SB.resume_speech_batch(folder)
++    assert world['rec']['cards'] == []
++    assert json.loads((folder / 'batch.json').read_text())['phase'] == 'voices_ready'
++
++
++def test_cards_cannot_be_drafted_before_voices(world):
++    folder = world['shared'] / 'speech_preparation' / 'unfinished'
++    folder.mkdir(parents=True)
++    save(folder / 'batch.json', {'phase': 'tts', 'editions': LANGS, 'bundles': {}, 'request': {}})
++    with pytest.raises(ValueError, match='Generate the voices first'):
++        SC.draft_batch_cards(folder)
++
++
++def test_clip_review_button_does_not_read_later_broll_checkbox():
++    source = Path('app.py').read_text(encoding='utf-8')
++    review = source.index("'Review video + propose recreation scenes'")
++    assert source.index("reuse_broll = st.checkbox('Reuse approved B-roll") > review  # defined after the button
++    button_line = source[source.rindex('\n', 0, review) + 1:source.index('\n', review)]
++    assert 'reuse_broll' not in button_line
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tools/update_v784_to_v785.py b/tools/update_v784_to_v785.py
+--- a/tools/update_v784_to_v785.py	2026-10-24 05:22:09.374434548 +0000
++++ b/tools/update_v784_to_v785.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,169 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.85 update (approved voices from Create step 4 are reused by a job whatever its card and hook
+-settings are; only the cards or hooks are redrawn, so a settings difference never repeats text-to-speech; the
+-job log says when no approved narration is found) to a v7.0.84 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.85 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.85/tools/update_v784_to_v785.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.85/tools/update_v784_to_v785.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VOICE_REUSE_V7_0_85.md',
+-    'VERSION',
+-    'engine/speech_cards.py',
+-    'tests/test_v785_voice_reuse.py',
+-    'tools/update_v784_to_v785.py',
+-]
+-# Files as they exist in 7.0.84: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['544fe708055c12ca98d8842321948f1151e7b646fd70bbb3e3eba8b4112043a6'],
+-    'engine/speech_cards.py': ['f3c0c9a73431ffe0e7256e6e21366c061ff65a06d6ad6333d8ead0a009f6c275'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.84', '7.0.85')  # 7.0.85 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
+-    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
+-    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
+-    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
+-    ('7.0.81', '7.0.82', 'tools/update_v781_to_v782.py'),
+-    ('7.0.82', '7.0.83', 'tools/update_v782_to_v783.py'),
+-    ('7.0.83', '7.0.84', 'tools/update_v783_to_v784.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.84 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.84':
+-            break
+-    return ('This update requires an installed 7.0.84 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.85 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.85 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.85 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.84-to-v7.0.85-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.85. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ a/tools/update_v785_to_v786.py b/tools/update_v785_to_v786.py
+--- a/tools/update_v785_to_v786.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v785_to_v786.py	2026-10-24 05:22:09.394434648 +0000
+@@ -0,0 +1,183 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.86 update (voices first: Create step 4 generates the voices without Gemini card requests;
++text cards are drafted only on request, or by a job for its own settings; with text cards off no card request is
++sent; a voices-only batch can be attached to a job) to a v7.0.85 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.86 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.86/tools/update_v785_to_v786.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.86/tools/update_v785_to_v786.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'OPTIONAL_CARDS_V7_0_86.md',
++    'VERSION',
++    'app.py',
++    'engine/factory.py',
++    'engine/production.py',
++    'engine/speech_batches.py',
++    'engine/speech_cards.py',
++    'tests/test_v767_language_editions.py',
++    'tests/test_v785_voice_reuse.py',
++    'tests/test_v786_optional_cards.py',
++    'tools/update_v785_to_v786.py',
++]
++# Files as they exist in 7.0.85: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['233bc1a487c4c238306df4fa7d39890866c7dcbad5523a97ada04995eb465ef3'],
++    'app.py': ['936672a70469b65144588ea439d7b5423df4b15c32a4a089d24af6dbf0645e94'],
++    'engine/factory.py': ['6ef541ca30b232b9bac59454258a9053c61f686003baf8f1b1c87e3352008d5c'],
++    'engine/production.py': ['1ac81c1872ceb91479f64bbfb100ccdbb4d14d9e467fdeba108d186a36afc14f'],
++    'engine/speech_batches.py': ['fd1cc7db7ff78c95e530f32195bd23f423dbf4f629eafa8fe970a0857bc0fcfd'],
++    'engine/speech_cards.py': ['0fc4550ffb719dada286929d3939254409467952ca346fc6456b320b622915af'],
++    'tests/test_v767_language_editions.py': ['4abc876d1cc67dd8d8843d93b6e66b09cf05e572b0efbca9ecaa1a169cded5fa'],
++    'tests/test_v785_voice_reuse.py': ['69670763faaa00f9271dd6f0558e519f57815978aa90fe62dd204872a98362a1'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.85', '7.0.86')  # 7.0.86 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
++    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
++    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
++    ('7.0.81', '7.0.82', 'tools/update_v781_to_v782.py'),
++    ('7.0.82', '7.0.83', 'tools/update_v782_to_v783.py'),
++    ('7.0.83', '7.0.84', 'tools/update_v783_to_v784.py'),
++    ('7.0.84', '7.0.85', 'tools/update_v784_to_v785.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.85 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.85':
++            break
++    return ('This update requires an installed 7.0.85 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.86 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.86 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.86 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.85-to-v7.0.86-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.86. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

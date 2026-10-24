@@ -1,0 +1,739 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/FLOW_UI_BLOB_CLICK_HOOK_V7_0_89.md b/FLOW_UI_BLOB_CLICK_HOOK_V7_0_89.md
+--- a/FLOW_UI_BLOB_CLICK_HOOK_V7_0_89.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FLOW_UI_BLOB_CLICK_HOOK_V7_0_89.md	2026-10-24 09:05:04.001539725 +0000
+@@ -0,0 +1,42 @@
++# Flow exact-image click hook (v7.0.89)
++
++## Problem
++Flow starts image downloads by clicking a detached blob anchor (`a.click()` or a synthetic click).
++v7.0.88 logs show that a failing save follows the browser's own download event, and the
++Chrome crash log lists a crash within a second of each failing download event. The in-page
++capture never saw a click (`messages=0`), because detached anchors do not reach document listeners.
++
++## What changed
++- `engine/flow_ui_blob.py`: while armed, `HTMLAnchorElement.prototype.click` and
++  `dispatchEvent` are hooked. A click on an exact blob anchor (same origin, `download`
++  attribute) is taken in the page: `fetch` resolves the blob at click time, so revoking it right
++  after the click does not matter. The bytes are sent in chunks through the existing binding, and
++  Python validates the file before it is moved into place. No browser download starts.
++- If the in-page read fails, or Python rejects the bytes, the original click runs (the browser
++  download), as in earlier releases. The fallback runs only while the capture is still open.
++- The hook is removed when the capture closes; the browser's original click behaviour is restored.
++- `engine/flow_download_diagnostics.py`: the Playwright `Browser logs:` tail (the browser's own
++  stderr, last 10 lines, capped, URLs removed) is kept in failure text, instead of being dropped.
++- `engine/providers/flow_browser.py`: the launch transport and whether `DISPLAY`/`WAYLAND_DISPLAY`
++  are set are logged once after launch (`browser launched: ...`), so a crash can be matched to it.
++
++## What it does not do
++- It does not change which page is clicked, which tile is chosen, or whether a new image is generated.
++- It does not reproduce the Chrome crash. The crash cause is still unproven. Compare the next
++  runtime log's `browser launched` line and any `Browser logs (last lines)` tail with `chrome://crashes`.
++
++## Verification
++- `tests/test_v789_blob_click_hook.py` (9 tests): unit tests for the log tail and the hook script,
++  and real-browser tests through Playwright Python. The browser tests use Chromium
++  (set `AUTOVIDEO_TEST_CHROMIUM`) and skip if none can be launched. Result in the build sandbox:
++  Chromium 131 (npm `@sparticuz/chromium@131`), 9 passed.
++- Standalone checks in Chromium 131 with the production script: `a.click()` with an immediate
++  revoke, synthetic `dispatchEvent`, and a trusted click on an attached anchor each delivered 300,000
++  bytes with a matching SHA-256 and started no browser download. A blob revoked before the click
++  fell back to the original download. After `remove()`, a normal click downloads again.
++- Not verified: Chrome 153 (the user's Playwright browser). The user's first run on 7.0.89 is the test.
++
++## Update
++From 7.0.88: `python3 ../AutoVideoAI-v7.0.89/tools/update_v788_to_v789.py . --apply`
++From 7.0.87: first apply `python3 ../AutoVideoAI-v7.0.88/tools/update_v787_to_v788.py . --apply`.
++Stop the dashboard first. Runtime data, jobs, profiles and outputs are never touched.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/VERSION b/VERSION
+--- a/VERSION	2026-10-24 09:05:03.985539645 +0000
++++ b/VERSION	2026-10-24 09:05:04.005539745 +0000
+@@ -1 +1 @@
+-7.0.88
++7.0.89
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/engine/flow_download_diagnostics.py b/engine/flow_download_diagnostics.py
+--- a/engine/flow_download_diagnostics.py	2026-10-24 09:05:03.993539685 +0000
++++ b/engine/flow_download_diagnostics.py	2026-10-24 09:05:04.009539765 +0000
+@@ -21,11 +21,24 @@
+     runtime_print(f"[Flow][diag] {message}")
+ 
+ 
+-def describe_exception(exc: BaseException, limit: int = 200) -> str:
+-    """Exception class plus a URL-free, length-capped message."""
+-    text = _URL_RE.sub("<url>", " ".join(str(exc).split()))[:limit]
++def describe_exception(exc: BaseException, limit: int = 200, log_limit: int = 700) -> str:
++    """Exception class plus a URL-free, length-capped message.
++
++    v7.0.89: Playwright appends the browser's own stderr after "Browser logs:". That
++    tail is where a browser crash names itself, so the last lines are kept (capped),
++    not dropped with the rest of the message.
++    """
++    raw = str(exc)
++    head, marker, tail = raw.partition("Browser logs:")
++    text = _URL_RE.sub("<url>", " ".join(head.split()))[:limit]
+     name = type(exc).__name__
+-    return f"{name}: {text}" if text else name
++    out = f"{name}: {text}" if text else name
++    if marker:
++        lines = [line.strip() for line in tail.splitlines() if line.strip()]
++        shown = _URL_RE.sub("<url>", " | ".join(lines[-10:]))[:log_limit]
++        if shown:
++            out += " | browser logs (last lines): " + shown
++    return out
+ 
+ 
+ def url_shape(url) -> str:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/engine/flow_ui_blob.py b/engine/flow_ui_blob.py
+--- a/engine/flow_ui_blob.py	2026-10-24 09:05:03.989539665 +0000
++++ b/engine/flow_ui_blob.py	2026-10-24 09:05:04.009539765 +0000
+@@ -1,4 +1,13 @@
+-"""Save an exact UI blob anchor before its click can close the download target.
++"""Save an exact UI blob download in the page before the browser's download manager starts it.
++
++v7.0.89: the click hook. Flow starts image downloads by clicking a detached blob anchor
++(`a.click()` or a synthetic click event). Those clicks never reach a document-level listener,
++so the earlier capture saw no click in any run. Once the browser's download manager starts
++a blob download, the browser process can close (v7.0.88 logs showed the crash at the download
++event). This module now also hooks `HTMLAnchorElement.click` and `dispatchEvent` while armed:
++the first exact blob anchor is read in the page (fetch resolves the blob URL at call time, so a
++revoke right after the click does not matter) and the bytes are sent to Python, and no browser
++download starts. If the in-page read fails, the original click runs, as before.
+ 
+ Only a blob URL on the existing Flow page is intercepted. No private endpoint,
+ credential copying, media-gallery guessing, or new generation is involved.
+@@ -6,17 +15,25 @@
+ import base64,os,secrets,tempfile,time
+ from pathlib import Path
+ SCRIPT=r'''({name,key,limit})=>{
+- const state={active:true};window[key]=state;
+- const handler=async(event)=>{
+-  const a=event.target.closest?.('a[download],a[href^="blob:"]');
+-  if(!state.active||!a||!a.href.startsWith('blob:'+location.origin+'/'))return;
+-  event.preventDefault();event.stopImmediatePropagation();state.active=false;
+-  document.removeEventListener('click',handler,true);
+-  try{
+-   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
++ if(typeof window.__avBlobRemove==='function'){try{window.__avBlobRemove();}catch(e){}}
++ const origin=location.origin;
++ const originalClick=HTMLAnchorElement.prototype.click;
++ const originalDispatch=HTMLAnchorElement.prototype.dispatchEvent;
++ const state={active:true,hooked:false};
++ window[key]=state;
++ const exactBlob=(a)=>{try{return !!a&&typeof a.href==='string'&&a.href.startsWith('blob:'+origin+'/')&&a.hasAttribute('download');}catch(e){return false;}};
++ const take=(a)=>{
++  if(!state.active)return false;
++  state.active=false;
++  const href=a.href;
++  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
++  let started;
++  try{started=fetch(href,{signal:controller.signal});}catch(error){started=Promise.reject(error);}
++  (async()=>{
+    try{
+-    const response=await fetch(a.href,{signal:controller.signal});
++    const response=await started;
+     if(!response.ok)throw Error('blob unavailable');
++    if(await window[name]({intercepted:true})!==true)throw Error('capture rejected');
+     const reader=response.body.getReader();let total=0,index=0;
+     while(true){const {done,value}=await reader.read();if(done)break;
+      total+=value.length;if(total>limit){await reader.cancel();throw Error('size limit');}
+@@ -24,17 +41,38 @@
+      if(await window[name]({index:index++,data:btoa(binary)})!==true)throw Error('capture rejected');
+     }
+     if(await window[name]({done:true,bytes:total})!==true)throw Error('validation failed');
++   }catch(error){
++    try{await window[name]({error:'Exact UI blob capture failed'});}catch(e){}
++    // Fall back to the original download only while the capture is still open.
++    if(window[key]){try{originalClick.call(a);}catch(e){}}
+    }finally{clearTimeout(timer);}
+-  }catch(error){await window[name]({error:'Exact UI blob capture failed'});try{a.click();}catch{}}
++  })();
++  return true;
++ };
++ const hookedClick=function click(){if(state.active&&exactBlob(this)){take(this);return undefined;}return originalClick.apply(this,arguments);};
++ const hookedDispatch=function dispatchEvent(event){if(state.active&&event&&event.type==='click'&&exactBlob(this)){take(this);return true;}return originalDispatch.apply(this,arguments);};
++ const handler=(event)=>{
++  const a=event.target&&event.target.closest?event.target.closest('a[download],a[href^="blob:"]'):null;
++  if(!state.active||!a||!String(a.href).startsWith('blob:'+origin+'/'))return;
++  event.preventDefault();event.stopImmediatePropagation();take(a);
+  };
+- state.remove=()=>{state.active=false;document.removeEventListener('click',handler,true);delete window[key];};
++ HTMLAnchorElement.prototype.click=hookedClick;
++ HTMLAnchorElement.prototype.dispatchEvent=hookedDispatch;
+  document.addEventListener('click',handler,true);
++ const restore=()=>{
++  if(HTMLAnchorElement.prototype.click===hookedClick)delete HTMLAnchorElement.prototype.click;
++  if(HTMLAnchorElement.prototype.dispatchEvent===hookedDispatch)delete HTMLAnchorElement.prototype.dispatchEvent;
++ };
++ state.remove=()=>{state.active=false;document.removeEventListener('click',handler,true);restore();if(window.__avBlobRemove===state.remove)delete window.__avBlobRemove;delete window[key];};
++ window.__avBlobRemove=state.remove;
++ state.hooked=true;
++ return true;
+ }'''
+ class Capture:
+     def __init__(self,page,output,validator):
+         self.page=page;self.output=str(output);self.validator=validator;self.done=False;self.error='';self.size=0;self.index=0;self.active=True;self.started=time.monotonic()
+         self.limit=128*1024*1024;self.key='avblob_'+secrets.token_hex(8);self.name=self.key+'_write'
+-        self.messages=0;self.foreign=0;self.reported=False
++        self.messages=0;self.foreign=0;self.reported=False;self.intercepted=False;self.hooked=False
+         parent=Path(output).resolve().parent;parent.mkdir(parents=True,exist_ok=True)
+         fd,self.stage=tempfile.mkstemp(dir=parent,prefix='.flow-ui-',suffix=Path(output).suffix);self.handle=os.fdopen(fd,'wb')
+     def receive(self,source,message):
+@@ -45,6 +83,9 @@
+         try:
+             if time.monotonic()-self.started>120:raise ValueError('Capture deadline')
+             if message.get('error'):raise ValueError(message['error'])
++            if message.get('intercepted'):
++                # v7.0.89: the page's click hook took the exact blob; no browser download will start.
++                self.intercepted=True;return True
+             if message.get('done'):
+                 if message.get('bytes')!=self.size or self.size==0:raise ValueError('Incomplete blob')
+                 self.handle.flush();self.handle.close()
+@@ -59,7 +100,7 @@
+     def install(self):
+         if not str(self.page.url).startswith(('https://flow.google.com/','https://labs.google/')):raise ValueError('Flow page required')
+         self.page.expose_binding(self.name,self.receive)
+-        self.page.evaluate(SCRIPT,{'name':self.name,'key':self.key,'limit':self.limit})
++        self.hooked=bool(self.page.evaluate(SCRIPT,{'name':self.name,'key':self.key,'limit':self.limit}))
+         return self
+     def close(self):
+         self.active=False
+@@ -69,19 +110,20 @@
+         if not self.handle.closed:self.handle.close()
+         if os.path.exists(self.stage):os.unlink(self.stage)
+     def _report(self):
+-        # v7.0.88: one summary per capture. messages=0 means the page's click handler never ran.
++        # v7.0.88: one summary per capture. messages=0 means the page's click hook never ran.
+         if self.reported:return
+         self.reported=True
+         from .flow_download_diagnostics import diag
+         state='done' if self.done else 'not-done'
+-        diag('exact UI blob capture '+state+': messages='+str(self.messages)+' foreign='+str(self.foreign)
++        diag('exact UI blob capture '+state+': hook='+('on' if self.hooked else 'off')+' intercepted='+('yes' if self.intercepted else 'no')
++             +' messages='+str(self.messages)+' foreign='+str(self.foreign)
+              +' chunks='+str(self.index)+' bytes='+str(self.size)+' error='+(self.error or 'none'))
+ def arm(page,output,validator):
+     from .flow_download_diagnostics import describe_exception,diag
+     capture=Capture(page,output,validator)
+     try:
+         armed=capture.install()
+-        diag('exact UI blob capture armed')
++        diag('exact UI blob capture armed: click hook '+('on' if armed.hooked else 'off'))
+         return armed
+     except Exception as error:
+         diag('exact UI blob capture not armed: '+describe_exception(error))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-24 09:05:03.993539685 +0000
++++ b/engine/providers/flow_browser.py	2026-10-24 09:05:04.013539785 +0000
+@@ -717,6 +717,10 @@
+                         "exe": f"system ({opt.get('executable')})",
+                         "bundled": "playwright chromium"}.get(opt["kind"], "?")
+                 self.active_browser = f"{base} [{transport}]"
++                # v7.0.89: record which launch transport ran, so a browser crash can be matched to it.
++                diag("browser launched: " + self.active_browser
++                     + "; display=" + ("set" if os.getenv("DISPLAY") else "unset")
++                     + "; wayland=" + ("set" if os.getenv("WAYLAND_DISPLAY") else "unset"))
+                 return
+             except Exception as e:
+                 launch_errors.append(f"{transport}: {short_browser_error(e, limit=450)}")
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/tests/test_v789_blob_click_hook.py b/tests/test_v789_blob_click_hook.py
+--- a/tests/test_v789_blob_click_hook.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v789_blob_click_hook.py	2026-10-24 09:05:04.021539825 +0000
+@@ -0,0 +1,188 @@
++"""v7.0.89: the exact UI blob is read in the page by a click hook, before the browser download starts.
++
++Unit tests use fakes. The browser tests run real Chromium through Playwright when one can be
++launched; set AUTOVIDEO_TEST_CHROMIUM to a Chromium executable to choose one. They are skipped otherwise.
++"""
++import io
++import os
++import random
++import time
++
++import pytest
++
++from engine import flow_download_diagnostics as diagnostics
++from engine import flow_ui_blob
++
++
++# ---------- unit tests (no browser) ----------
++
++def test_browser_log_tail_is_kept_and_redacted():
++    raw = ("TargetClosedError: Page.evaluate: Target page, context or browser has been closed "
++           "Browser logs: <launching> /home/user/.cache/chrome --flag "
++           "[1:1:ERROR] Received signal 11 SEGV_MAPERR https://flow.google.com/x?token=SECRET "
++           "[1:1:ERROR] GPU process exited unexpectedly")
++    text = diagnostics.describe_exception(RuntimeError(raw))
++    assert text.startswith("RuntimeError: TargetClosedError: Page.evaluate: Target page, context or browser has been closed")
++    assert "browser logs (last lines):" in text
++    assert "Received signal 11" in text and "GPU process exited unexpectedly" in text
++    assert "SECRET" not in text and "token=" not in text
++
++
++def test_exception_without_browser_logs_is_unchanged_in_shape():
++    assert diagnostics.describe_exception(ValueError("plain message")) == "ValueError: plain message"
++
++
++def test_receive_records_intercept_without_writing_bytes(tmp_path):
++    class Page:
++        url = "https://flow.google.com/project/abc"
++
++    capture = flow_ui_blob.Capture(Page(), str(tmp_path / "shot.jpg"), lambda path: True)
++    assert capture.receive({"page": capture.page}, {"intercepted": True}) is True
++    assert capture.intercepted is True and capture.size == 0 and capture.index == 0
++    capture.close()
++
++
++def test_arm_refuses_non_flow_page_and_reports(tmp_path, monkeypatch):
++    lines = []
++    monkeypatch.setattr(diagnostics, "runtime_print", lambda *a, **k: lines.append(" ".join(map(str, a))))
++
++    class Page:
++        url = "https://example.com/"
++
++    assert flow_ui_blob.arm(Page(), str(tmp_path / "shot.jpg"), lambda path: True) is None
++    assert any("exact UI blob capture not armed" in line and "Flow page required" in line for line in lines)
++
++
++def test_script_contains_both_click_paths_and_restore():
++    script = flow_ui_blob.SCRIPT
++    assert "HTMLAnchorElement.prototype.click=hookedClick" in script
++    assert "HTMLAnchorElement.prototype.dispatchEvent=hookedDispatch" in script
++    assert "delete HTMLAnchorElement.prototype.click" in script
++    assert "originalClick.call(a)" in script
++    # the in-page fallback only runs while the capture is still open
++    assert "if(window[key]){try{originalClick.call(a);}" in script
++
++
++# ---------- real browser tests ----------
++
++def _chromium_launch(playwright):
++    exe = os.getenv("AUTOVIDEO_TEST_CHROMIUM", "").strip() or None
++    try:
++        return playwright.chromium.launch(executable_path=exe, headless=True, args=["--no-sandbox"])
++    except Exception as exc:  # no browser on this machine
++        pytest.skip(f"no Chromium available for the browser test: {type(exc).__name__}")
++
++
++@pytest.fixture
++def browser_page(tmp_path):
++    pw_api = pytest.importorskip("playwright.sync_api")
++    pytest.importorskip("PIL")
++    with pw_api.sync_playwright() as playwright:
++        browser = _chromium_launch(playwright)
++        context = browser.new_context(accept_downloads=True)
++        page = context.new_page()
++        page.route("https://flow.google.com/**",
++                   lambda route: route.fulfill(status=200, content_type="text/html",
++                                               body="<!doctype html><body><div id='host'></div></body>"))
++        page.goto("https://flow.google.com/project/test", wait_until="load")
++        downloads = []
++        page.on("download", lambda download: downloads.append(download))
++        try:
++            yield page, downloads, tmp_path
++        finally:
++            context.close()
++            browser.close()
++
++
++def _jpeg_bytes(seed=7):
++    from PIL import Image
++    rnd = random.Random(seed)
++    image = Image.frombytes("RGB", (900, 700), bytes(rnd.getrandbits(8) for _ in range(900 * 700 * 3)))
++    buffer = io.BytesIO()
++    image.save(buffer, format="JPEG", quality=92)
++    return buffer.getvalue()
++
++
++def _validator(path):
++    from engine.providers.flow_browser import FlowBrowserProvider
++    provider = FlowBrowserProvider.__new__(FlowBrowserProvider)
++    return provider._asset_valid(path, "image")
++
++
++def _wait(page, predicate, seconds=20):
++    # Sync Playwright delivers in-page binding calls only while Python is inside a Playwright call,
++    # so wait with page.wait_for_timeout (as the production wait loop does), not time.sleep.
++    deadline = time.monotonic() + seconds
++    while time.monotonic() < deadline:
++        if predicate():
++            return True
++        page.wait_for_timeout(100)
++    return predicate()
++
++
++_BLOB_JS = """(args) => {
++    const bin = Uint8Array.from(atob(args.b64), c => c.charCodeAt(0));
++    const url = URL.createObjectURL(new Blob([bin], { type: 'image/jpeg' }));
++    const a = document.createElement('a');
++    a.href = url; a.download = 'shot.jpg';
++    return { a, url };
++}"""
++
++
++def test_click_hook_saves_exact_blob_without_browser_download(browser_page):
++    import base64
++    page, downloads, tmp_path = browser_page
++    data = _jpeg_bytes()
++    out = tmp_path / "shot_013_open.jpg"
++    capture = flow_ui_blob.arm(page, out, _validator)
++    assert capture is not None and capture.hooked is True
++    page.evaluate("""(args) => { const r = (%s)(args); r.a.click(); URL.revokeObjectURL(r.url); }""" % _BLOB_JS,
++                  {"b64": base64.b64encode(data).decode()})
++    assert _wait(page, lambda: capture.done or not capture.active)
++    capture.close()
++    assert capture.done is True and capture.intercepted is True
++    assert out.read_bytes() == data
++    assert downloads == []  # the browser's download manager never started
++
++
++def test_synthetic_dispatch_click_is_also_intercepted(browser_page):
++    import base64
++    page, downloads, tmp_path = browser_page
++    data = _jpeg_bytes(seed=11)
++    out = tmp_path / "shot_dispatch.jpg"
++    capture = flow_ui_blob.arm(page, out, _validator)
++    page.evaluate("""(args) => { const r = (%s)(args);
++        r.a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); URL.revokeObjectURL(r.url); }""" % _BLOB_JS,
++                  {"b64": base64.b64encode(data).decode()})
++    assert _wait(page, lambda: capture.done or not capture.active)
++    capture.close()
++    assert capture.done is True
++    assert out.read_bytes() == data
++    assert downloads == []
++
++
++def test_original_click_is_restored_after_capture_closes(browser_page):
++    import base64
++    page, downloads, tmp_path = browser_page
++    data = _jpeg_bytes(seed=3)
++    capture = flow_ui_blob.arm(page, tmp_path / "unused.jpg", _validator)
++    capture.close()
++    assert page.evaluate("() => Object.prototype.hasOwnProperty.call(HTMLAnchorElement.prototype, 'click')") is False
++    with page.expect_download(timeout=15000) as info:
++        page.evaluate("""(args) => { const r = (%s)(args); r.a.click(); }""" % _BLOB_JS,
++                      {"b64": base64.b64encode(data).decode()})
++    info.value  # a normal browser download starts again
++    assert len(downloads) == 1
++
++
++def test_revoked_blob_falls_back_to_the_original_click(browser_page):
++    import base64
++    page, downloads, tmp_path = browser_page
++    data = _jpeg_bytes(seed=5)
++    capture = flow_ui_blob.arm(page, tmp_path / "fallback.jpg", _validator)
++    page.evaluate("""(args) => { const r = (%s)(args); URL.revokeObjectURL(r.url); r.a.click(); }""" % _BLOB_JS,
++                  {"b64": base64.b64encode(data).decode()})
++    assert _wait(page, lambda: not capture.active, seconds=15)
++    capture.close()
++    assert capture.done is False
++    assert _wait(page, lambda: len(downloads) >= 1, seconds=15)  # the original download ran as the fallback
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/tools/update_v787_to_v788.py b/tools/update_v787_to_v788.py
+--- a/tools/update_v787_to_v788.py	2026-10-24 09:05:04.001539725 +0000
++++ b/tools/update_v787_to_v788.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,152 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.88 update (download diagnostics: log-only records of which page, context or browser
+-closed during a Flow image download, the Playwright error class and text when a save fails, and the reason
+-each in-page blob capture gave up) to a v7.0.87 installation. No download behaviour changes.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.88 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.88/tools/update_v787_to_v788.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.88/tools/update_v787_to_v788.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'DOWNLOAD_DIAGNOSTICS_V7_0_88.md',
+-    'VERSION',
+-    'engine/flow_blob_capture.py',
+-    'engine/flow_download_diagnostics.py',
+-    'engine/flow_ui_blob.py',
+-    'engine/providers/flow_browser.py',
+-    'tests/test_v788_download_diagnostics.py',
+-    'tools/update_v787_to_v788.py',
+-]
+-# Files as they exist in 7.0.87: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['62bf86ddb3e83732a91bc0fa3a25aa3a0628a367685f6daff67635ccda476a89'],
+-    'engine/flow_blob_capture.py': ['9590c102765cc152bf5026e36ae761439fa147132eba8bbdfb4e88457ef8596b'],
+-    'engine/flow_ui_blob.py': ['d5d0bf27f862e83c026a8c5aae827ceb69f824c6816a3ca436f3605892f97ec2'],
+-    'engine/providers/flow_browser.py': ['09d00ae679ae2432b1f93f7bb4a51089a5f2292676d66cf4167511211c9e5843'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.87', '7.0.88')  # 7.0.88 allows a safe re-run after success
+-
+-# The 7.0.86 to 7.0.87 update ships in the 7.0.87 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.86', '7.0.87', 'tools/update_v786_to_v787.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.87 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.87 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.87 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.88 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.88 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.88 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.87-to-v7.0.88-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.88. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/tools/update_v788_to_v789.py b/tools/update_v788_to_v789.py
+--- a/tools/update_v788_to_v789.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v788_to_v789.py	2026-10-24 09:05:04.025539845 +0000
+@@ -0,0 +1,151 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.89 update (Flow image downloads: the exact UI blob is read in the page by a click hook,
++before the browser's download manager starts; launch transport and the Playwright browser-log tail
++are recorded) to a v7.0.88 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.89 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.89/tools/update_v788_to_v789.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.89/tools/update_v788_to_v789.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'FLOW_UI_BLOB_CLICK_HOOK_V7_0_89.md',
++    'VERSION',
++    'engine/flow_download_diagnostics.py',
++    'engine/flow_ui_blob.py',
++    'engine/providers/flow_browser.py',
++    'tests/test_v789_blob_click_hook.py',
++    'tools/update_v788_to_v789.py',
++]
++# Files as they exist in 7.0.88: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['0f529aec95008921a13cc79528d1394165005ccdef1dba0b5108cdbb5b23a3c2'],
++    'engine/flow_download_diagnostics.py': ['2663d27f45a722ed4b67f9891eb8efb1e7f6764fb99cd69831ac35ca7e69a805'],
++    'engine/flow_ui_blob.py': ['c1d07fd1239999d633a6122239cbee11031d1edfc3ab3111eca82717631d48fd'],
++    'engine/providers/flow_browser.py': ['8b2a19eaf9dd49ad376b49c102970cfe9cb686df3ad6686625cce16db45edc17'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.88', '7.0.89')  # 7.0.89 allows a safe re-run after success
++
++# The 7.0.87 to 7.0.88 update ships in the 7.0.88 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.87', '7.0.88', 'tools/update_v787_to_v788.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.88 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.88 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.88 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.89 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.89 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.89 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.88-to-v7.0.89-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.89. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

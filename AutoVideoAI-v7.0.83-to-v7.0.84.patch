@@ -1,0 +1,619 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/KEY_PROFILES_V7_0_84.md b/KEY_PROFILES_V7_0_84.md
+--- a/KEY_PROFILES_V7_0_84.md	1970-01-01 00:00:00.000000000 +0000
++++ b/KEY_PROFILES_V7_0_84.md	2026-10-24 04:36:18.814857086 +0000
+@@ -0,0 +1,35 @@
++# Gemini key profiles from .env (v7.0.84)
++
++## What was reported
++
++Two extra keys were added to `.env` as `GEMINI_API_KEY_<NAME>`. Create step 4 showed only the default key and one
++extra profile.
++
++## Causes addressed
++
++1. **Keys added after the dashboard started were not seen.** `.env` was read once, at start-up.
++2. **Some names were silently ignored.** Only uppercase names with letters, digits and underscores were accepted.
++   Lowercase names, hyphens, and digits written straight after `GEMINI_API_KEY` (for example `GEMINI_API_KEY2`) were
++   not.
++3. **Two entries with the same name collapsed into one profile.** For example, `GEMINI_API_KEY_ASUS` and
++   `gemini_api_key_asus`. Only one is used.
++
++## What changed
++
++- Key profiles are read from the process environment and from the `.env` files on each page refresh. A new key
++  appears without restarting the dashboard.
++- Names are matched without regard to case. `GEMINI_API_KEY_<NAME>`, `GEMINI_API_KEY-<NAME>` and `GEMINI_API_KEY<digits>`
++  are all accepted. `GEMINI_API_KEYS_X` is not, because it is not a profile name.
++- When two entries define the same profile, the uppercase `GEMINI_API_KEY_<NAME>` spelling is used.
++- Create step 4 shows a line under the route pickers for every entry that is not used, with the name and the reason.
++  Values are never shown.
++- A value already loaded at start-up is not changed by a later edit to `.env`. Restart the dashboard after editing the
++  value of an existing key.
++
++## Files
++
++- `engine/audio/tts.py`: `gemini_env_files`, `gemini_key_profiles`, `gemini_key_problems`, `gemini_api_key`.
++- `app.py`: route pickers show ignored entries.
++- `tests/test_v784_key_profiles.py` (new): 6 tests.
++- `tests/test_v782_tts_routes.py`: its fixture keeps real `.env` files out of the tests.
++- `tools/update_v783_to_v784.py`: updater from 7.0.83.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/VERSION b/VERSION
+--- a/VERSION	2026-10-24 04:36:18.774856886 +0000
++++ b/VERSION	2026-10-24 04:36:18.786856946 +0000
+@@ -1 +1 @@
+-7.0.83
++7.0.84
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/app.py b/app.py
+--- a/app.py	2026-10-24 04:36:18.774856886 +0000
++++ b/app.py	2026-10-24 04:36:18.786856946 +0000
+@@ -696,13 +696,16 @@
+         st.write('Edition languages: ' + ', '.join(LANGUAGES[x].label for x in batch_languages))
+         # 7.0.82: each language may use its own Gemini route (model and .env key profile). Each route keeps
+         # its own daily quota, so Flash-Lite and a second billed profile can carry a language on a busy day.
+-        from engine.audio.tts import gemini_key_profiles
++        from engine.audio.tts import gemini_key_profiles, gemini_key_problems
+         route_choices = {'Batch setting above': ''}
+         for profile_name in gemini_key_profiles():
+             suffix = '' if profile_name == 'default' else '@' + profile_name
+             key_label = 'default key' if profile_name == 'default' else profile_name + ' key'
+             route_choices['Flash · ' + key_label] = 'gemini' + suffix
+             route_choices['Flash-Lite · ' + key_label] = 'gemini-lite' + suffix
++        # 7.0.84: explain .env entries that were not used (names and reasons only; no key values).
++        for problem in gemini_key_problems():
++            st.caption('Gemini key not used: ' + problem)
+         language_routes = {}
+         if studio_voice_on and len(route_choices) > 1:
+             st.caption('Gemini route per language (optional). Key profiles come from .env: GEMINI_API_KEY is the default, and GEMINI_API_KEY_<NAME> adds a profile. Use keys for projects you own and pay for; separate free-tier projects do not add daily quota.')
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/engine/audio/tts.py b/engine/audio/tts.py
+--- a/engine/audio/tts.py	2026-10-24 04:36:18.778856906 +0000
++++ b/engine/audio/tts.py	2026-10-24 04:36:18.790856966 +0000
+@@ -120,7 +120,8 @@
+ GEMINI_TTS_ATTEMPTS = 3
+ GEMINI_TTS_RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+ GEMINI_TTS_MINUTE_WAIT = 65          # seconds; a per-minute 429 clears after one window
+-GEMINI_PROFILE_ENV = re.compile(r"^GEMINI_API_KEY_([A-Z0-9_]+)$")
++# 7.0.84: profile names match without regard to case. "_" or "-" separates the name; a digit may follow directly (GEMINI_API_KEY2).
++GEMINI_PROFILE_ENV = re.compile(r"^GEMINI_API_KEY(?:[_-]|(?=[0-9]))([A-Za-z0-9][A-Za-z0-9_-]*)$", re.IGNORECASE)
+ 
+ 
+ def gemini_chunk_chars() -> int:
+@@ -132,32 +133,88 @@
+     return min(max(value, 500), 6000)
+ 
+ 
++def gemini_env_files() -> list:
++    """The .env files searched for Gemini key profiles, at call time (7.0.84). Tests replace this with an empty list."""
++    from engine.env_config import _candidate_files
++    return [path for path in _candidate_files(None) if path.is_file()]
++
++
++def _gemini_scan() -> tuple[dict, list]:
++    """Return ({profile: (variable, value)}, problems). Names and problems only; values never leave this function.
++
++    The process environment wins over .env files. A .env entry is read at each call, so a key added while the
++    dashboard runs appears on the next page refresh. Editing the value of a key already loaded needs a restart.
++    """
++    from dotenv import dotenv_values
++    rows = [(str(var), str(value)) for var, value in os.environ.items()]
++    for path in gemini_env_files():
++        try:
++            values = dotenv_values(path, encoding="utf-8-sig")
++        except Exception:
++            continue
++        rows.extend((str(key or "").strip().lstrip("\ufeff"), str(value or "")) for key, value in values.items())
++    values, empty = {}, []
++    for var, raw in rows:
++        if not var.upper().startswith("GEMINI_API_KEY"):
++            continue
++        value = raw.strip()
++        if value and var not in values:
++            values[var] = value
++        elif not value and var not in empty:
++            empty.append(var)
++    profiles, problems = {}, []
++    for var, value in values.items():
++        if var.upper() == "GEMINI_API_KEY":
++            profile = "default"
++        else:
++            match = GEMINI_PROFILE_ENV.match(var)
++            if not match:
++                problems.append(var + ": name not recognised; use GEMINI_API_KEY_<NAME>. Ignored.")
++                continue
++            profile = match.group(1).lower()
++        profiles.setdefault(profile, []).append((var, value))
++    result = {}
++    for profile, entries in profiles.items():
++        # Prefer the canonical spelling GEMINI_API_KEY_<NAME> when two entries name the same profile.
++        entries.sort(key=lambda item: (item[0] != item[0].upper(), item[0]))
++        var, value = entries[0]
++        result[profile] = (var, value)
++        if len(entries) > 1:
++            problems.append("two entries define key profile '" + profile + "' (" + ", ".join(v for v, _ in entries)
++                            + "); only " + var + " is used")
++    for var in empty:
++        # A blank GEMINI_API_KEY= line is normal; a blank named profile is worth a warning.
++        if var not in values and var.upper() != "GEMINI_API_KEY" and GEMINI_PROFILE_ENV.match(var):
++            problems.append(var + ": value is empty. Ignored.")
++    return result, problems
++
++
+ def gemini_key_profiles() -> list[str]:
+-    """Key profiles configured in .env (7.0.82). Names only; key values are never returned.
++    """Key profiles configured in .env (7.0.82; names only, key values are never returned).
+ 
+     ``GEMINI_API_KEY`` is the profile ``default``. ``GEMINI_API_KEY_<NAME>`` is the profile ``<name>``.
+     Every profile should belong to a Google project you own and pay for. Two free-tier projects do not
+     add quota together; the daily limit is per project and per model.
+     """
+-    names = []
+-    if str(os.getenv("GEMINI_API_KEY", "")).strip():
+-        names.append("default")
+-    for variable, value in os.environ.items():
+-        match = GEMINI_PROFILE_ENV.match(variable)
+-        if match and str(value).strip():
+-            names.append(match.group(1).lower())
+-    return names
++    profiles, _ = _gemini_scan()
++    return list(profiles)
++
++
++def gemini_key_problems() -> list[str]:
++    """Gemini key entries that were ignored, with the reason (7.0.84). Names only."""
++    _, problems = _gemini_scan()
++    return problems
+ 
+ 
+ def gemini_api_key(profile: str = "default") -> str:
+     profile = str(profile or "default").strip().lower()
++    profiles, _ = _gemini_scan()
++    if profile in profiles:
++        return profiles[profile][1]
+     variable = "GEMINI_API_KEY" if profile == "default" else f"GEMINI_API_KEY_{profile.upper()}"
+-    key = str(os.getenv(variable, "")).strip()
+-    if not key:
+-        raise RuntimeError(
+-            f"{variable} is not configured. Add it to .env (key profile '{profile}'), or choose another "
+-            "Gemini key profile. Run 'python3 cli.py v3 env-doctor' to check which .env file was loaded.")
+-    return key
++    raise RuntimeError(
++        f"{variable} is not configured. Add it to .env (key profile '{profile}'), or choose another "
++        "Gemini key profile. Run 'python3 cli.py v3 env-doctor' to check which .env file was loaded.")
+ 
+ 
+ def split_route(provider) -> tuple[str, str]:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/tests/test_v782_tts_routes.py b/tests/test_v782_tts_routes.py
+--- a/tests/test_v782_tts_routes.py	2026-10-24 04:36:18.782856926 +0000
++++ b/tests/test_v782_tts_routes.py	2026-10-24 04:36:18.806857046 +0000
+@@ -32,6 +32,7 @@
+     for name in list(os.environ):
+         if name == "GEMINI_API_KEY" or name.startswith("GEMINI_API_KEY_") or name == "GEMINI_TTS_CHUNK_CHARS":
+             monkeypatch.delenv(name, raising=False)
++    monkeypatch.setattr(TTS, "gemini_env_files", lambda: [])  # 7.0.84: keep real .env files out of these tests
+     return monkeypatch
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/tests/test_v784_key_profiles.py b/tests/test_v784_key_profiles.py
+--- a/tests/test_v784_key_profiles.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v784_key_profiles.py	2026-10-24 04:36:18.814857086 +0000
+@@ -0,0 +1,71 @@
++"""v7.0.84: Gemini key profiles from .env are found whenever they are added, with clear reasons for entries not used."""
++import pytest
++
++import engine.audio.tts as TTS
++
++SECRET_ASUS = "asus-secret-value"
++SECRET_ODD = "odd-secret-value"
++SECRET_DEFAULT = "default-secret-value"
++
++
++@pytest.fixture
++def env(monkeypatch, tmp_path):
++    import os
++    for name in list(os.environ):
++        if name == "GEMINI_API_KEY" or name.upper().startswith("GEMINI_API_KEY"):
++            monkeypatch.delenv(name, raising=False)
++    dotenv = tmp_path / ".env"
++    monkeypatch.setattr(TTS, "gemini_env_files", lambda: [dotenv])
++    return monkeypatch, dotenv
++
++
++def test_keys_added_to_env_file_after_start_are_listed_without_restart(env):
++    monkeypatch, dotenv = env
++    assert TTS.gemini_key_profiles() == []
++    dotenv.write_text("GEMINI_API_KEY=" + SECRET_DEFAULT + "\nGEMINI_API_KEY_ASUS=" + SECRET_ASUS + "\n", encoding="utf-8")
++    assert TTS.gemini_key_profiles() == ["default", "asus"]
++    assert TTS.gemini_api_key("asus") == SECRET_ASUS
++
++
++def test_lowercase_hyphen_and_digit_names_are_accepted(env):
++    monkeypatch, dotenv = env
++    dotenv.write_text("GEMINI_API_KEY_paid=" + SECRET_ASUS + "\nGEMINI_API_KEY-third=" + SECRET_ODD
++                      + "\nGEMINI_API_KEY2=" + SECRET_DEFAULT + "\n", encoding="utf-8")
++    assert TTS.gemini_key_profiles() == ["paid", "third", "2"]
++    assert TTS.gemini_api_key("paid") == SECRET_ASUS
++    assert TTS.gemini_api_key("third") == SECRET_ODD
++    assert TTS.gemini_key_problems() == []
++
++
++def test_two_entries_with_one_name_are_reported_and_only_one_is_used(env):
++    monkeypatch, dotenv = env
++    dotenv.write_text("GEMINI_API_KEY_ASUS=" + SECRET_ASUS + "\ngemini_api_key_asus=" + SECRET_ODD + "\n", encoding="utf-8")
++    assert TTS.gemini_key_profiles() == ["asus"]
++    assert TTS.gemini_api_key("asus") == SECRET_ASUS  # canonical uppercase spelling wins
++    problems = TTS.gemini_key_problems()
++    assert len(problems) == 1 and "two entries define key profile 'asus'" in problems[0]
++
++
++def test_empty_named_profile_and_unrecognised_names_are_reported_without_values(env):
++    monkeypatch, dotenv = env
++    dotenv.write_text("GEMINI_API_KEY=\nGEMINI_API_KEY_EMPTY=\nGEMINI_API_KEY_=" + SECRET_ODD + "\n"
++                      "GEMINI_API_KEYS_X=" + SECRET_ASUS + "\nGEMINI_API_KEY_ASUS=" + SECRET_DEFAULT + "\n", encoding="utf-8")
++    assert TTS.gemini_key_profiles() == ["asus"]
++    problems = TTS.gemini_key_problems()
++    text = repr(problems)
++    assert any("GEMINI_API_KEY_EMPTY: value is empty" in p for p in problems)
++    assert any("GEMINI_API_KEYS_X" in p and "not recognised" in p for p in problems)
++    assert not any("GEMINI_API_KEY=" in p for p in problems)  # a blank default line is normal
++    assert SECRET_ODD not in text and SECRET_ASUS not in text and SECRET_DEFAULT not in text
++
++
++def test_process_environment_wins_over_env_file(env):
++    monkeypatch, dotenv = env
++    dotenv.write_text("GEMINI_API_KEY_ASUS=" + SECRET_ODD + "\n", encoding="utf-8")
++    monkeypatch.setenv("GEMINI_API_KEY_ASUS", SECRET_ASUS)
++    assert TTS.gemini_api_key("asus") == SECRET_ASUS
++
++
++def test_missing_profile_error_still_names_the_variable(env):
++    with pytest.raises(RuntimeError, match="GEMINI_API_KEY_NOPE is not configured"):
++        TTS.gemini_api_key("nope")
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/tools/update_v782_to_v783.py b/tools/update_v782_to_v783.py
+--- a/tools/update_v782_to_v783.py	2026-10-24 04:36:18.782856926 +0000
++++ b/tools/update_v782_to_v783.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,170 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.83 update (speech batches in Jobs & Recovery: Create step 4 narration and TTS that stopped
+-are listed, corrected and resumed; job rerun uses the approved narration; approve checks script words) to a
+-v7.0.82 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.83 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.83/tools/update_v782_to_v783.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.83/tools/update_v782_to_v783.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-A file you changed locally is preserved and the update stops before touching anything.
+-Stop the dashboard before --apply.
+-"""
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'SPEECH_BATCHES_V7_0_83.md',
+-    'VERSION',
+-    'app.py',
+-    'engine/speech_cards.py',
+-    'engine/speech_batches.py',
+-    'tests/test_v783_speech_batches.py',
+-    'tools/update_v782_to_v783.py',
+-]
+-# Files as they exist in 7.0.82: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['1c0503da2dceefde568875c8c39d620d235ff7dd72fdc71f2bd3be685131a583'],
+-    'app.py': ['08d46c0dc9971d3d6b1bfa77b30a38c31cb7cfa5aeadd2852246c9d814c3e079'],
+-    'engine/speech_cards.py': ['fb14d728091c453ff1de6785a1e8b7e8eb1b3600127701cf764be543685026d8'],
+-}
+-ACCEPTED_INSTALLS = ('7.0.82', '7.0.83')  # 7.0.83 allows a safe re-run after success
+-
+-# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
+-# each run from the installation folder with the matching release folder extracted beside it.
+-EARLIER_STEPS = [
+-    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
+-    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
+-    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
+-    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
+-    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
+-    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
+-    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
+-    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
+-    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
+-    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
+-    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
+-    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
+-    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
+-    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
+-    ('7.0.81', '7.0.82', 'tools/update_v781_to_v782.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.82 (found ' + current + '). '
+-                'The earlier releases are not recognised by this updater.')
+-    lines = []
+-    version = current
+-    for start, end, path in EARLIER_STEPS:
+-        if start != version:
+-            continue
+-        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
+-        version = end
+-        if version == '7.0.82':
+-            break
+-    return ('This update requires an installed 7.0.82 (found ' + current + '). Apply the earlier updates in order, '
+-            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
+-            + '\n'.join(lines) + '\nThen run this 7.0.83 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.83 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.83 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.82-to-v7.0.83-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.83. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' a/tools/update_v783_to_v784.py b/tools/update_v783_to_v784.py
+--- a/tools/update_v783_to_v784.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v783_to_v784.py	2026-10-24 04:36:18.814857086 +0000
+@@ -0,0 +1,172 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.84 update (Gemini key profiles: .env keys added while the dashboard runs are found without a
++restart; names are matched without regard to case, with hyphens or digits; entries not used are listed with the
++reason, names only) to a v7.0.83 installation.
++
++Usage (run from the existing installation folder, after extracting the 7.0.83 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.84/tools/update_v783_to_v784.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.84/tools/update_v783_to_v784.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++A file you changed locally is preserved and the update stops before touching anything.
++Stop the dashboard before --apply.
++"""
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'KEY_PROFILES_V7_0_84.md',
++    'VERSION',
++    'app.py',
++    'engine/audio/tts.py',
++    'tests/test_v782_tts_routes.py',
++    'tests/test_v784_key_profiles.py',
++    'tools/update_v783_to_v784.py',
++]
++# Files as they exist in 7.0.83: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['2248943fa9cce8b22d6ed16242c2a38febfa97208b6009bba784828529d63ac1'],
++    'app.py': ['0e535dddda991b042c1654690e7e2f49b89d221f381209ad5526560e58ba351f'],
++    'engine/audio/tts.py': ['0f4d1bf11865ce5166e24ba609429f2535844e7062e4e1a8f01425a2145fcf17'],
++    'tests/test_v782_tts_routes.py': ['333eac4295e895a25ce16f8d1d3aa0a19f85bdeaa2546a7675bc6d64fc927823'],
++}
++ACCEPTED_INSTALLS = ('7.0.83', '7.0.84')  # 7.0.84 allows a safe re-run after success
++
++# Earlier updates, each shipped in its own release zip. Install them in this order, one step at a time,
++# each run from the installation folder with the matching release folder extracted beside it.
++EARLIER_STEPS = [
++    ('7.0.67', '7.0.68', 'tools/update_v767_to_v768.py'),
++    ('7.0.68', '7.0.69', 'tools/update_v768_to_v769.py'),
++    ('7.0.69', '7.0.70', 'tools/update_v769_to_v770.py'),
++    ('7.0.70', '7.0.71', 'tools/update_v770_to_v771.py'),
++    ('7.0.71', '7.0.72', 'tools/update_v771_to_v772.py'),
++    ('7.0.72', '7.0.73', 'tools/update_v772_to_v773.py'),
++    ('7.0.73', '7.0.74', 'tools/update_v773_to_v774.py'),
++    ('7.0.74', '7.0.75', 'tools/update_v774_to_v775.py'),
++    ('7.0.75', '7.0.76', 'tools/update_v775_to_v776.py'),
++    ('7.0.76', '7.0.77', 'tools/update_v776_to_v777.py'),
++    ('7.0.77', '7.0.78', 'tools/update_v777_to_v778.py'),
++    ('7.0.78', '7.0.79', 'tools/update_v778_to_v779.py'),
++    ('7.0.79', '7.0.80', 'tools/update_v779_to_v780.py'),
++    ('7.0.80', '7.0.81', 'tools/update_v780_to_v781.py'),
++    ('7.0.81', '7.0.82', 'tools/update_v781_to_v782.py'),
++    ('7.0.82', '7.0.83', 'tools/update_v782_to_v783.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.83 (found ' + current + '). '
++                'The earlier releases are not recognised by this updater.')
++    lines = []
++    version = current
++    for start, end, path in EARLIER_STEPS:
++        if start != version:
++            continue
++        lines.append('    python3 ../AutoVideoAI-v' + end + '/' + path + ' .' + ' --apply')
++        version = end
++        if version == '7.0.83':
++            break
++    return ('This update requires an installed 7.0.83 (found ' + current + '). Apply the earlier updates in order, '
++            'each from the release zip folder for its version (extract that zip beside this installation first):\n'
++            + '\n'.join(lines) + '\nThen run this 7.0.84 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.84 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.84 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.83-to-v7.0.84-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.84. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

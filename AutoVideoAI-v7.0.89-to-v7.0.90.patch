@@ -1,0 +1,618 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/FLOW_REFERENCE_TILE_RECOVERY_V7_0_90.md b/FLOW_REFERENCE_TILE_RECOVERY_V7_0_90.md
+--- a/FLOW_REFERENCE_TILE_RECOVERY_V7_0_90.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FLOW_REFERENCE_TILE_RECOVERY_V7_0_90.md	2026-10-25 04:52:48.568011120 +0000
+@@ -0,0 +1,54 @@
++# Flow image recovery: uploaded references shown as tiles (v7.0.90)
++
++## What the job showed (shot_020, 2026-10-25)
++- The request was journaled as `submission_uncertain`, with no acknowledgement.
++- After the persisted project reopened, the probes downloaded for the two new tiles were the
++  two uploaded references: `location_master.jpg` and `character-aradhya-aaa37613-0.png`
++  (the journal records both as references, checked by checksum and visual match).
++- No generated image appeared in the project in any attempt. This is consistent with the
++  recorded data, but it does not prove whether Flow generated one.
++- The generation wait counted the two references as fresh output. After 30 s it returned
++  `Multiple distinct images require exact request correlation`, so the exact classifier never
++  decided anything. Three recovery attempts ran the same way, and the job was left paused.
++
++## Cause
++Uploaded references are listed in the project grid under URLs that differ from the pre-submit
++baseline. The baseline therefore does not exclude them, and the wait sees them as new output.
++The journal already classifies them, but the wait did not use that.
++
++## What changed
++- `engine/flow_image_transaction.py`: the references the journal has already classified (by
++  checksum or visual match, in this project) are added to the wait's baseline. Only those are
++  excluded; tile order is never used.
++- `engine/providers/flow_browser.py`: `wait_for_agent_generation(..., transactional_images=True)`
++  returns after the stability window instead of failing, so the exact classifier decides. Other
++  callers keep the old failure.
++- `engine/isolated_frame_regeneration.py`: the same exclusion and hand-off for regenerated frames.
++
++## What it does not do
++- It never submits a prompt, clicks Generate, or spends credits. Recovery stays download-only.
++- It does not pick between two real, non-reference outputs. That still stops with
++  `No unique non-reference image yet`, and no file is written.
++- It does not create an image when Flow produced none. If the project shows no generated image,
++  recovery can wait and then stop. A new submission would spend credits, so that is a user decision.
++
++## Verification
++- `tests/test_v790_reference_tile_recovery.py`: references excluded only when classified in this
++  project; recovery classifies the references, waits with them excluded, then commits the one
++  real output; two real outputs stay blocked with no file written; a wait that sees only
++  references does not commit; the waiter hands over only when transactional.
++- Mutation check: removing the exclusion and the hand-off makes 3 of these tests fail.
++- The v743 image-transaction, v787 download and v788/v789 tests still pass.
++
++## What to do with the paused job (shot_020)
++1. Open the saved Flow project and look for a new generated image (not the two references).
++   Do not click Generate.
++2. Install 7.0.90 and resume. Recovery is download-only and will report either the one
++   unique image, or the reason it could not decide.
++3. If Flow shows no generated image for shot_020, send the project screenshot before any
++   resubmission.
++
++## Update
++From 7.0.89: `python3 ../AutoVideoAI-v7.0.90/tools/update_v789_to_v790.py . --apply`
++From 7.0.88: first `python3 ../AutoVideoAI-v7.0.89/tools/update_v788_to_v789.py . --apply`.
++Stop the dashboard first. Runtime data, jobs, profiles and outputs are never touched.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/VERSION b/VERSION
+--- a/VERSION	2026-10-25 04:52:48.552011040 +0000
++++ b/VERSION	2026-10-25 04:52:48.572011140 +0000
+@@ -1 +1 @@
+-7.0.89
++7.0.90
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/engine/flow_image_transaction.py b/engine/flow_image_transaction.py
+--- a/engine/flow_image_transaction.py	2026-10-25 04:52:48.556011060 +0000
++++ b/engine/flow_image_transaction.py	2026-10-25 04:52:48.576011160 +0000
+@@ -31,6 +31,22 @@
+     return list(refs)
+ 
+ 
++def known_reference_signatures(request):
++    """Tile signatures already classified as uploaded references by checksum/visual match.
++
++    v7.0.90: Flow re-lists uploaded references as project tiles under new URLs, so the
++    pre-submit baseline does not always match them. Once the journal has classified such a
++    tile, it is excluded from the generation wait. The journal, not tile order, decides.
++    """
++    project = request.get('project_url')
++    return {str(entry['signature']) for entry in (request.get('capture_probes') or {}).values()
++            if entry.get('reference') and entry.get('signature') and entry.get('project_url') == project}
++
++
++def wait_baseline(request):
++    return set(request.get('baseline', [])) | known_reference_signatures(request)
++
++
+ def completed(output, request):
+     return (request.get('status') == 'downloaded' and image_valid(output)
+             and request.get('media_sha256') == sha(output))
+@@ -173,11 +189,12 @@
+                     raise
+                 if attempt:
+                     raise
+-            bridge.wait_for_agent_generation(before_assets=set(request.get('baseline', [])), timeout_s=360,
++            bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=360,
+                 required_kind='image', approval=compiled.get('approval', 'once'),
+                 max_generation_credits=compiled.get('max_generation_credits', 0), image_request=None,
+                 service_busy_wait_s=compiled.get('flow_capacity_wait_seconds', 90),
+-                service_busy_retries=compiled.get('flow_capacity_retries', 1))
++                service_busy_retries=compiled.get('flow_capacity_retries', 1),
++                transactional_images=True)
+             return capture(provider, bridge, request, output, refs)
+         except Exception as error:
+             last = error
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/engine/isolated_frame_regeneration.py b/engine/isolated_frame_regeneration.py
+--- a/engine/isolated_frame_regeneration.py	2026-10-25 04:52:48.556011060 +0000
++++ b/engine/isolated_frame_regeneration.py	2026-10-25 04:52:48.580011180 +0000
+@@ -318,9 +318,11 @@
+                     # A recorded image signature means generation already reached
+                     # capture. Do not rerun the generic freshness wait after reopen.
+                     if not request.get('signature'):
+-                        bridge.wait_for_agent_generation(before_assets=set(request['baseline']), timeout_s=360,
++                        from .flow_image_transaction import wait_baseline
++                        bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=360,
+                             required_kind='image', approval='once', max_generation_credits=0,
+-                            image_request=None, service_busy_wait_s=90, service_busy_retries=1)
++                            image_request=None, service_busy_wait_s=90, service_busy_retries=1,
++                            transactional_images=True)
+                     recover_capture(provider_factory, provider, bridge, record, request, output, preview['references'])
+                 commit(root, record, output)
+                 record['phase'] = 'committed'
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-25 04:52:48.560011080 +0000
++++ b/engine/providers/flow_browser.py	2026-10-25 04:52:48.580011180 +0000
+@@ -2459,9 +2459,14 @@
+                                   video_ready_grace_s: int | None = None,
+                                   approval: str = "once",
+                                   max_generation_credits: int | None = None,
+-                                  image_request: dict | None = None) -> bool:
++                                  image_request: dict | None = None,
++                                  transactional_images: bool = False) -> bool:
+         """Wait for the current Agent request to produce a genuinely new asset.
+ 
++        v7.0.90: ``transactional_images`` is used only by the isolated image journal. Several fresh
++        images then mean "classify them now": the journal downloads each candidate and excludes uploaded
++        references by checksum. The wait returns True instead of failing, so no output is guessed.
++
+         Video requests require explicit video evidence. Flow can show an
+         intermediate image/poster before the playable/downloadable video is ready;
+         an untyped image is never promoted to a completed video after a timer. We
+@@ -2606,6 +2611,9 @@
+                     ambiguous_images_since=now
+                     print(f'[Flow] {len(matching)} distinct fresh images; waiting 30s for stability before exact journal correlation.')
+                 elif now-ambiguous_images_since >= 30:
++                    if transactional_images:
++                        print(f'[Flow] {len(matching)} fresh images are stable; exact journal classification will decide.')
++                        return True
+                     self.last_agent_failure='Multiple distinct images require exact request correlation'
+                     return False
+             else:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/tests/test_v790_reference_tile_recovery.py b/tests/test_v790_reference_tile_recovery.py
+--- a/tests/test_v790_reference_tile_recovery.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v790_reference_tile_recovery.py	2026-10-25 04:52:48.588011220 +0000
+@@ -0,0 +1,152 @@
++"""v7.0.90: a saved image request whose uploaded references re-appear as project tiles.
++
++Field case (shot_020, 2026-10-25): after the project reopened, both uploaded references
++(location_master and character-aradhya) were listed as new tiles under new URLs. The pre-submit
++baseline did not match them, the generation wait treated them as fresh output and gave up after
++30 s ("Multiple distinct images require exact request correlation"). Recovery then never reached
++the exact classifier. Recovery must classify the references by checksum, exclude them from the
++wait, and commit exactly one non-reference image. Two real outputs must stay blocked.
++No test here submits a prompt or spends generation credits.
++"""
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++from PIL import Image
++
++from engine import flow_image_transaction as tx
++from engine.providers import flow_browser
++from engine.providers.flow_browser import FlowBrowser, FlowRequestPending
++
++PROJECT = 'https://flow.google.com/project/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
++
++
++def picture(path, color):
++    Image.new('RGB', (128, 96), color).save(path)
++    return str(path)
++
++
++class Bridge:
++    normalize_project_url = staticmethod(FlowBrowser.normalize_project_url)
++
++    def __init__(self, refs, generated):
++        self.refs = refs            # tile signature -> file served for that tile
++        self.generated = generated  # file served for any other tile
++        self.assets = list(refs)
++        self.project = PROJECT
++        self.wait_calls = []
++        self.generation_finishes = None  # signatures appended when the wait runs
++        self.downloads = []
++
++    def current_project_url(self): return self.project
++    def ensure_project(self, *a, **k): self.project = k.get('project_url') or PROJECT
++    def media_assets(self): return [{'kind': 'image', 'sig': x} for x in self.assets]
++
++    def download_latest_asset(self, path, preferred_signature, **kw):
++        self.downloads.append(preferred_signature)
++        source = self.refs.get(preferred_signature, self.generated)
++        Path(path).write_bytes(Path(source).read_bytes())
++
++    def wait_for_agent_generation(self, **kw):
++        self.wait_calls.append(kw)
++        if self.generation_finishes:
++            self.assets = self.assets + list(self.generation_finishes)
++            self.generation_finishes = None
++        return True
++
++
++class Provider:
++    def __init__(self, bridge): self.bridge = bridge
++    def _ensure(self): return self.bridge
++    def close(self): pass
++
++
++@pytest.fixture
++def case(tmp_path):
++    r1 = picture(tmp_path / 'location_master.jpg', 'red')
++    r2 = picture(tmp_path / 'character.png', 'blue')
++    generated = picture(tmp_path / 'scene.jpg', 'green')
++    output = tmp_path / 'shot_020_open.jpg'
++    refs = {'tile-location': r1, 'tile-character': r2}
++    request = {'schema_version': 1, 'scope': tx.SCOPE, 'kind': 'image', 'status': 'pending',
++               'phase': 'submission_uncertain', 'project_url': PROJECT, 'project_name': 'AutoVideo-Image-test',
++               'reference_hashes': {r1: tx.sha(r1), r2: tx.sha(r2)},
++               'baseline': ['old-location', 'old-character'], 'signature': '', 'submitted_prompt': 'x'}
++    return output, refs, generated, request
++
++
++def test_known_references_come_only_from_checked_probes_of_this_project(case):
++    _, _, _, request = case
++    request['capture_probes'] = {
++        'a': {'project_url': PROJECT, 'signature': 'tile-location', 'reference': '/refs/location_master.jpg'},
++        'b': {'project_url': PROJECT, 'signature': 'tile-generated', 'reference': None},
++        'c': {'project_url': 'https://flow.google.com/project/other', 'signature': 'tile-other', 'reference': '/refs/x.jpg'},
++    }
++    assert tx.known_reference_signatures(request) == {'tile-location'}
++    assert 'old-location' in tx.wait_baseline(request) and 'tile-location' in tx.wait_baseline(request)
++    assert 'tile-generated' not in tx.wait_baseline(request)
++
++
++def test_recovery_classifies_references_then_commits_the_one_real_output(case):
++    output, refs, generated, request = case
++    bridge = Bridge(refs, generated)
++    bridge.generation_finishes = ['tile-generated']  # appears while the wait runs
++    tx.recover(Provider(bridge), request, output, compiled={})
++    assert tx.completed(output, request)
++    assert output.read_bytes() == Path(generated).read_bytes()
++    # The first wait saw both references as already classified, and the transactional hand-off was requested.
++    assert len(bridge.wait_calls) == 1
++    assert bridge.wait_calls[0]['transactional_images'] is True
++    assert {'old-location', 'old-character'} | {'tile-location', 'tile-character'} <= set(bridge.wait_calls[0]['before_assets'])
++    assert request['signature'] == 'tile-generated'
++
++
++def test_two_real_outputs_stay_blocked_and_no_file_is_written(case):
++    output, refs, generated, request = case
++    bridge = Bridge(refs, generated)
++    bridge.assets = list(refs) + ['tile-generated-a', 'tile-generated-b']
++    bridge.refs.update({'tile-generated-a': generated, 'tile-generated-b': generated})
++    with pytest.raises(FlowRequestPending):
++        tx.recover(Provider(bridge), request, output, compiled={})
++    assert not output.exists()
++    assert not tx.completed(output, request)
++
++
++def test_a_generation_wait_that_sees_only_references_does_not_commit(case):
++    output, refs, generated, request = case
++    bridge = Bridge(refs, generated)  # nothing new was generated
++    with pytest.raises(FlowRequestPending):
++        tx.recover(Provider(bridge), request, output, compiled={})
++    assert not output.exists()
++
++
++class _Clock:
++    def __init__(self): self.now = 10_000.0
++    def time(self): return self.now
++    def advance(self, seconds): self.now += seconds
++
++
++def _waiter(clock, assets):
++    b = FlowBrowser.__new__(FlowBrowser)
++    b.ui = {'actions': {}, 'timeouts': {'generation': 300, 'poll_interval': 8}}
++    b._page = SimpleNamespace(inner_text=lambda selector: 'Done',
++                              wait_for_timeout=lambda ms: clock.advance(ms / 1000.0))
++    b.detect_failure = lambda: None
++    b.detect_service_busy = lambda: None
++    b.media_assets = lambda: [{'kind': 'image', 'sig': s} for s in assets]
++    return b
++
++
++def test_waiter_hands_over_stable_candidates_only_for_the_transaction(monkeypatch):
++    clock = _Clock()
++    monkeypatch.setattr(flow_browser.time, 'time', clock.time)
++    assets = ['tile-location', 'tile-character']
++    handed_over = _waiter(clock, assets).wait_for_agent_generation(
++        before_assets=set(), timeout_s=300, required_kind='image', transactional_images=True)
++    assert handed_over is True
++
++    clock = _Clock()
++    monkeypatch.setattr(flow_browser.time, 'time', clock.time)
++    legacy = _waiter(clock, assets)
++    assert legacy.wait_for_agent_generation(before_assets=set(), timeout_s=300, required_kind='image') is False
++    assert legacy.last_agent_failure == 'Multiple distinct images require exact request correlation'
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/tools/update_v788_to_v789.py b/tools/update_v788_to_v789.py
+--- a/tools/update_v788_to_v789.py	2026-10-25 04:52:48.568011120 +0000
++++ b/tools/update_v788_to_v789.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,151 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.89 update (Flow image downloads: the exact UI blob is read in the page by a click hook,
+-before the browser's download manager starts; launch transport and the Playwright browser-log tail
+-are recorded) to a v7.0.88 installation.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.89 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.89/tools/update_v788_to_v789.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.89/tools/update_v788_to_v789.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'FLOW_UI_BLOB_CLICK_HOOK_V7_0_89.md',
+-    'VERSION',
+-    'engine/flow_download_diagnostics.py',
+-    'engine/flow_ui_blob.py',
+-    'engine/providers/flow_browser.py',
+-    'tests/test_v789_blob_click_hook.py',
+-    'tools/update_v788_to_v789.py',
+-]
+-# Files as they exist in 7.0.88: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['0f529aec95008921a13cc79528d1394165005ccdef1dba0b5108cdbb5b23a3c2'],
+-    'engine/flow_download_diagnostics.py': ['2663d27f45a722ed4b67f9891eb8efb1e7f6764fb99cd69831ac35ca7e69a805'],
+-    'engine/flow_ui_blob.py': ['c1d07fd1239999d633a6122239cbee11031d1edfc3ab3111eca82717631d48fd'],
+-    'engine/providers/flow_browser.py': ['8b2a19eaf9dd49ad376b49c102970cfe9cb686df3ad6686625cce16db45edc17'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.88', '7.0.89')  # 7.0.89 allows a safe re-run after success
+-
+-# The 7.0.87 to 7.0.88 update ships in the 7.0.88 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.87', '7.0.88', 'tools/update_v787_to_v788.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.88 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.88 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.88 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.89 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.89 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.89 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.88-to-v7.0.89-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.89. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups a/tools/update_v789_to_v790.py b/tools/update_v789_to_v790.py
+--- a/tools/update_v789_to_v790.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v789_to_v790.py	2026-10-25 04:52:48.588011220 +0000
+@@ -0,0 +1,152 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.90 update (Flow image recovery: uploaded references that Flow re-lists as project
++tiles are classified by the saved journal and excluded from the generation wait; a transactional
++image wait hands stable candidates to the exact checksum classifier; two real outputs stay blocked)
++to a v7.0.89 installation. No submission, generation or credit use is added.
++
++Usage (run from the existing installation folder, after extracting the 7.0.90 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.90/tools/update_v789_to_v790.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.90/tools/update_v789_to_v790.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'FLOW_REFERENCE_TILE_RECOVERY_V7_0_90.md',
++    'VERSION',
++    'engine/flow_image_transaction.py',
++    'engine/isolated_frame_regeneration.py',
++    'engine/providers/flow_browser.py',
++    'tests/test_v790_reference_tile_recovery.py',
++    'tools/update_v789_to_v790.py',
++]
++# Files as they exist in 7.0.89: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['46998c0391fce6452b411562360cb82e07d75bd58ecb61b4f98c4a54ce9e77f0'],
++    'engine/flow_image_transaction.py': ['63dbfe46dc767db7077bab9aa5f55fe18448b9cb5ea4862b96c49e4abe3e5ccc'],
++    'engine/isolated_frame_regeneration.py': ['738639ac8f159758c091284fc5dc2e2f6aada5060db35d91e5c4128e1307219a'],
++    'engine/providers/flow_browser.py': ['d4fe437193d5a17031fde5b4e099150ca1a5ee05125632039aa4308437c4cbeb'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.89', '7.0.90')  # 7.0.90 allows a safe re-run after success
++
++# The 7.0.88 to 7.0.89 update ships in the 7.0.89 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.88', '7.0.89', 'tools/update_v788_to_v789.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.89 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.89 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.89 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.90 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.90 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.90 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.89-to-v7.0.90-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.90. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

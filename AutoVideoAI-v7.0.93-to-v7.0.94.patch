@@ -1,0 +1,683 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/FLOW_APPROVAL_IMAGE_REQUESTS_V7_0_94.md b/FLOW_APPROVAL_IMAGE_REQUESTS_V7_0_94.md
+--- a/FLOW_APPROVAL_IMAGE_REQUESTS_V7_0_94.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FLOW_APPROVAL_IMAGE_REQUESTS_V7_0_94.md	2026-10-25 14:16:56.146485599 +0000
+@@ -0,0 +1,59 @@
++# AutoVideo 7.0.94: image requests can pass Flow's credit approval guard; early waits are logged
++
++**Status: fixture-tested only.** The approval and wait behaviour is verified with fakes in
++`tests/test_v794_image_approval.py`. It has NOT been verified against live Flow. Watch the first image run
++after installing.
++
++**Default split size: 2400 characters** per Gemini TTS request (unchanged from 7.0.82).
++
++## Why
++
++Job `20261022-143856-7-small-daily-habits-tha-9729`, shot_023 opening frame, 19:18-19:23 IST on 2026-10-25:
++
++- The 7.0.93 fresh-request loop made three submissions, each in a new project, and then stopped at the cap of 3.
++- Each wait logged "Waiting up to 360s", but two of them returned after about 43 s and the third after about 1 s.
++  Nothing was logged about why.
++- Cause in code: image requests set the approval journal but never the outstanding request id. The approval probe
++  refused every card at its first check ("no outstanding request; unsolicited approval refused"). The wait then
++  returned `False` with no log line.
++
++The 19:27 recovery run in a new process waited the full six minutes and still found no image in project
++`ca1709fe`. That is a separate open question. The new logs will show what Flow is doing.
++
++## What changed
++
++- **Image approvals use the video credit guard.** An image request sets its own request id before submitting and
++  before recovery waits. A card is clicked only when it shows a visible cost at or below `max_generation_credits`
++  (0 for images), and only once per request. A card with no visible cost is never clicked. A paid card is refused
++  and logged as a credit-guard block.
++- **Reservations are kept.** Approval reservations written during a wait are copied back into the in-memory request
++  before any journal write, so a later write cannot drop them and allow a second click.
++- **Approval refusals and timeouts are logged.** A refused approval prints `[Flow] Approval refused: <reason>` and
++  the wait ends. A wait that runs out of time prints `[Flow] Wait ended after <n>s ...`. Some other early exits in the
++  same loop still return without a log line; they are not covered by this release.
++- Unchanged: the fresh-request cap (3 per shot), the rule that two real outputs stay blocked, the rule that video is
++  never resubmitted automatically, and the Resume gate.
++
++## Job 20261022-143856-7-small-daily-habits-tha-9729 (shot_023)
++
++These steps run on your machine, after installing 7.0.94. Nothing is run from this zip.
++
++1. Archive the saved request. It is kept on record, not deleted. Image requests cost no Flow credits, but this command
++   still asks for the credit flag. Run it only if you approve the one additional submission:
++
++       python3 cli.py v3 archive-request 20261022-143856-7-small-daily-habits-tha-9729 storyboard/shot_023_open.jpg --confirm-new-credit-spend
++
++2. Resume. With no journal left for shot_023, this makes one new image submission. If it produces no image, the
++   per-shot cap of 3 stops it again, with an explicit reason.
++
++       python3 cli.py v3 resume 20261022-143856-7-small-daily-habits-tha-9729
++
++## Update
++
++From the installation folder, after extracting this zip beside it. The installation must be 7.0.93 (run the 7.0.93
++update first if it is older):
++
++    python3 ../AutoVideoAI-v7.0.94/tools/update_v793_to_v794.py .            # dry run
++    python3 ../AutoVideoAI-v7.0.94/tools/update_v793_to_v794.py . --apply    # install
++
++Stop the dashboard first. Outputs, saved jobs and browser profiles are not touched.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/VERSION b/VERSION
+--- a/VERSION	2026-10-25 14:16:56.118485456 +0000
++++ b/VERSION	2026-10-25 14:16:56.150485619 +0000
+@@ -1 +1 @@
+-7.0.93
++7.0.94
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_image_transaction.py b/engine/flow_image_transaction.py
+--- a/engine/flow_image_transaction.py	2026-10-25 14:16:56.122485477 +0000
++++ b/engine/flow_image_transaction.py	2026-10-25 14:16:56.158485660 +0000
+@@ -281,13 +281,17 @@
+                     raise
+                 if attempt:
+                     raise
+-            bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=360,
+-                exclude_labels=known_reference_labels(request),
+-                required_kind='image', approval=compiled.get('approval', 'once'),
+-                max_generation_credits=compiled.get('max_generation_credits', 0), image_request=None,
+-                service_busy_wait_s=compiled.get('flow_capacity_wait_seconds', 90),
+-                service_busy_retries=compiled.get('flow_capacity_retries', 1),
+-                transactional_images=True)
++            approval_context(bridge, output, request)
++            try:
++                bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=360,
++                    exclude_labels=known_reference_labels(request),
++                    required_kind='image', approval=compiled.get('approval', 'once'),
++                    max_generation_credits=compiled.get('max_generation_credits', 0), image_request=None,
++                    service_busy_wait_s=compiled.get('flow_capacity_wait_seconds', 90),
++                    service_busy_retries=compiled.get('flow_capacity_retries', 1),
++                    transactional_images=True)
++            finally:
++                sync_approval_reservations(output, request)
+             try:
+                 return capture(provider, bridge, request, output, refs)
+             except RuntimeError as error:
+@@ -319,6 +323,31 @@
+     raise FlowRequestPending('Image recovery checkpoint retained: ' + str(last)) from last
+ 
+ 
++def approval_context(bridge, output, request):
++    """v7.0.94: image requests use the same credit approval guard as video.
++
++    The Flow approval probe refuses any card unless the bridge has a journal AND an outstanding request id.
++    Image submissions set the journal but never the request id, so every wait on that bridge ended at once,
++    silently (job 20261022-143856-7, 19:19-19:23 IST). The id here lets a card be checked against this journal;
++    max_generation_credits stays 0, so a paid card is refused and logged, and an unpriced card is never clicked.
++    """
++    bridge._approval_journal = str(journal_path(output))
++    bridge._approval_card_limit = 1
++    bridge._awaiting_request_id = 'image:' + str(request.get('request_hash') or journal_path(output).name)
++
++
++def sync_approval_reservations(output, request):
++    """Keep credit reservations written by the approval probe. Journal writes use the in-memory request, so
++    without this a later write would drop a reservation made during the wait and allow a second click."""
++    try:
++        disk = json.loads(journal_path(output).read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return
++    if 'approval_reservations' in disk:
++        request['approval_reservations'] = disk['approval_reservations']
++        request['approval_credit_total_reserved'] = disk.get('approval_credit_total_reserved', 0)
++
++
+ def fresh_request_count(output):
+     """Number of archived (old, unresolved) submissions for this shot image."""
+     output = Path(output)
+@@ -427,8 +456,7 @@
+         raise FlowRequestPending('Flow composer did not retain the complete prompt; no Send attempted')
+     request.update(phase='submission_uncertain', submission_before=before, submitted_at=time.time())
+     write_json(path, request)
+-    bridge._approval_journal = str(path)
+-    bridge._approval_card_limit = 1
++    approval_context(bridge, output, request)
+     bridge.submit_prepared_text_video('agent')
+     acknowledged = bridge.wait_for_submission_ack(request['submitted_prompt'], before)
+     request.update(phase='submitted' if acknowledged else 'submission_uncertain',
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-25 14:16:56.122485477 +0000
++++ b/engine/providers/flow_browser.py	2026-10-25 14:16:56.158485660 +0000
+@@ -2552,6 +2552,8 @@
+                     max_credits=max_generation_credits)
+                 confirm = getattr(self, "last_agent_confirmation", {}) or {}
+                 if confirm.get("blocked"):
++                    print(f"[Flow] Approval refused: {confirm.get('reason') or 'unknown reason'}. No card was clicked; "
++                          "the wait ends now.")
+                     return False
+                 approval_resolved = bool(confirm.get("clicked"))
+             body = ""
+@@ -2703,6 +2705,8 @@
+                 if self._looks_like_browser_closed_error(e):
+                     raise FlowBrowserClosedError(str(e))
+                 raise
++        print(f"[Flow] Wait ended after {int(timeout_s or 0)}s with no new generated image "
++              f"(last failure: {self.last_agent_failure or 'none'}).")
+         return False
+ 
+     @staticmethod
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v794_image_approval.py b/tests/test_v794_image_approval.py
+--- a/tests/test_v794_image_approval.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v794_image_approval.py	2026-10-25 14:16:56.170485721 +0000
+@@ -0,0 +1,196 @@
++"""v7.0.94: image requests can use the credit approval guard; an early wait end is always logged.
++
++Field case (job 20261022-143856-7-small-daily-habits-tha-9729, shot_023 opening frame, 2026-10-25 19:18-19:23 IST):
++the image path set the approval journal but never the outstanding request id. Every wait on that bridge therefore
++refused the approval probe at its first check, and returned after about 40 s with no log line.
++
++Fakes only: no browser, no Flow, no submission, no credits. The guard is unchanged: a card with no visible cost is
++never clicked, a card above max_generation_credits (0 for images) is refused, and a card is clicked only once.
++"""
++import json
++import re
++
++import pytest
++from PIL import Image
++
++from engine import flow_image_transaction as tx
++from engine.providers.flow_browser import FlowBrowser, FlowRequestPending
++
++
++class FakeButton:
++    def __init__(self, name): self.name = name; self.clicked = 0
++    def is_visible(self, timeout=0): return True
++    def is_enabled(self, timeout=0): return True
++    def click(self, **kwargs): self.clicked += 1
++
++
++class FakeRole:
++    def __init__(self, page, pattern): self.page = page; self.pattern = pattern; self.first = self
++    def is_visible(self, timeout=0): return any(self.pattern.search(n) for n in self.page.buttons)
++    def is_enabled(self, timeout=0): return True
++    def count(self): return len([n for n in self.page.buttons if self.pattern.search(n)])
++    def nth(self, i):
++        names = [n for n in self.page.buttons if self.pattern.search(n)]
++        return self.page.buttons[names[i]]
++    def click(self, **kwargs):
++        for n, b in self.page.buttons.items():
++            if self.pattern.search(n): b.clicked += 1; return
++
++
++class FakePage:
++    def __init__(self, body, buttons):
++        self.body = body; self.buttons = {n: FakeButton(n) for n in buttons}
++    def inner_text(self, sel): return self.body
++    def get_by_role(self, role, name=None): return FakeRole(self, name)
++    def get_by_text(self, text, exact=False): return FakeRole(self, re.compile(text))
++    def wait_for_timeout(self, ms): pass
++
++
++def browser_with(page):
++    b = FlowBrowser.__new__(FlowBrowser)
++    b._page = page
++    b.ui = {"actions": {"agent_confirmation_buttons": ["Approve", "Always approve", "Generate"]}}
++    b.network_issue_detected = lambda: False
++    return b
++
++
++@pytest.fixture
++def image(tmp_path):
++    output = tmp_path / 'job' / 'storyboard' / 'shot_023_open.jpg'
++    output.parent.mkdir(parents=True)
++    tx.write_json(tx.journal_path(output), {'scope': tx.SCOPE, 'kind': 'image', 'status': 'pending',
++                                            'phase': 'submitted', 'request_hash': 'h-023',
++                                            'approval_reservations': []})
++    return output
++
++
++def test_zero_cost_card_is_approved_for_an_image_request(image):
++    page = FakePage("Would you like me to kick off this image generation, costing 0 credits?",
++                    ["Approve", "Always approve", "Reject"])
++    b = browser_with(page)
++    tx.approval_context(b, image, {'request_hash': 'h-023'})
++    assert b.confirm_agent_generation(timeout_s=1, approval="once", max_credits=0) is True
++    assert page.buttons["Approve"].clicked == 1
++    assert page.buttons["Always approve"].clicked == 0
++    saved = json.loads(tx.journal_path(image).read_text())
++    assert [r['cost'] for r in saved['approval_reservations']] == [0]
++
++
++def test_paid_card_is_refused_for_an_image_request(image):
++    page = FakePage("Would you like me to kick off this image generation, costing 7 credits?",
++                    ["Approve", "Always approve", "Reject"])
++    b = browser_with(page)
++    tx.approval_context(b, image, {'request_hash': 'h-023'})
++    assert not b.confirm_agent_generation(timeout_s=1, approval="once", max_credits=0)
++    assert page.buttons["Approve"].clicked == 0
++    assert b.last_agent_confirmation["blocked"] is True
++    assert b.last_agent_confirmation["cost"] == 7
++    assert 'credit guard' in b.last_agent_confirmation["reason"]
++
++
++def test_card_without_a_visible_cost_is_never_clicked(image):
++    page = FakePage("Would you like me to kick off this image generation?", ["Approve", "Reject"])
++    b = browser_with(page)
++    tx.approval_context(b, image, {'request_hash': 'h-023'})
++    assert not b.confirm_agent_generation(timeout_s=1, approval="once", max_credits=0)
++    assert page.buttons["Approve"].clicked == 0
++
++
++def test_the_same_zero_cost_card_is_clicked_only_once(image):
++    page = FakePage("Would you like me to kick off this image generation, costing 0 credits?",
++                    ["Approve", "Reject"])
++    b = browser_with(page)
++    tx.approval_context(b, image, {'request_hash': 'h-023'})
++    assert b.confirm_agent_generation(timeout_s=1, approval="once", max_credits=0) is True
++    assert not b.confirm_agent_generation(timeout_s=1, approval="once", max_credits=0)
++    assert page.buttons["Approve"].clicked == 1
++
++
++def test_without_a_request_id_the_probe_still_refuses(image):
++    """The 7.0.93 behaviour that caused the silent short waits. Kept on purpose: an unsolicited approval is refused."""
++    page = FakePage("costing 0 credits", ["Approve"])
++    b = browser_with(page)
++    b._approval_journal = str(tx.journal_path(image))
++    assert not b.confirm_agent_generation(timeout_s=1, approval="once", max_credits=0)
++    assert b.last_agent_confirmation["blocked"] is True
++    assert page.buttons["Approve"].clicked == 0
++
++
++def test_a_refused_approval_ends_the_wait_with_a_logged_reason(image, capsys, monkeypatch):
++    b = browser_with(FakePage("", []))
++    tx.approval_context(b, image, {'request_hash': 'h-023'})
++    monkeypatch.setattr(b, 'detect_failure', lambda: None)
++    monkeypatch.setattr(b, 'detect_service_busy', lambda: None)
++
++    def refused(**kwargs):
++        b.last_agent_confirmation = {"blocked": True, "reason": "credit guard: 7 > 0", "clicked": None}
++        return False
++    monkeypatch.setattr(b, 'confirm_agent_generation', refused)
++    assert b.wait_for_agent_generation(timeout_s=5, required_kind='image', transactional_images=True,
++                                       exclude_labels=[]) is False
++    out = capsys.readouterr().out
++    assert 'Approval refused: credit guard: 7 > 0' in out
++    assert 'No card was clicked' in out
++
++
++def test_reservations_written_during_the_wait_survive_a_journal_write(image):
++    request = json.loads(tx.journal_path(image).read_text())
++    disk = json.loads(tx.journal_path(image).read_text())
++    disk['approval_reservations'] = [{'key': 'k1', 'cost': 0, 'status': 'reserved', 'at': 1.0}]
++    disk['approval_credit_total_reserved'] = 0
++    tx.journal_path(image).write_text(json.dumps(disk))
++    tx.sync_approval_reservations(image, request)
++    assert request['approval_reservations'][0]['key'] == 'k1'
++
++
++# ---- recover(): the wait runs with the approval context, and reservations are synced afterwards -----------------
++
++class Provider:
++    def __init__(self, bridge): self.bridge = bridge
++    def _ensure(self): return self.bridge
++    def close(self): pass
++
++
++class Bridge:
++    normalize_project_url = staticmethod(FlowBrowser.normalize_project_url)
++
++    def __init__(self, tiles):
++        self.tiles = list(tiles); self.project = 'https://flow.google.com/project/dddddddd-dddd-dddd-dddd-dddddddddddd'
++        self.seen = None; self.wait_calls = 0
++
++    def current_project_url(self): return self.project
++    def ensure_project(self, *a, **k): self.project = k.get('project_url') or self.project
++    def media_assets(self): return [dict(t) for t in self.tiles]
++    def download_latest_asset(self, *a, **k): raise AssertionError('no downloads in this test')
++
++    def wait_for_agent_generation(self, **kwargs):
++        self.wait_calls += 1
++        self.seen = (getattr(self, '_approval_journal', None), getattr(self, '_awaiting_request_id', None),
++                     getattr(self, '_approval_card_limit', None))
++        return False
++
++
++def test_recover_gives_the_wait_an_approval_context_and_keeps_the_fresh_request_signal(tmp_path):
++    job = tmp_path / 'job-approval'
++    (job / 'storyboard').mkdir(parents=True)
++    output = job / 'storyboard' / 'shot_023_open.jpg'
++    ref = tmp_path / 'location_master.jpg'
++    Image.new('RGB', (128, 96), 'red').save(ref)
++    tx.write_json(tx.journal_path(output), {
++        'schema_version': 1, 'scope': tx.SCOPE, 'kind': 'image', 'status': 'pending',
++        'phase': 'submitted', 'submission_acknowledged': True, 'project_url': Bridge({}).project,
++        'project_name': 'AutoVideo-Image-test', 'capture_probes': {}, 'baseline': [], 'signature': '',
++        'submitted_prompt': 'x', 'request_hash': 'h-023', 'reference_hashes': {str(ref): tx.sha(str(ref))},
++        'approval_reservations': []})
++    bridge = Bridge([{'kind': 'image', 'sig': '/asb/new-location',
++                      'tile_hint': "Tile displaying a user's image AV_197ff6e22dbe_location_master.jpg",
++                      'hint': "Tile displaying a user's image AV_197ff6e22dbe_location_master.jpg"}])
++    request = json.loads(tx.journal_path(output).read_text())
++    with pytest.raises(FlowRequestPending) as info:
++        tx.recover(Provider(bridge), request, output, compiled={})
++    assert info.value.fresh_request_allowed is True
++    assert bridge.wait_calls == 1
++    journal_seen, awaiting, limit = bridge.seen
++    assert journal_seen == str(tx.journal_path(output))
++    assert awaiting == 'image:h-023'
++    assert limit == 1
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v792_to_v793.py b/tools/update_v792_to_v793.py
+--- a/tools/update_v792_to_v793.py	2026-10-25 14:16:56.142485579 +0000
++++ b/tools/update_v792_to_v793.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,163 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.93 update to a v7.0.92 installation.
+-
+-An image request whose saved Flow project holds no generated image is recovered once and, if still empty, archived
+-(kept, never deleted) and replaced by one fresh image request. A shot gets at most 3 image submissions. Two or more
+-real outputs stay blocked and are never resubmitted. Video requests are never resubmitted automatically. The Resume
+-gate lets an unacknowledged image submission with no local image run through generate(). Archive names never collide.
+-Nothing is submitted, generated or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.93 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.93/tools/update_v792_to_v793.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.93/tools/update_v792_to_v793.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'FLOW_FRESH_IMAGE_REQUESTS_V7_0_93.md',
+-    'VERSION',
+-    'engine/flow_image_transaction.py',
+-    'engine/flow_request_archive.py',
+-    'engine/flow_resume_safety.py',
+-    'engine/providers/flow_browser.py',
+-    'tests/test_v743_image_transactions.py',
+-    'tests/test_v791_reference_labels.py',
+-    'tests/test_v792_stalled_recovery.py',
+-    'tests/test_v793_fresh_image_requests.py',
+-    'tools/update_v792_to_v793.py',
+-]
+-# Files as they exist in 7.0.92: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['1460acf4b3427d07850b5effa4f74e58cd7e8c4c52beb9b7d3f0bd7c8672d780'],
+-    'engine/flow_image_transaction.py': ['19e56641ed4216245f97db2ccdbdac680c77ac056b64b9f4292699a883761f7c'],
+-    'engine/flow_request_archive.py': ['5ca4c1ffdb32a0dc9e5f6723405efe3559b85ee8d2fedd40f1cbd950cac18b9c'],
+-    'engine/flow_resume_safety.py': ['7f80a8d630ef13edd61d0a45e65d6798025ba3692febedb43241551a97f4552b'],
+-    'engine/providers/flow_browser.py': ['81ffe26a042f4e9969265ae91893bfc475b4459024144eb63fc6ad9d1ebe5be8'],
+-    'tests/test_v743_image_transactions.py': ['b607be5cd54378246cc1fb82fb295396cb5b073797a2558142e7a0619ae58744'],
+-    'tests/test_v791_reference_labels.py': ['44df7993ea580ce5193c80f3d8985ad31b98686d499d983d82935fdd1552db27'],
+-    'tests/test_v792_stalled_recovery.py': ['5e7672b99a28eb7e4c15393b6c081a10b53262aa071dcf910c9d63d4400c5a03'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.92', '7.0.93')  # 7.0.93 allows a safe re-run after success
+-
+-# The 7.0.91 to 7.0.92 update ships in the 7.0.92 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.91', '7.0.92', 'tools/update_v791_to_v792.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.92 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.92 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.92 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.93 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.93 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.93 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.92-to-v7.0.93-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.93. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v793_to_v794.py b/tools/update_v793_to_v794.py
+--- a/tools/update_v793_to_v794.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v793_to_v794.py	2026-10-25 14:16:56.178485761 +0000
+@@ -0,0 +1,152 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.94 update to a v7.0.93 installation.
++
++Image requests can pass Flow's credit approval guard. A card is clicked only when it shows a visible cost at or
++below the request's limit (0 for images), and only once per request. A refused approval or a timeout is logged
++instead of returning silently. Reservations written during a wait are kept.
++Nothing is submitted, generated or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.94 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.94/tools/update_v793_to_v794.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.94/tools/update_v793_to_v794.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'FLOW_APPROVAL_IMAGE_REQUESTS_V7_0_94.md',
++    'VERSION',
++    'engine/flow_image_transaction.py',
++    'engine/providers/flow_browser.py',
++    'tests/test_v794_image_approval.py',
++    'tools/update_v793_to_v794.py',
++]
++# Files as they exist in 7.0.93: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['2a4f2b56402b862450845931caf01ee9a1ef4a5d625fae3b6819eb0a4c1cb5f7'],
++    'engine/flow_image_transaction.py': ['1a2ab5ee6c091c5a66a691c4482e847c4072536ed9a111deca499294f7a0bde5'],
++    'engine/providers/flow_browser.py': ['d1dd1aab94803280adff1f036ab7ed63fddb8983f6af8fcb21dbeb0d2c1690af'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.93', '7.0.94')  # 7.0.94 allows a safe re-run after success
++
++# The 7.0.92 to 7.0.93 update ships in the 7.0.93 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.92', '7.0.93', 'tools/update_v792_to_v793.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.93 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.93 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.93 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.94 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.94 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.94 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.93-to-v7.0.94-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.94. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

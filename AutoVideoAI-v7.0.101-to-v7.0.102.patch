@@ -1,0 +1,791 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 12:55:28.000000000 +0000
++++ b/VERSION	2026-10-26 15:29:14.000000000 +0000
+@@ -1 +1 @@
+-7.0.101
++7.0.102
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VIDEO_PROMPT_MATCH_V7_0_102.md b/VIDEO_PROMPT_MATCH_V7_0_102.md
+--- a/VIDEO_PROMPT_MATCH_V7_0_102.md	1970-01-01 00:00:00.000000000 +0000
++++ b/VIDEO_PROMPT_MATCH_V7_0_102.md	2026-10-26 15:29:12.000000000 +0000
+@@ -0,0 +1,90 @@
++# AutoVideoAI 7.0.102 · why the scan said "no verified match" although your clip was right there
++
++Your recovery worked: the reviewed download saved `take_04.mp4`, QC decided **ACCEPT** (technical 100,
++continuity 74.4, motion 100, overall 93.6) and shot_014 is now an accepted take — the second run correctly
++answers `already_accepted`. The interesting question is the one you asked.
++
++```
++[Flow] Exact video recovery scan: 8 gallery assets, 2 fresh candidates, 3 readable prompts,
++       0 unavailable prompt controls; no verified match.
++FlowUIChanged: No unique completed video matches the request. Review the exact editor URL or export …
++```
++
++Eight assets were visible and **three prompts were read successfully** — so this was not a blind scan. It
++still refused, for two independent reasons.
++
++## 1 · The saved prompt and the card's prompt were never the same string
++
++A video request is written as one envelope:
++
++> Create exactly 1 VIDEO clip. Do not create a still image. Use landscape orientation (16:9), approximately 6
++> seconds, using Omni 1.1 Flash. Generate the media from this scene description exactly as the creative brief:
++> **Close-up of Samridhi standing calmly in a brightly lit, elegant room …**
++
++A tile's *Reuse prompt* usually returns **only the brief** (the part after the colon) — exactly as it does for
++images, where the app already parses its own envelope (`image_creative_brief`). The video path had no such
++parser, so it compared the full envelope with a brief and could never match. Three readable prompts were read
++and all three "failed".
++
++## 2 · Two fresh assets: "2 fresh candidates" forbade the answer
++
++The video branch accepts a match only when **exactly one** candidate verifies, because Flow often exposes the
++same clip twice — once as a `<video>` node and again as its poster `<img>`. With two fresh assets and no
++verification step succeeding, nothing could ever be chosen.
++
++## What 7.0.102 changes
++
++| Piece | Behaviour |
++|---|---|
++| `video_creative_brief()` | parses our own video envelope (model labels with dots included — "Omni 1.1 Flash", "Veo 3.1 - Lite") and returns the brief |
++| `same_video_generation_prompt()` | exact identity: the full envelope, **or** the brief on either side. Used by the scan and by `_reidentify_exact_video` too |
++| double exposure | when several fresh assets verify with the same prompt, the one Flow renders as a real video element wins (its posters are the others); two genuinely different clips still refuse |
++| candidate listing | every fresh candidate the scan considered is printed with its prompt, size and, when Flow exposes it, **its own `/edit/` URL**; the failure text then hands over a ready `--asset-url … --asset-reviewed` command per candidate |
++| asset identity untouched | the new `edit_url` is read-only context and is **not** part of the persisted `sig`/baseline, so old journals keep matching |
++
++The comparison stays exact — one changed word is still a miss. Nothing is adopted on resemblance, size or
++order.
++
++## Where your job stands now
++
++shot_014 is accepted (take_04). Next: **Resume** — it continues with the remaining shots and the job no longer
++needs recovery for this one. One note on that take: QC recorded `continuity 74.4` with the detail tag
++`camera_too_fast`. The decision was still ACCEPT (overall 93.6), so nothing blocks the render; if the shot reads
++too fast in the finished video, re-render/replace that one shot later rather than redoing the job.
++
++## Tests
++
++`tests/test_v7102_video_prompt_brief.py` — 16 tests:
++
++- the brief is extracted from our own envelope for four model labels, including dotted ones;
++- a card returning only the brief matches the saved envelope in both directions; a full prompt matches itself;
++- a different scene and a one-word change are both misses (the comparison stays exact);
++- an image envelope is never mistaken for a video brief, and the image path still works;
++- the candidate listing is read-only, bounded to 5, reports a missing prompt as unreadable, and never promotes
++  a relative media URL to an editor URL;
++- the double-exposure case picks the `<video>` node; two different clips refuse and are listed;
++- the scan records its listing on the journal and the failure text carries the ready command.
++
++Targeted flow/video/resume/approval selection: 493 passed, 21 failed + 4 errors — the same set as the untouched
++7.0.101 tree in this sandbox (environmental), 477 → 493 passed.
++
++## Install
++
++1. Stop the dashboard (all tabs).
++2. Extract `AutoVideoAI-v7.0.102-Video-Prompt-Match.zip` beside your installation.
++3. From inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.102/tools/update_v7101_to_v7102.py .            # dry run
++   python3 ../AutoVideoAI-v7.0.102/tools/update_v7101_to_v7102.py . --apply    # installs the code
++   ```
++
++   Accepts an installed 7.0.101 (or an already-updated 7.0.102), backs replaced files up under
++   `code-update-backups/v7.0.101-to-v7.0.102-<timestamp>`, and never touches outputs, jobs, Flow journals,
++   browser profiles or Clip Studio folders.
++
++## Not verified live
++
++No Flow project was opened and no credit was spent here. The envelope parsing and the listing are covered by
++tests; whether a particular Flow layout exposes `/edit/` links on its tiles can only be seen in your browser —
++if it does not, the failure text says so and asks for the address-bar URL instead.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-26 11:53:48.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-26 15:28:00.000000000 +0000
+@@ -1783,6 +1783,37 @@
+         return match.group(1) if match else None
+ 
+     @staticmethod
++    def video_creative_brief(submitted):
++        """The creative brief inside the video request envelope, or None.
++
++        v7.0.102: a video card's Reuse prompt often returns only the brief (the same way an image card
++        does), so comparing the full envelope could never match - the field scan that read 3 prompts and
++        verified none. Parsing our own known envelope keeps the comparison exact, never fuzzy.
++        """
++        text = FlowBrowser.normalize_generation_prompt(submitted)
++        pattern = (r"Create exactly \d+ VIDEO clips?\. Do not create a still image\. "
++                   r"Use (?:portrait|landscape) orientation \((?:9:16|16:9)\), "
++                   # model labels contain dots ("Veo 3.1 - Lite", "Omni 1.1 Flash"), so the model
++                   # segment cannot stop at the first period: stop at the sentence that opens the brief.
++                   r"approximately \d+ seconds, using .+?\. "
++                   r"Generate the media from this scene description exactly as the creative brief: (.+)")
++        match = re.fullmatch(pattern, text)
++        return match.group(1).strip() if match else None
++
++    @staticmethod
++    def same_video_generation_prompt(actual, submitted):
++        """Exact identity for a video: the full envelope, or the brief on either side."""
++        if FlowBrowser.same_generation_prompt(actual, submitted):
++            return True
++        actual_text = FlowBrowser.normalize_generation_prompt(actual)
++        for side in (FlowBrowser.video_creative_brief(submitted),
++                     FlowBrowser.video_creative_brief(actual)):
++            if side and (actual_text == side
++                         or FlowBrowser.normalize_generation_prompt(side) == FlowBrowser.normalize_generation_prompt(submitted)):
++                return True
++        return False
++
++    @staticmethod
+     def same_image_generation_prompt(actual, submitted):
+         if FlowBrowser.same_generation_prompt(actual, submitted):
+             return True
+@@ -2323,10 +2354,21 @@
+                     } catch (_) {}
+                     node = node.parentElement; depth++;
+                 }
++                // v7.0.102: the tile's own editor link, when Flow exposes one. Read-only context for a
++                // human decision; it never becomes part of the asset identity (sig).
++                let editUrl = '';
++                for (let n = el, d = 0; n && d < 6; d++, n = n.parentElement) {
++                    const href = n.getAttribute && (n.getAttribute('href') || '');
++                    if (href && /\/edit\/[A-Za-z0-9_-]+/.test(href)) { editUrl = href; break; }
++                    if (n.querySelector) {
++                        const link = Array.from(n.querySelectorAll('a[href*="/edit/"]'))[0];
++                        if (link) { editUrl = link.getAttribute('href') || ''; break; }
++                    }
++                }
+                 return {src, alt, tag: el.tagName, dom_index: i, width: Math.round(r.width),
+                         height: Math.round(r.height), x: r.x, y: r.y, hint: hints.slice(0,600),
+                         tile_hint: tileHints.slice(0,600), queue_context: queueContext,
+-                        hasPlay, hasResolution, hasVideoNode};
++                        edit_url: editUrl, hasPlay, hasResolution, hasVideoNode};
+             }).filter(Boolean)""") or []
+             assets = []
+             for asset in raw_assets:
+@@ -5041,7 +5083,27 @@
+                     timeout_ms=max(0, int(wait_s)) * 1000)
+             if not signature:
+                 self._save_recovery_diagnostic(out_path, request, b.media_assets(), 'No unique fresh video')
+-                raise FlowUIChanged('No unique completed video matches the request. Review the exact editor URL or export support diagnostics')
++                # v7.0.102: the scan already knows what it looked at. Hand the human the exact links
++                # instead of telling them to go hunting in the browser.
++                listing = request.get('candidate_listing') or []
++                usable = [row for row in listing if row.get('edit_url')]
++                detail = ''
++                if usable:
++                    journal_path = Path(request_path)
++                    job_hint = (journal_path.parents[3].name
++                                if len(journal_path.parents) > 3 else '<job-id>')
++                    shot_hint = journal_path.parent.name or '<shot>'
++                    detail = (' Fresh candidates with a readable editor URL - if you can see the right video, '
++                              'download exactly it: ' + ' | '.join(
++                                  '`python3 cli.py v3 recover-flow-video ' + job_hint + ' --shot-id ' + shot_hint
++                                  + ' --asset-url ' + row['edit_url'] + ' --asset-reviewed`'
++                                  for row in usable[:3]))
++                elif listing:
++                    detail = (' ' + str(len(listing)) + ' fresh candidate(s) were listed above with their '
++                              'prompts; this Flow layout does not expose their editor URL, so open the tile '
++                              'you recognise and copy the address bar (/project/<id>/edit/<id>).')
++                raise FlowUIChanged('No unique completed video matches the request.' + detail
++                                    + ' Or export support diagnostics.')
+             request['signature'] = signature
+             b.download_latest_asset(out_path, preferred_signature=signature,
+                 before_signatures=set(request.get('baseline') or []))
+@@ -5185,6 +5247,25 @@
+         return candidates
+ 
+     @staticmethod
++    def _candidate_listing(candidates, prompt_evidence, kind, limit=5):
++        """Read-only description of the fresh assets the scan considered (never a selection)."""
++        evidence = {(row or {}).get("asset_fingerprint"): (row or {}).get("prompt") or ""
++                    for row in (prompt_evidence or {}).values()}
++        rows = []
++        for asset in list(candidates or [])[:limit]:
++            sig = str(asset.get("sig") or "")
++            fingerprint = hashlib.sha256(sig.encode()).hexdigest()
++            url = str(asset.get("edit_url") or "")
++            if not url and str(asset.get("src") or "").startswith("/"):
++                url = ""  # relative media URLs are not editor URLs; never guess one
++            width, height = asset.get("width"), asset.get("height")
++            size = f"{width}x{height}" if width and height else "size unknown"
++            rows.append({"kind": str(asset.get("kind") or kind), "size": size,
++                         "prompt": " ".join(str(evidence.get(fingerprint) or "").split()),
++                         "edit_url": url, "sig": sig})
++        return rows
++
++    @staticmethod
+     def _discard_wrong_kind_signature(request, requested_kind):
+         """Retain but disqualify a journal signature whose typed kind cannot match the request."""
+         signature = str(request.get("signature") or "")
+@@ -5267,10 +5348,22 @@
+                     else:
+                         checked.add(sig)
+                         unreadable.discard(sig)
+-                        if FlowBrowser.same_generation_prompt(actual, expected_video):
++                        if FlowBrowser.same_video_generation_prompt(actual, expected_video):
+                             verified_video.append(sig)
+                 request["correlation_probe"].update(
+                     readable_prompts=len(checked), unreadable_prompts=len(unreadable))
++                if len(verified_video) > 1:
++                    # v7.0.102: the same clip can be exposed twice (a <video> node plus its poster
++                    # image), so several verified candidates are not necessarily several clips. Prefer
++                    # the single real video element; never tile order and never a poster-only tile.
++                    video_nodes = [str(asset.get("sig") or "") for asset in candidates[:50]
++                                   if str(asset.get("sig") or "") in verified_video and asset.get("hasVideoNode")]
++                    if len(video_nodes) == 1:
++                        request["correlation_method"] = "unique_exact_saved_video_prompt_video_node"
++                        request["correlation_at"] = time.time()
++                        print(f"[Flow] {len(verified_video)} fresh assets share the saved video prompt; "
++                              "using the one Flow renders as a video element (the others are its posters).")
++                        return video_nodes[0]
+                 if len(verified_video) == 1:
+                     request["correlation_method"] = "unique_exact_saved_video_prompt"
+                     request["correlation_at"] = time.time()
+@@ -5339,6 +5432,14 @@
+                 print(f"[Flow] Exact {kind} recovery scan: {len(assets)} gallery assets, "
+                       f"{len(candidates)} fresh candidates, {len(checked)} readable prompts, "
+                       f"{len(unreadable)} unavailable prompt controls; no verified match.")
++                # v7.0.102: say WHICH assets were considered. A human can recognise the right one in
++                # seconds; hunting for its /edit/ URL in the browser is what this scan already knows.
++                listing = self._candidate_listing(candidates, prompt_evidence, kind)
++                request["candidate_listing"] = listing
++                for number, row in enumerate(listing, 1):
++                    print(f"[Flow] Fresh candidate {number}: {row['kind']} {row['size']} "
++                          f"prompt={row['prompt'][:110] or 'not readable'}")
++                    print(f"[Flow]    {row['edit_url'] or 'editor URL not exposed by this tile'}")
+                 return ""
+             bridge._page.wait_for_timeout(min(500, max(50, int(remaining * 1000))))
+ 
+@@ -5350,7 +5451,7 @@
+         matches = []
+         for asset in self._fresh_asset_candidates(bridge.media_assets(), request.get('baseline', []), 'video')[:50]:
+             actual = bridge.read_asset_generation_prompt(asset['sig'])
+-            if actual and FlowBrowser.same_generation_prompt(actual, expected):
++            if actual and FlowBrowser.same_video_generation_prompt(actual, expected):
+                 matches.append(asset['sig'])
+         return matches[0] if len(matches) == 1 else ''
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v7102_video_prompt_brief.py b/tests/test_v7102_video_prompt_brief.py
+--- a/tests/test_v7102_video_prompt_brief.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7102_video_prompt_brief.py	2026-10-26 15:28:06.000000000 +0000
+@@ -0,0 +1,195 @@
++"""v7.0.102: why the video scan said "no verified match" although the clip was in the project.
++
++Field case (job 20261022-143856-7, shot_014, 2026-10-26 18:42 IST):
++
++    [Flow] Exact video recovery scan: 8 gallery assets, 2 fresh candidates, 3 readable prompts,
++           0 unavailable prompt controls; no verified match.
++
++    FlowUIChanged: No unique completed video matches the request. Review the exact editor URL ...
++
++The clip was there. Three things made the automatic match impossible:
++
++1. a video request is written as *"Create exactly 1 VIDEO clip. … approximately 6 seconds, using Omni 1.1
++   Flash. Generate the media from this scene description exactly as the creative brief: <brief>"*, while a
++   tile's Reuse prompt often returns **only the brief** - so equality against the full envelope could never
++   hold, even though 3 prompts were read successfully;
++2. two assets were fresh relative to the baseline, and the video branch only accepts *exactly one* verified
++   match, so even a correct match would have been refused while a second fresh asset existed;
++3. the failure only said "review the exact editor URL", without saying which assets were considered.
++
++v7.0.102: parse our own video envelope (`video_creative_brief`) and compare the brief exactly on either side
++(`same_video_generation_prompt`), record each asset's own editor link when Flow exposes it (`edit_url`, never
++part of the persisted signature), and print the fresh candidates with their prompts and links when nothing
++verifies.
++
++The manual path still worked and its result is pinned here too: `--asset-url … --asset-reviewed` downloaded
++exactly that asset, QC decided ACCEPT (93.6), and a repeat correctly answers `already_accepted`.
++"""
++import json
++
++import pytest
++
++from engine.providers.flow_browser import FlowBrowser, FlowBrowserProvider
++
++BRIEF = ("Close-up of Samridhi standing calmly in a brightly lit, elegant room, looking directly at the camera "
++         "with a serene smile.")
++
++
++def _video_prompt(brief=BRIEF, model="Omni 1.1 Flash", aspect="16:9", seconds=6):
++    return FlowBrowser._agent_video_instruction(brief, aspect, model, seconds, 1)
++
++
++# ----------------------------------------------------------------- the envelope
++
++@pytest.mark.parametrize("model", ["Omni 1.1 Flash", "Veo 3.1 - Lite", "Veo 3.1", "Omni 1.1"])
++def test_the_brief_is_extracted_from_our_own_video_envelope(model):
++    """Model labels contain dots; the brief must still be found exactly."""
++    assert FlowBrowser.video_creative_brief(_video_prompt(model=model)) == BRIEF
++
++
++def test_a_card_showing_only_the_brief_matches_the_saved_envelope():
++    prompt = _video_prompt()
++    assert FlowBrowser.same_video_generation_prompt(BRIEF, prompt) is True
++    assert FlowBrowser.same_video_generation_prompt(prompt, BRIEF) is True
++    assert FlowBrowser.same_video_generation_prompt(prompt, prompt) is True
++
++
++def test_a_different_scene_never_matches():
++    prompt = _video_prompt()
++    assert FlowBrowser.same_video_generation_prompt("A busy street at night, rain on the tarmac.", prompt) is False
++    assert FlowBrowser.same_video_generation_prompt("", prompt) is False
++    assert FlowBrowser.same_video_generation_prompt(prompt, "") is False
++
++
++def test_a_near_miss_is_still_a_miss():
++    """The comparison stays exact: one changed word is a different request."""
++    prompt = _video_prompt()
++    nearly = BRIEF.replace("serene smile", "serene frown")
++    assert FlowBrowser.same_video_generation_prompt(nearly, prompt) is False
++
++
++def test_an_image_envelope_is_not_mistaken_for_a_video_brief():
++    image = FlowBrowser._agent_image_instruction(BRIEF, "16:9", 1)
++    assert FlowBrowser.video_creative_brief(image) is None
++    assert FlowBrowser.same_video_generation_prompt(BRIEF, image) is False
++    assert FlowBrowser.same_image_generation_prompt(BRIEF, image) is True
++
++
++# ----------------------------------------------------------------- the candidate listing
++
++def _asset(src="https://lh3.example/poster.jpg", kind="video", edit="/project/p1/edit/54194f38-1fdb-4584-9840-b88a8775a6a4",
++           width=640, height=360):
++    sig = "|".join(["IMG", src, "alt text", kind, str(width), str(height)])
++    return {"src": src, "alt": "alt text", "kind": kind, "sig": sig, "width": width, "height": height,
++            "edit_url": edit}
++
++
++def _evidence(*assets):
++    import hashlib
++    return {hashlib.sha256(str(a["sig"]).encode()).hexdigest():
++            {"asset_fingerprint": hashlib.sha256(str(a["sig"]).encode()).hexdigest(), "prompt": BRIEF}
++            for a in assets}
++
++
++def test_the_listing_describes_each_fresh_candidate_read_only():
++    first, second = _asset(), _asset(src="https://lh3.example/other.jpg", edit="")
++    listing = FlowBrowserProvider._candidate_listing([first, second], _evidence(first, second), "video")
++    assert len(listing) == 2
++    assert listing[0]["edit_url"].endswith("/edit/54194f38-1fdb-4584-9840-b88a8775a6a4")
++    assert listing[0]["kind"] == "video" and listing[0]["size"] == "640x360"
++    assert listing[0]["prompt"] == BRIEF
++    assert listing[1]["edit_url"] == ""            # never guessed
++
++
++def test_the_listing_is_bounded():
++    assets = [_asset(src=f"https://lh3.example/{n}.jpg") for n in range(9)]
++    assert len(FlowBrowserProvider._candidate_listing(assets, {}, "video")) == 5
++
++
++def test_a_missing_prompt_is_reported_as_unreadable_not_invented():
++    rows = FlowBrowserProvider._candidate_listing([_asset()], {}, "video")
++    assert rows[0]["prompt"] == ""
++
++
++def test_a_relative_media_url_is_never_promoted_to_an_editor_url():
++    rows = FlowBrowserProvider._candidate_listing([_asset(src="/media/poster.jpg", edit="")], {}, "video")
++    assert rows[0]["edit_url"] == ""
++
++
++# ----------------------------------------------------------------- the failure text
++
++def test_the_scan_records_its_candidate_listing_on_the_journal():
++    from pathlib import Path
++    source = Path('engine/providers/flow_browser.py').read_text(encoding='utf-8')
++    assert 'request["candidate_listing"] = listing' in source
++    assert 'Fresh candidate {number}' in source
++
++
++def test_the_failure_hands_over_a_ready_command():
++    from pathlib import Path
++    source = Path('engine/providers/flow_browser.py').read_text(encoding='utf-8')
++    start = source.index('No unique completed video matches the request.')
++    block = source[max(0, start - 2000):start + 400]
++    assert '--asset-url' in block and '--asset-reviewed' in block
++    assert 'does not expose their editor URL' in block     # the honest fallback
++
++
++# ----------------------------------------------------------------- the double-exposure case
++
++def test_a_clip_exposed_twice_is_matched_through_its_video_element():
++    """Flow shows a clip as a <video> node and again as a poster <img>; both carry the same prompt."""
++    from engine.providers.flow_browser import FlowBrowserProvider
++
++    prompt = _video_prompt()
++    poster = _asset(src="https://lh3.example/poster.jpg", edit="")
++    poster.update(hasVideoNode=False, kind="video")
++    node = _asset(src="https://lh3.example/clip.mp4", edit="/project/p1/edit/54194f38-1fdb-4584-9840-b88a8775a6a4")
++    node.update(hasVideoNode=True, kind="video")
++
++    class Bridge:
++        def __init__(self):
++            self._page = self
++
++        def media_assets(self):
++            return [poster, node]
++
++        def read_asset_generation_prompt(self, sig):
++            return BRIEF                      # the card returns only the brief
++
++        def wait_for_timeout(self, ms):
++            pass
++
++    request = {"baseline": [], "submitted_prompt": prompt}
++    provider = FlowBrowserProvider.__new__(FlowBrowserProvider)
++    chosen = provider._identify_single_fresh_asset(Bridge(), request, "video", timeout_ms=0)
++    assert chosen == node["sig"]
++    assert request["correlation_method"] == "unique_exact_saved_video_prompt_video_node"
++
++
++def test_two_different_clips_with_the_same_prompt_are_refused_and_listed():
++    from engine.providers.flow_browser import FlowBrowserProvider
++
++    prompt = _video_prompt()
++    first = _asset(src="https://lh3.example/a.mp4", edit="/project/p1/edit/aaaa")
++    second = _asset(src="https://lh3.example/b.mp4", edit="/project/p1/edit/bbbb")
++    first.update(hasVideoNode=True, kind="video")
++    second.update(hasVideoNode=True, kind="video")
++
++    class Bridge:
++        def __init__(self):
++            self._page = self
++
++        def media_assets(self):
++            return [first, second]
++
++        def read_asset_generation_prompt(self, sig):
++            return BRIEF
++
++        def wait_for_timeout(self, ms):
++            pass
++
++    request = {"baseline": [], "submitted_prompt": prompt}
++    provider = FlowBrowserProvider.__new__(FlowBrowserProvider)
++    assert provider._identify_single_fresh_asset(Bridge(), request, "video", timeout_ms=0) == ""
++    listing = request.get("candidate_listing") or []
++    assert len(listing) == 2 and all(row["edit_url"] for row in listing)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7100_to_v7101.py b/tools/update_v7100_to_v7101.py
+--- a/tools/update_v7100_to_v7101.py	2026-10-26 12:55:50.000000000 +0000
++++ b/tools/update_v7100_to_v7101.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,157 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.101 update to a v7.0.100 installation.
+-
+-Wording that could mislead, corrected:
+-
+-- "no approval click is recorded" is evidence, not proof: a card approved directly in the Flow UI leaves no
+-  trace here, and the clip is often ready seconds later. The blocked-Resume message, the Queue panel, the
+-  panel's next action and ``tools/flow_resume_preflight.py`` now say so, and put the free download first;
+-- a chat turn that says the generation is "queued due to high demand" is a snapshot from submit time and stays
+-  in the chat after the clip is finished, so ``recover-flow-video`` no longer tells the user to wait on it: it
+-  points at the project's media grid and at ``--asset-url ... --asset-reviewed``.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.101 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.101/tools/update_v7100_to_v7101.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.101/tools/update_v7100_to_v7101.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['APPROVAL_NOT_FINAL_V7_0_101.md', 'VERSION', 'app.py', 'engine/factory.py',
+-           'engine/flow_pending_approval.py', 'engine/flow_resume_safety.py',
+-           'tests/test_v7101_approval_not_final.py', 'tests/test_v799_approval_pending.py',
+-           'tools/flow_resume_preflight.py', 'tools/update_v7100_to_v7101.py']
+-# Files as they exist in 7.0.100: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['25ed9a324442540579e2ffa96084371bb6ab4c0dbc53ea39595ed0901c9dd032'],
+-    'app.py': ['6bc71f731bdc4ad9022e9e7a72221c2fa3a543abdb712941fd677163bf05f02f'],
+-    'engine/factory.py': ['54ba61da90646058df64607d3d04bfc3e04612c8c6475e06f71396b32adc954d'],
+-    'engine/flow_pending_approval.py': ['9debc4229642ea3072664d268ccefe5076c1ed846e5639eab4546942626a92f9'],
+-    'engine/flow_resume_safety.py': ['2fd666e332357077aa430f8877401427835334e4ea4984ae4444d151372df1e1'],
+-    'tools/flow_resume_preflight.py': ['54171ae7ec9c571450d29ca84e89841f571b23c8e9732d3aa021286fda82ec58'],
+-    'tests/test_v799_approval_pending.py': ['221eae57836fd1542bb1c2374405a392398f3ee74a0b66078c26ea03bdbdcf90'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.100', '7.0.101')  # 7.0.101 allows a safe re-run after success
+-
+-# The 7.0.100 zip carries the 7.0.99 to 7.0.100 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.99', '7.0.100', 'tools/update_v799_to_v7100.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.100 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.100 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.100 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.101 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.101 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.101 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.100-to-v7.0.101-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.101. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7101_to_v7102.py b/tools/update_v7101_to_v7102.py
+--- a/tools/update_v7101_to_v7102.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7101_to_v7102.py	2026-10-26 15:29:24.000000000 +0000
+@@ -0,0 +1,160 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.102 update to a v7.0.101 installation.
++
++Why the video scan reported "no verified match" while the clip was in the saved project:
++
++- a video request is stored as a full envelope ("Create exactly 1 VIDEO clip. ... exactly as the creative
++  brief: <brief>"), while a tile's Reuse prompt usually returns only the brief, so equality against the
++  envelope could never hold even when the prompt was read successfully;
++- several fresh assets (the same clip as a <video> node and as its poster) are not several clips, but the
++  scan only accepted a single verified candidate.
++
++v7.0.102:
++
++- ``FlowBrowser.video_creative_brief()`` parses our own video envelope and
++  ``same_video_generation_prompt()`` compares exactly on either side (model labels with dots included);
++- when several candidates verify with the same prompt, the one Flow renders as a real video element wins;
++  two genuinely different clips still refuse;
++- every fresh candidate the scan considered is printed with its prompt, size and - when the tile exposes it -
++  its own /edit/ URL, and the failure text hands over a ready
++  ``--asset-url ... --asset-reviewed`` command per candidate. The new ``edit_url`` is read-only context and
++  is not part of the persisted signature, so existing baselines keep matching.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.102 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.102/tools/update_v7101_to_v7102.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.102/tools/update_v7101_to_v7102.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['VERSION', 'VIDEO_PROMPT_MATCH_V7_0_102.md', 'engine/providers/flow_browser.py',
++           'tests/test_v7102_video_prompt_brief.py', 'tools/update_v7101_to_v7102.py']
++# Files as they exist in 7.0.101: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['f068874b2f0363b02752b73dd8704696627f4ed21ce1264a910ffdef22737d22'],
++    'engine/providers/flow_browser.py': ['424fe3492ff652e32a5e0a734ce30255fffd32ba50f503dfadbcbe14b303bdfc'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.101', '7.0.102')  # 7.0.102 allows a safe re-run after success
++
++# The 7.0.101 zip carries the 7.0.100 to 7.0.101 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.100', '7.0.101', 'tools/update_v7100_to_v7101.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.101 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.101 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.101 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.102 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.102 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.102 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.101-to-v7.0.102-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.102. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

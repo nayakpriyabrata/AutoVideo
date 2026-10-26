@@ -1,0 +1,1032 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 07:44:52.000000000 +0000
++++ b/VERSION	2026-10-26 09:55:28.000000000 +0000
+@@ -1 +1 @@
+-7.0.97
++7.0.98
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/VIDEO_BLOCKED_RESUME_V7_0_98.md b/VIDEO_BLOCKED_RESUME_V7_0_98.md
+--- a/VIDEO_BLOCKED_RESUME_V7_0_98.md	1970-01-01 00:00:00.000000000 +0000
++++ b/VIDEO_BLOCKED_RESUME_V7_0_98.md	2026-10-26 09:55:16.000000000 +0000
+@@ -0,0 +1,126 @@
++# AutoVideoAI 7.0.98 · the Resume advice now matches the request it is stuck on (and what to check before you press Resume)
++
++Your job reached a different blocker than the one the panel described:
++
++```
++Safe Resume blocked: 1 unresolved Flow request journal(s) …
++Saved request(s): flow/shots/shot_014/take_01.mp4
++… Image requests cost no Flow credits, so ONE fresh image request may be submitted …
++python3 cli.py v3 archive-request <job> flow/shots/shot_014/take_01.mp4
++```
++
++`flow/shots/shot_014/take_01.mp4` is a **video** take, not an image. Two things were wrong:
++
++1. **The command could never work.** For a video journal, `archive-request` without
++   `--confirm-new-credit-spend` prints *"Dry run. Add --confirm-new-credit-spend to archive. Nothing was
++   changed."* — so following the panel changed nothing and the next Resume repeated the same wait.
++2. **The money was wrong.** A new Flow **video** does spend credits (unlike an image). The panel promised a
++   free replacement that does not exist for video.
++
++The panel also still named `shot_003` and an archive command for `storyboard/shot_023_open.jpg`, a request
++that had already been resolved — so it described three different requests at once.
++
++## What 7.0.98 changes
++
++**The journal decides what the message says.** `check_job()` records each journal's kind, and
++`FlowResumeBlocked` / the Queue panel / `tools/flow_resume_preflight.py` now split requests:
++
++| Request | What the panel says | Command it offers |
++|---|---|---|
++| image (`storyboard/*.jpg`, `isolated_image_v1`) | free: one new image request, no credit approval | `archive-request <job> <image>` (no flag) |
++| video (`flow/shots/<shot>/take_*.mp4`) | paid: recover the exact saved video first, nothing is resubmitted automatically | `recover-flow-video <job> --shot-id <shot> --wait-seconds 180`, then the reviewed editor URL, then (paid only) `archive-request … --confirm-new-credit-spend` |
++
++- Video journals are recognised by `kind`, by scope, or — for old journals — by their path
++  (`flow/shots/<shot>/take_*.mp4`), so a 7.0.8x journal is classified correctly too.
++- The Queue panel now lets the **unresolved journal decide which shot it names** (shot_014, not the stale
++  pause snapshot's shot_003) and drops commands that point at a request that is no longer unresolved.
++- Actions are labelled honestly: *"Recover the exact saved video (0 new credits)"* for the free path and
++  *"Allow ONE new paid video request"* for the archive.
++- `archive-request` on a video journal now explains itself in the dry run (it spends credits, and what to
++  try first) instead of borrowing the free-image wording; with the flag it says **PAID**.
++
++## Before you press Resume — five checks, two minutes
++
++You are on 7.0.97; install 7.0.98 first, then:
++
++1. **Read the exact blocker** (read-only, no browser):
++
++   ```
++   python3 tools/flow_resume_preflight.py outputs/20261022-143856-7-small-daily-habits-tha-9729
++   ```
++
++   It prints the request, its saved project, the last recovery result, and the commands below.
++
++2. **Open the project saved in the request** — for your log that is
++   `https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781` (the journal owns it; the one
++   the panel linked, `bb258e72-…`, and the one opened at 15:11, `08d0cf93-…`, are different projects).
++   Two scans reported *"6 gallery assets, 0 fresh candidates, 0 readable prompts"* — look yourself for a
++   finished video of shot_014.
++
++3. **If the video is there**, download exactly it (0 credits, QC still runs):
++
++   ```
++   python3 cli.py v3 recover-flow-video <job> --shot-id shot_014 \
++       --asset-url https://flow.google.com/project/37d8cf57-…/edit/<asset-id> --asset-reviewed
++   ```
++
++   The URL must belong to that same saved project. This is the only adoption path the app allows on
++   purpose: a video from another project could belong to a different shot.
++
++4. **If the video is only in another project** (`08d0cf93-…`, `bb258e72-…`), it cannot be adopted
++   automatically. Your choice is then a **paid** replacement for that one shot:
++
++   ```
++   python3 cli.py v3 archive-request <job> flow/shots/shot_014/take_01.mp4 --confirm-new-credit-spend
++   python3 cli.py v3 resume <job>
++   ```
++
++   which archives the old request (kept on record) and submits one new video request.
++
++5. **Check nothing else is already waiting**: the log shows `Waiting for production slot … Other tabs may
++   monitor this job` at 15:14 — two Studio tabs were competing, and a Resume pressed in the tab that does
++   not hold the slot only queues. Close the extra tabs, and never Resume while
++   `logs/[job]` shows a running production.
++
++Note what is already good: the image request for `shot_023_open.jpg` that blocked you yesterday is
++**resolved** — the 7.0.96 fix worked, and the job advanced from shot_003 to shot_014 (44%). Hindi and Odia
++stay at `needs_picture` until this job produces its finished video; the picture-only master can only be
++built *from* that video, so it is the last step, not the first.
++
++## Tests
++
++`tests/test_v798_video_blocked_message.py` (8 tests, fakes only):
++
++- a video journal never gets the free-image wording, always names `recover-flow-video --shot-id shot_014`
++  and the paid archive with `--confirm-new-credit-spend`;
++- an image journal keeps the free wording and a flag-free command;
++- a mixed job explains the two requests separately;
++- `archive-request` on a video journal is a dry run that says it costs credits and points at the free
++  recovery first, and says **PAID** when it is applied;
++- the Queue panel names shot_014 from the journal, drops the stale `shot_023` command, and labels the two
++  actions honestly;
++- the preflight tool prints `(video)` / `(image)`, the free recovery, `Paid only`, and both closing notes.
++
++`tests/test_v792_stalled_recovery.py` still passes unchanged: a legacy image journal without `kind` is
++still treated as an image request (the path decides).
++
++## Install
++
++1. Stop the dashboard (all tabs).
++2. Extract `AutoVideoAI-v7.0.98-Video-Resume-Message.zip` beside your installation folder.
++3. Run the updater from inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.98/tools/update_v797_to_v798.py .            # dry run: shows the plan
++   python3 ../AutoVideoAI-v7.0.98/tools/update_v797_to_v798.py . --apply    # installs the code
++   ```
++
++   It accepts an installed 7.0.97 (or an already-updated 7.0.98), backs replaced files up under
++   `code-update-backups/v7.0.97-to-v7.0.98-<timestamp>`, and leaves outputs, saved jobs, settings, browser
++   profiles, Clip Studio folders and every Flow journal untouched.
++
++## Not verified live
++
++No Flow project was opened and no video was requested while building this release. The message, the
++classification and the commands are covered by fakes; whether the shot_014 video still exists in project
++`37d8cf57-…` can only be settled by opening it.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/app.py b/app.py
+--- a/app.py	2026-10-26 07:43:36.000000000 +0000
++++ b/app.py	2026-10-26 09:55:06.000000000 +0000
+@@ -312,7 +312,7 @@
+             st.warning(f"Diagnostic export unavailable: {exc}")
+         st.code(f"python3 cli.py v3 support-report {job_id}", language="bash")
+ 
+-    with st.expander('Resolve an ambiguous saved image — review only'):
++    with st.expander('Resolve an ambiguous saved image prompt — review only · images only'):
+         from engine.flow_recovery_review import candidates, bind_reviewed
+         try:
+             options=candidates(F.pm.job_dir(job_id))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 07:41:24.000000000 +0000
++++ b/engine/factory.py	2026-10-26 09:54:00.000000000 +0000
+@@ -640,16 +640,31 @@
+         # 7.0.96: a paused job used to repeat the same wait with no explanation. The last
+         # recovery verdict and the one command that moves it forward are read-only facts.
+         diagnosis = self.flow_journal_diagnosis(job_id)
++        from .flow_resume_safety import journal_target
+         if diagnosis:
+             state.setdefault("flow_recovery_state", diagnosis.get("recovery_state"))
+             state.setdefault("flow_last_recovery_error", diagnosis.get("last_recovery_error"))
+             state.setdefault("flow_saved_project_url", diagnosis.get("saved_project_url"))
+             state.setdefault("flow_next_action", diagnosis.get("next_action"))
+-            if diagnosis.get("archive_command"):
+-                commands = {a.get("command") for a in state["actions"]}
+-                if diagnosis["archive_command"] not in commands:
+-                    state["actions"].append({"label": "Allow one new free image request",
+-                                             "command": diagnosis["archive_command"]})
++            state["flow_journal_kind"] = diagnosis.get("kind", "")
++            # 7.0.98: the pause snapshot can name an older shot (shot_003 while the unresolved request is
++            # shot_014). The unresolved journal is the truth.
++            if diagnosis.get("shot_id") and diagnosis["shot_id"] in {s.shot_id for s in m.shots}:
++                state["shot_id"] = diagnosis["shot_id"]
++                state["flow_journal_shot"] = diagnosis["shot_id"]
++            # Drop actions that point at a request which is no longer unresolved.
++            live = str(diagnosis.get("journal") or "")
++            state["actions"] = [a for a in state.get("actions", [])
++                                if " archive-request " not in str(a.get("command", ""))
++                                or (live and journal_target(live) in str(a.get("command", "")))]
++            commands = {a.get("command") for a in state["actions"]}
++            if diagnosis.get("video_recovery_command") and diagnosis["video_recovery_command"] not in commands:
++                state["actions"].insert(0, {"label": "Recover the exact saved video (0 new credits)",
++                                            "command": diagnosis["video_recovery_command"]})
++            if diagnosis.get("archive_command") and diagnosis["archive_command"] not in commands:
++                label = ("Allow one new free image request" if diagnosis.get("kind", "image") == "image"
++                         else "Allow ONE new paid video request")
++                state["actions"].append({"label": label, "command": diagnosis["archive_command"]})
+         return state
+ 
+     def flow_journal_diagnosis(self, job_id: str) -> dict:
+@@ -663,6 +678,8 @@
+         row = next((r for r in rows if r.get("recovery_state")), rows[0] if rows else None)
+         if not row:
+             return {}
++        from .flow_resume_safety import image_request_row, journal_shot_id, journal_target
++        kind = 'image' if image_request_row(row) else (row.get('kind') or 'video')
+         notes = {
+             "saved_project_not_reachable": ("The saved Flow project no longer opens, so another wait cannot "
+                                             "produce this image. One new image request is free in Flow."),
+@@ -675,16 +692,27 @@
+             "fresh_request_not_started": ("The old request was archived, but the new free image request could not "
+                                           "start. Resume again once the Flow browser is healthy; nothing was submitted."),
+         }
+-        command = ""
+         journal = str(row.get("journal") or "")
+-        if journal.endswith(".flow-request.json") and row.get("recovery_state") in (
+-                "saved_project_not_reachable", "no_generated_output_in_project"):
+-            command = f"python3 cli.py v3 archive-request {job_id} {journal[:-len('.flow-request.json')]}"
+-        return {"journal": journal, "recovery_state": row.get("recovery_state", ""),
++        shot_id = journal_shot_id(journal)
++        state = row.get("recovery_state", "")
++        command = video_command = ""
++        if kind == "image" and state in ("saved_project_not_reachable", "no_generated_output_in_project"):
++            command = f"python3 cli.py v3 archive-request {job_id} {journal_target(journal)}"
++        if kind != "image":
++            # 7.0.98: a video request is never "free". Offer download-only recovery, and keep a paid
++            # replacement behind an explicit --confirm-new-credit-spend.
++            shot_flag = f" --shot-id {shot_id}" if shot_id else ""
++            video_command = (f"python3 cli.py v3 recover-flow-video {job_id}{shot_flag} --wait-seconds 180")
++            command = f"python3 cli.py v3 archive-request {job_id} {journal_target(journal)} --confirm-new-credit-spend"
++        next_action = notes.get(state, "")
++        if kind != "image" and not next_action:
++            next_action = ("This is a video request: recover the exact saved video first (0 credits). A new video "
++                           "generation spends credits, so nothing is resubmitted automatically.")
++        return {"journal": journal, "recovery_state": state, "kind": kind, "shot_id": shot_id,
+                 "last_recovery_error": row.get("last_recovery_error", ""),
+                 "saved_project_url": row.get("saved_project_url", ""),
+-                "next_action": notes.get(row.get("recovery_state", ""), ""),
+-                "archive_command": command}
++                "next_action": next_action,
++                "archive_command": command, "video_recovery_command": video_command}
+ 
+     def _write_pause_state(self, job_id: str, shot_id: str, reason: str,
+                            kind: str = "flow_recovery",
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_request_archive.py b/engine/flow_request_archive.py
+--- a/engine/flow_request_archive.py	2026-10-26 07:03:52.000000000 +0000
++++ b/engine/flow_request_archive.py	2026-10-26 09:54:52.000000000 +0000
+@@ -4,9 +4,13 @@
+ never deleted, so the old Flow request stays on record. Nothing is submitted by this module.
+ 
+ v7.0.96: an image request costs no Flow credits (config/flow_models.yaml: credits_per_image 0), so an
+-image journal is archived without any credit confirmation. --confirm-new-credit-spend is still accepted
+-for scripts written for older releases, and is still required for any journal that is not a free image
+-request. An explicit archive never counts against the automatic fresh-request budget.
++image journal is archived without any credit confirmation. An explicit archive never counts against the
++automatic fresh-request budget.
++
++v7.0.98: a **video** journal is different. Archiving it makes the next Resume submit a new video request,
++which spends credits, so it stays a dry run until --confirm-new-credit-spend is given, and the message says
++so instead of borrowing the free-image wording. The download-only video recovery is the first thing to try
++(`cli.py v3 recover-flow-video`).
+ """
+ from __future__ import annotations
+ 
+@@ -28,6 +32,14 @@
+             and str(request.get('scope') or '') in SCOPES)
+ 
+ 
++def _job_hint(output) -> str:
++    parts = Path(output).resolve().parts
++    for index in range(len(parts) - 2):
++        if parts[index] == 'flow' and parts[index + 1] == 'shots':
++            return parts[index - 1] if index else '<job-id>'
++    return '<job-id>' 
++
++
+ def archive_uncertain_request(output, confirm_new_credit_spend=False):
+     """Return (exit_code, lines). 0 = done or dry run, 2 = refused, nothing changed."""
+     output = Path(output).resolve()
+@@ -63,11 +75,16 @@
+                  f'Project:  {request.get("project_url")}',
+                  f'Archive:  {archived.name}']
+         if not confirm_new_credit_spend and not free_image_request(request):
+-            return 0, lines + ['Dry run. Add --confirm-new-credit-spend to archive. Nothing was changed.']
++            return 0, lines + [
++                f'This is a {str(request.get("kind") or "non-image")} request: archiving it makes the next Resume '
++                'submit ONE new generation, which spends Flow credits.',
++                'Dry run. Add --confirm-new-credit-spend to archive. Nothing was changed.',
++                'Prefer download-only recovery first: python3 cli.py v3 recover-flow-video '
++                f'{_job_hint(output)} --wait-seconds 180 (0 credits).']
+         path.rename(archived)
+         note = ('Archived. Press Resume once: that makes ONE new free image request in a new Flow project.'
+                 if free_image_request(request) else
+-                'Archived. Press Resume once: that makes ONE new submission in a new Flow project.')
++                'Archived. Press Resume once: that makes ONE new PAID generation request in a new Flow project.')
+         return 0, lines + [note,
+                            'Image requests are free in Flow, so no credit approval was needed.'
+                            if free_image_request(request) else
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_resume_safety.py b/engine/flow_resume_safety.py
+--- a/engine/flow_resume_safety.py	2026-10-26 07:04:22.000000000 +0000
++++ b/engine/flow_resume_safety.py	2026-10-26 09:55:02.000000000 +0000
+@@ -54,6 +54,8 @@
+                 # v7.0.96: carry the last recovery verdict so a blocked Resume explains itself
+                 # instead of repeating the same wait.
+                 rows.append({'journal': str(journal.relative_to(root)), 'state': state, 'local_image_exists': image_present,
++                             'kind': str(data.get('kind') or ''),
++                             'scope': str(data.get('scope') or ''),
+                              'phase': str(data.get('phase') or ''),
+                              'recovery_state': str(data.get('recovery_state') or ''),
+                              'last_recovery_error': str(data.get('last_recovery_error') or '')[:300],
+@@ -65,34 +67,87 @@
+             'policy': 'Conservative: pending/unreadable requests always require explicit reconciliation before new generation.'}
+ 
+ 
++def journal_target(journal) -> str:
++    """``flow/shots/shot_014/take_01.mp4`` from its ``.flow-request.json`` path."""
++    journal = str(journal or '')
++    return journal[:-len('.flow-request.json')] if journal.endswith('.flow-request.json') else journal
++
++
++def journal_shot_id(journal) -> str:
++    """``shot_014`` from a journal path written by the flow worker, else ''."""
++    parts = str(journal or '').split('/')
++    for index, part in enumerate(parts):
++        if part == 'shots' and index + 1 < len(parts):
++            return parts[index + 1]
++    return ''
++
++
++def image_request_row(row) -> bool:
++    """An image request: the only journal that may be replaced without credit approval.
++
++    Journals written before ``kind``/``scope`` were recorded are classified by their path: a take under
++    ``flow/shots/<shot>/`` (or any video file) is a video request, everything else is an image request.
++    """
++    kind = str(row.get('kind') or '')
++    if kind:
++        return kind == 'image'
++    scope = str(row.get('scope') or '')
++    if scope:
++        return scope in ('isolated_image_v1', 'isolated_one_frame_one_request')
++    target = journal_target(row.get('journal') or '')
++    if target.startswith('flow/shots/') or target.lower().endswith(('.mp4', '.webm', '.mov')):
++        return False
++    return True
++
++
+ class FlowResumeBlocked(RuntimeError):
+     def __init__(self, report):
+         self.report = report
+         job = report['job_id']
+-        images = []
+-        reasons = []
++        images, videos, reasons = [], [], []
+         for row in report.get('unresolved', []):
+             journal = str(row.get('journal') or '')
+-            if journal.endswith('.flow-request.json'):
+-                image = journal[:-len('.flow-request.json')]
+-                images.append(image)
+-                if row.get('recovery_state'):
+-                    reasons.append(f"{image}: {row['recovery_state']}"
+-                                   + (f" ({row['last_recovery_error']})" if row.get('last_recovery_error') else ''))
+-        steps = ''.join(f"python3 cli.py v3 archive-request {job} {image}; " for image in images)
++            if not journal.endswith('.flow-request.json'):
++                continue
++            target = journal_target(journal)
++            (images if image_request_row(row) else videos).append(target)
++            if row.get('recovery_state'):
++                reasons.append(f"{target}: {row['recovery_state']}"
++                               + (f" ({row['last_recovery_error']})" if row.get('last_recovery_error') else ''))
++        saved = images + videos
+         message = (f"Safe Resume blocked: {report['unresolved_count']} unresolved Flow request journal(s) for {job}. "
+-                   f"Saved request(s): {', '.join(images) or 'see logs/resume-reconciliation.json'}. ")
++                   f"Saved request(s): {', '.join(saved) or 'see logs/resume-reconciliation.json'}. ")
+         if reasons:
+             message += "Last recovery result: " + '; '.join(reasons) + ". "
+         if images:
+-            message += ("Resume reopens the exact saved project, consumes a finished image if there is one, and waits "
+-                        "once. When that project no longer holds the image, a wait cannot create it. Image requests "
+-                        "cost no Flow credits, so ONE fresh image request may be submitted without credit approval: "
+-                        f"`{steps.rstrip('; ')}`. That archives the old request, kept on record, and the next Resume "
+-                        "makes one new free image request. The archive refuses when a real image is already saved. "
+-                        "Nothing is submitted by the archive command itself. Read-only diagnosis of every journal: "
+-                        f"`python3 tools/flow_resume_preflight.py outputs/{job}`. ")
+-        message += "See logs/resume-reconciliation.json for recovery results."
++            steps = '; '.join(f"python3 cli.py v3 archive-request {job} {image}" for image in images)
++            message += ("Image requests cost no Flow credits, so ONE fresh image request may be submitted without "
++                        f"credit approval: `{steps}`. That archives the old request, kept on record, and the next "
++                        "Resume makes one new free image request; the archive refuses when a real image is already "
++                        "saved. ")
++        if videos:
++            # 7.0.98: a video request is not free. Saying "archive it, image requests are free" here was wrong and
++            # the command it named (without --confirm-new-credit-spend) only printed a dry run, so it never moved.
++            shot_ids = sorted({journal_shot_id(item) for item in videos} - {''})
++            shot_flag = (' --shot-id ' + shot_ids[0]) if len(shot_ids) == 1 else ''
++            message += ("Video request(s) " + ', '.join(videos) + " cannot be redone for free: a new Flow video "
++                        "spends credits, so nothing is resubmitted automatically. First recover the exact saved "
++                        "video (0 credits, QC still runs): "
++                        f"`python3 cli.py v3 recover-flow-video {job}{shot_flag} --wait-seconds 180`. If you can see "
++                        "that video in the saved project, pass its exact editor URL: "
++                        f"`python3 cli.py v3 recover-flow-video {job}{shot_flag} --asset-url https://flow.google.com/project/<id>/edit/<id> "
++                        "--asset-reviewed` (the URL must belong to the project saved in the request). Only if the video "
++                        "does not exist in that project is a replacement needed: "
++                        + '; '.join(f"python3 cli.py v3 archive-request {job} {video} --confirm-new-credit-spend"
++                                    for video in videos)
++                        + " archives the old request and the next Resume submits ONE new PAID video request. ")
++        if saved:
++            waits = " and waits once (60 s per image)" if images else ""
++            message += (f"Resume reopens the exact saved project{waits}; it never submits anything on its own while "
++                        "a journal is unresolved. ")
++        message += ("Read-only diagnosis of every journal: "
++                    f"`python3 tools/flow_resume_preflight.py outputs/{job}`. "
++                    "See logs/resume-reconciliation.json for recovery results.")
+         super().__init__(message)
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v798_video_blocked_message.py b/tests/test_v798_video_blocked_message.py
+--- a/tests/test_v798_video_blocked_message.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v798_video_blocked_message.py	2026-10-26 09:54:52.000000000 +0000
+@@ -0,0 +1,201 @@
++"""v7.0.98: a blocked Resume must describe the request it is actually blocked on.
++
++Field case (job 20261022-143856-7-small-daily-habits-tha-9729, 2026-10-26 15:17 IST): the only unresolved
++journal was a **video** take (``flow/shots/shot_014/take_01.mp4``), yet the Queue panel said
++
++    Image requests cost no Flow credits, so ONE fresh image request may be submitted without credit
++    approval: `python3 cli.py v3 archive-request <job> flow/shots/shot_014/take_01.mp4`
++
++That command is a dry run for a video journal (it prints "Add --confirm-new-credit-spend"), so the advice
++could never move the job, and it was wrong about money: a new Flow video spends credits. The panel also
++still pointed at ``shot_003`` and at an image archive command for a request that had already been resolved.
++
++Rules tested here (fakes only; no browser, no Flow request, no credits):
++- an image journal keeps the free-image wording and a flag-free archive command;
++- a video journal never gets that wording: it gets download-only recovery first, and a paid replacement
++  only with --confirm-new-credit-spend, said to be paid;
++- the unresolved journal decides which shot the panel names, and stale commands are dropped;
++- the read-only preflight tool says the same.
++"""
++import json
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from engine.flow_request_archive import archive_uncertain_request
++from engine.flow_resume_safety import FlowResumeBlocked, check_job
++from engine.flow_image_transaction import SCOPE as IMAGE_SCOPE
++from tools import flow_resume_preflight as preflight
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++VIDEO_PROJECT = 'https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781'
++IMAGE_PROJECT = 'https://flow.google.com/project/ca1709fe-6a77-41a3-95be-4fafe7192ae2'
++
++
++def _job(tmp_path):
++    job = tmp_path / JOB
++    (job / 'flow' / 'shots' / 'shot_014').mkdir(parents=True)
++    (job / 'storyboard').mkdir()
++    (job / 'production_manifest.json').write_text('{"shots": []}')
++    return job
++
++
++def _video_journal(job, phase='submitted'):
++    path = job / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4.flow-request.json'
++    path.write_text(json.dumps({'schema_version': 1, 'scope': 'video_flow_v1', 'kind': 'video',
++                                'status': 'pending', 'phase': phase, 'project_url': VIDEO_PROJECT,
++                                'baseline': [], 'signature': '',
++                                'last_recovery_error': 'Existing request still has no single identifiable asset'}))
++    return path
++
++
++def _image_journal(job, name='shot_023_open.jpg', phase='submitted'):
++    path = job / 'storyboard' / (name + '.flow-request.json')
++    path.write_text(json.dumps({'schema_version': 1, 'scope': IMAGE_SCOPE, 'kind': 'image',
++                                'status': 'pending', 'phase': phase, 'project_url': IMAGE_PROJECT,
++                                'capture_probes': {}, 'baseline': [], 'signature': ''}))
++    return path
++
++
++# ------------------------------------------------------------------ the blocked-Resume message
++
++def test_a_video_journal_is_never_described_as_a_free_image_request(tmp_path):
++    job = _job(tmp_path)
++    _video_journal(job)
++    report = check_job(job)
++    assert report['unresolved'][0]['kind'] == 'video'
++    message = str(FlowResumeBlocked(report))
++    assert 'cost no Flow credits' not in message
++    assert 'one new free image request' not in message.lower()
++    # what it must say instead
++    assert 'spends credits' in message
++    assert 'recover-flow-video' in message and '--shot-id shot_014' in message
++    assert '--confirm-new-credit-spend' in message
++    # the archive command carries the flag, so it is not the old no-op command
++    archive_line = [line for line in message.split('`') if 'archive-request' in line]
++    assert archive_line and all('--confirm-new-credit-spend' in line for line in archive_line)
++
++
++def test_an_image_journal_keeps_the_free_image_wording(tmp_path):
++    job = _job(tmp_path)
++    _image_journal(job)
++    message = str(FlowResumeBlocked(check_job(job)))
++    assert 'cost no Flow credits' in message
++    assert f'archive-request {JOB} storyboard/shot_023_open.jpg' in message
++    assert '--confirm-new-credit-spend' not in message
++    assert 'recover-flow-video' not in message
++
++
++def test_a_mixed_job_explains_both_requests_separately(tmp_path):
++    job = _job(tmp_path)
++    _video_journal(job)
++    _image_journal(job)
++    message = str(FlowResumeBlocked(check_job(job)))
++    assert 'storyboard/shot_023_open.jpg' in message and 'flow/shots/shot_014/take_01.mp4' in message
++    assert 'image' in message.lower() and 'video' in message.lower()
++    # the free-image command stays free, the video command stays paid
++    assert f'archive-request {JOB} storyboard/shot_023_open.jpg`' in message
++    assert ('archive-request ' + JOB + ' flow/shots/shot_014/take_01.mp4 --confirm-new-credit-spend') in message
++
++
++# ------------------------------------------------------------------ the CLI archive command
++
++def test_archiving_a_video_request_is_a_dry_run_and_says_it_is_paid(tmp_path):
++    job = _job(tmp_path)
++    path = _video_journal(job, phase='submission_uncertain')
++    output = job / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4'
++    code, lines = archive_uncertain_request(output)
++    printed = '\n'.join(lines)
++    assert code == 0
++    assert path.is_file()                                   # nothing archived without the flag
++    assert 'spends Flow credits' in printed
++    assert '--confirm-new-credit-spend' in printed
++    assert 'recover-flow-video' in printed and JOB in printed   # the free thing to try first
++    assert 'Nothing was changed' in printed
++
++
++def test_archiving_a_video_request_with_the_flag_is_named_as_paid(tmp_path):
++    job = _job(tmp_path)
++    _video_journal(job, phase='submission_uncertain')
++    output = job / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4'
++    code, lines = archive_uncertain_request(output, confirm_new_credit_spend=True)
++    printed = '\n'.join(lines)
++    assert code == 0
++    assert not (job / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4.flow-request.json').exists()
++    assert 'PAID' in printed
++    assert 'free' not in printed.lower()
++
++
++def test_an_image_request_still_archives_without_any_flag(tmp_path):
++    job = _job(tmp_path)
++    _image_journal(job, phase='submission_uncertain')
++    code, lines = archive_uncertain_request(job / 'storyboard' / 'shot_023_open.jpg')
++    printed = '\n'.join(lines)
++    assert code == 0
++    assert not (job / 'storyboard' / 'shot_023_open.jpg.flow-request.json').exists()
++    assert 'free image request' in printed.lower()
++
++
++# ------------------------------------------------------------------ the Queue panel and the preflight tool
++
++def _factory_stub(job, monkeypatch, pause_state):
++    from engine.factory import Factory
++
++    shots = [SimpleNamespace(shot_id='shot_003', accepted_take='take_01.mp4'),
++             SimpleNamespace(shot_id='shot_014', accepted_take=None)]
++    manifest = SimpleNamespace(shots=shots, status='paused', accepted_count=lambda: 2)
++
++    class Manager:
++        def job_dir(self, job_id):
++            return str(job)
++        def load_manifest(self, job_id):
++            return manifest
++
++    stub = SimpleNamespace(pm=Manager(), db=None,
++                           flow_journal_diagnosis=lambda job_id: Factory.flow_journal_diagnosis(
++                               SimpleNamespace(pm=Manager()), job_id),
++                           pause_state=lambda job_id: dict(pause_state),
++                           _settings=lambda job_id: {},
++                           _flow_project_url=lambda job_id: 'https://flow.google.com/project/bb258e72-5a03-4730-9406-2cbc9ec9b595')
++    return Factory, stub
++
++
++def test_the_panel_names_the_unresolved_shot_and_drops_the_stale_archive_command(tmp_path):
++    job = _job(tmp_path)
++    _video_journal(job)
++    pause_state = {'kind': 'flow_download_or_ui', 'shot_id': 'shot_003',
++                   'reason': 'Saved job status: paused.',
++                   'actions': [{'label': 'Resume', 'command': f'python3 cli.py v3 resume {JOB}'},
++                               {'label': 'Allow one new free image request',
++                                'command': f'python3 cli.py v3 archive-request {JOB} storyboard/shot_023_open.jpg'}]}
++    Factory, stub = _factory_stub(job, None, pause_state)
++    state = Factory.recovery_state(stub, JOB)
++    assert state['shot_id'] == 'shot_014'                     # the unresolved journal decides
++    assert state['flow_journal_kind'] == 'video'
++    commands = [a['command'] for a in state['actions']]
++    assert not any('storyboard/shot_023_open.jpg' in command for command in commands)   # stale, resolved
++    assert any('recover-flow-video' in command and '--shot-id shot_014' in command for command in commands)
++    assert any('archive-request' in command and '--confirm-new-credit-spend' in command for command in commands)
++    labels = [a['label'] for a in state['actions']]
++    assert 'Recover the exact saved video (0 new credits)' in labels
++    assert 'Allow ONE new paid video request' in labels
++    assert 'Allow one new free image request' not in labels
++
++
++def test_the_preflight_tool_separates_video_from_image(tmp_path, capsys):
++    job = _job(tmp_path)
++    _video_journal(job)
++    _image_journal(job)
++    argv = __import__('sys').argv
++    __import__('sys').argv = ['flow_resume_preflight.py', str(job)]
++    try:
++        assert preflight.main() == 3
++    finally:
++        __import__('sys').argv = argv
++    printed = capsys.readouterr().out
++    assert '(video)' in printed and '(image)' in printed
++    assert 'recover-flow-video' in printed and '--shot-id shot_014' in printed
++    assert 'Paid only' in printed
++    assert 'A video request is not free' in printed
++    assert 'archive command above allows exactly ONE new free image request' in printed   # the image part
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/flow_resume_preflight.py b/tools/flow_resume_preflight.py
+--- a/tools/flow_resume_preflight.py	2026-10-26 07:13:52.000000000 +0000
++++ b/tools/flow_resume_preflight.py	2026-10-26 09:54:18.000000000 +0000
+@@ -3,13 +3,17 @@
+ 
+ v7.0.96: prints, for every saved Flow journal, why the last recovery could not finish and
+ the one command that moves the job forward. Nothing is opened, downloaded or submitted.
++
++v7.0.98: an image journal and a video journal are not the same problem. An image request is free,
++so its fix is an archive and one new free image request; a video request spends credits, so the
++first command offered is the download-only recovery, and a replacement is named as a paid action.
+ """
+ import argparse
+ import json
+ import sys
+ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+-from engine.flow_resume_safety import check_job
++from engine.flow_resume_safety import check_job, image_request_row, journal_shot_id, journal_target
+ 
+ NEXT_ACTION = {
+     'saved_project_not_reachable': (
+@@ -30,21 +34,39 @@
+ 
+ 
+ def journal_diagnosis(job, row):
+-    image = str(row.get('journal') or '')[:-len('.flow-request.json')]
++    target = journal_target(row.get('journal') or '')
++    image_request = image_request_row(row)
++    kind = 'image' if image_request else (row.get('kind') or 'video')
+     state = row.get('recovery_state') or 'unrecorded'
+     job_dir = Path(job).expanduser().absolute()
+-    lines = [f'  Image:        {image}',
++    lines = [f'  Request:      {target}  ({kind})',
+              f'  Journal:      {row.get("state")}  phase={row.get("phase") or "?"}',
+-             f'  Local image:  {"yes" if row.get("local_image_exists") else "no"}',
++             f'  Local file:   {"yes" if row.get("local_image_exists") else "no"}',
++             f'  Saved project: {row.get("saved_project_url") or "not recorded"}',
+              f'  Last result:  {state}']
+     if row.get('last_recovery_error'):
+         lines.append(f'  Detail:       {row["last_recovery_error"]}')
+-    archives = sorted(Path(job_dir / image).parent.glob(Path(image).name + '.flow-request.*-archived-*.json'))
++    archives = sorted((job_dir / target).parent.glob(Path(target).name + '.flow-request.*-archived-*.json'))
+     automatic = [p for p in archives if '.flow-request.auto-archived-' in p.name]
+     lines.append(f'  Old requests: {len(archives)} archived ({len(automatic)} automatic)')
+-    lines.append(f'  Next action:  {NEXT_ACTION.get(state, "Resume once; it reopens the exact saved project and reports what it found.")}')
+-    if state in ('saved_project_not_reachable', 'no_generated_output_in_project'):
+-        lines.append(f'  Command:      python3 cli.py v3 archive-request {job_dir.name} {image}')
++    if image_request:
++        lines.append('  Next action:  ' + NEXT_ACTION.get(
++            state, 'Resume once; it reopens the exact saved project and reports what it found.'))
++        if state in ('saved_project_not_reachable', 'no_generated_output_in_project'):
++            lines.append(f'  Command:      python3 cli.py v3 archive-request {job_dir.name} {target}'
++                         '   # free image request')
++        return lines
++    shot = journal_shot_id(row.get('journal') or '')
++    shot_flag = f' --shot-id {shot}' if shot else ''
++    lines.append('  Next action:  This is a video request, so a new generation spends credits and nothing is '
++                 'resubmitted automatically. Recover the exact saved video first (0 credits, QC still runs); '
++                 'if you can see it in the saved project, download that exact editor URL (it must belong to the '
++                 'saved project). Only if it does not exist there is a paid replacement needed.')
++    lines.append(f'  Recover:      python3 cli.py v3 recover-flow-video {job_dir.name}{shot_flag} --wait-seconds 180')
++    lines.append(f'  Reviewed URL: python3 cli.py v3 recover-flow-video {job_dir.name}{shot_flag} '
++                 '--asset-url https://flow.google.com/project/<id>/edit/<id> --asset-reviewed')
++    lines.append(f'  Paid only:    python3 cli.py v3 archive-request {job_dir.name} {target} '
++                 '--confirm-new-credit-spend')
+     return lines
+ 
+ 
+@@ -59,8 +81,14 @@
+         for row in report['unresolved']:
+             print(f'\n{row.get("journal")}')
+             print('\n'.join(journal_diagnosis(args.job, row)))
+-        print('\nResume always reopens each saved request first. An image request costs no Flow credits, so the '
+-              'archive command above allows exactly ONE new free image request on the next Resume.')
++        images = [row for row in report['unresolved'] if image_request_row(row)]
++        videos = [row for row in report['unresolved'] if not image_request_row(row)]
++        if images:
++            print('\nResume always reopens each saved request first. An image request costs no Flow credits, so an '
++                  'archive command above allows exactly ONE new free image request on the next Resume.')
++        if videos:
++            print('\nA video request is not free: recover the exact saved video first. Archiving it (with '
++                  '--confirm-new-credit-spend) makes the next Resume submit ONE new PAID video request.')
+     return 0 if report['safe_to_generate'] else 3
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v796_to_v797.py b/tools/update_v796_to_v797.py
+--- a/tools/update_v796_to_v797.py	2026-10-26 07:45:12.000000000 +0000
++++ b/tools/update_v796_to_v797.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,169 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.97 update to a v7.0.96 installation.
+-
+-- Every image recovery wait is 60 s instead of 360 s, saved per job as
+-  ``flow_image_wait_seconds`` (``cli.py v3 resume <job> --flow-image-wait-seconds 120``);
+-- a completed job can be deleted again: the finished video is found wherever the renderer
+-  wrote it (``<job>-final.mp4``, ``<job>-final-broll.mp4`` for video cutaways, a saved
+-  ``final_path``), the preview names the file and why others were rejected, and a completed job
+-  with no finished video can be removed with an explicit tick. Unfinished jobs and unresolved
+-  Flow requests are still refused;
+-- Settings gains "Clip Studio content · disk cleanup": per-folder preview and category-by-category
+-  removal of ``_clip_work``, ``.clip-render-jobs``, ``clip-history``, the selection reviews and
+-  (only with its own tick) the rendered clips. A running clip render is never touched;
+-- the Queue "Speech batches" panel shows the batch saved with the Active job, and keeps every other
+-  Create step 4 batch in a collapsed folder instead of mixing them together.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.97 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.97/tools/update_v796_to_v797.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.97/tools/update_v796_to_v797.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles, Clip Studio
+-folders, music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['RESUME_WAIT_DELETE_AND_CLEANUP_V7_0_97.md', 'VERSION', 'app.py', 'cli.py',
+-           'engine/clip_cleanup.py', 'engine/factory.py', 'engine/flow_image_transaction.py',
+-           'engine/flow_resume_recovery.py', 'engine/isolated_frame_regeneration.py',
+-           'engine/job_cleanup.py', 'engine/job_delete.py', 'engine/providers/flow_browser.py',
+-           'engine/speech_batches.py', 'engine/studio_config.py',
+-           'tests/test_v797_cleanup_and_waits.py', 'tools/update_v796_to_v797.py']
+-# Files as they exist in 7.0.96: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['859b7073e55acb507aaba170db0606fbd287fed8a3d94d8963ec24e01c53734b'],
+-    'app.py': ['e6c9bda58d50e937132aa425db500ababe9ac8b3cbfbedc0761949eed76b5be1'],
+-    'cli.py': ['ea28212e631eb37e433e347eecf88a4bd8e1797a4516ea0fcb44e659618d8544'],
+-    'engine/factory.py': ['2ad1193e341206c972fcb88d7b2f9ea59ab74edb8687292f2d1dd399519fb671'],
+-    'engine/flow_image_transaction.py': ['cb2be5f41239943c324af4e8f5ea0170862738ffcd450e98bd2f411aeb27a173'],
+-    'engine/flow_resume_recovery.py': ['693db8bf0f7c4caf9df852a8cedff48651468d92257ff10a775242fc863417af'],
+-    'engine/isolated_frame_regeneration.py': ['a717b4fd7ec30958ca072d29824af98a569dd25db7ba108bbd4f265b32b82274'],
+-    'engine/job_cleanup.py': ['439559ce84e5a3dd1521da636e52f3d57c177f303885ce143673435b5256f1f8'],
+-    'engine/job_delete.py': ['d32bdf14f8b1fcbe1f0898c457432a1ae4e040bd3b6b712e35d9287fee95ccfe'],
+-    'engine/providers/flow_browser.py': ['c47af6ebab6a93e449d284132f260e75280b7f20bac5af537c1299d04ec8db71'],
+-    'engine/speech_batches.py': ['7e5a1d375ef1a7fd64ace3c0f9444d16ca5fff366991d91cb7406d1309c7a0f2'],
+-    'engine/studio_config.py': ['e0c7473f2f1e0e32b012fb1dc3182c8988921b9220dc9bd3459ec556b8ceb064'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.96', '7.0.97')  # 7.0.97 allows a safe re-run after success
+-
+-# The 7.0.96 to 7.0.97 update ships in the 7.0.97 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.95', '7.0.96', 'tools/update_v795_to_v796.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.96 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.96 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.96 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.97 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.97 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.97 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.96-to-v7.0.97-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.97. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v797_to_v798.py b/tools/update_v797_to_v798.py
+--- a/tools/update_v797_to_v798.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v797_to_v798.py	2026-10-26 09:55:28.000000000 +0000
+@@ -0,0 +1,160 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.98 update to a v7.0.97 installation.
++
++A blocked Resume now describes the request it is actually stuck on:
++
++- an **image** journal keeps the free-image advice (one new image request needs no credit approval);
++- a **video** journal says what is true: a new Flow video spends credits, so nothing is resubmitted
++  automatically. The panel offers download-only recovery first (`cli.py v3 recover-flow-video`, then the
++  exact reviewed editor URL), and names the archive command only as a PAID action that needs
++  --confirm-new-credit-spend;
++- journals from older releases are classified by their path, so `flow/shots/<shot>/take_*.mp4` is a video
++  request even without a recorded kind;
++- the Queue panel lets the unresolved journal decide which shot it names, drops commands for requests that
++  are already resolved, and labels the two actions honestly;
++- `tools/flow_resume_preflight.py` prints the same split.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.98 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.98/tools/update_v797_to_v798.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.98/tools/update_v797_to_v798.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['VIDEO_BLOCKED_RESUME_V7_0_98.md', 'VERSION', 'app.py',
++           'engine/factory.py', 'engine/flow_request_archive.py', 'engine/flow_resume_safety.py',
++           'tests/test_v798_video_blocked_message.py', 'tools/flow_resume_preflight.py',
++           'tools/update_v797_to_v798.py']
++# Files as they exist in 7.0.97: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['1887e5c0ca98f8eb824ba6556bbf61dbff7a9e4094cf49cd1b81e31041841e65'],
++    'app.py': ['e0a573f61a45a2d2d5cfa2c20a9d76e18ef2733b96607a8d3cccb92a0b3932a8'],
++    'engine/factory.py': ['1eab3e974b91916aeeeabe85f3a04baa8d07bab9f6b7482afcb09d80fed1dd19'],
++    'engine/flow_request_archive.py': ['46c8e28a0a91fab04061acff7a388d01404cd9580b8dda18764a7d2143f2503a'],
++    'engine/flow_resume_safety.py': ['1b83f095d178e7aeedcb279d60031db5fb9db2da1305796a5b7dd15c5d281fe3'],
++    'tools/flow_resume_preflight.py': ['4b792ffa4e1f9c6f68cd02519e6f75ea819dbc62c1b114539f469a0d59f583e7'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.97', '7.0.98')  # 7.0.98 allows a safe re-run after success
++
++# The 7.0.97 to 7.0.98 update ships in the 7.0.98 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.96', '7.0.97', 'tools/update_v796_to_v797.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.97 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.97 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.97 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.98 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.98 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.98 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.97-to-v7.0.98-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.98. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

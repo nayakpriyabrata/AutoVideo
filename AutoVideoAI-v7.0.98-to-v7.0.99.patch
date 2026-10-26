@@ -1,0 +1,1423 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 09:55:28.000000000 +0000
++++ b/VERSION	2026-10-26 11:57:04.000000000 +0000
+@@ -1 +1 @@
+-7.0.98
++7.0.99
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/VIDEO_APPROVAL_PENDING_V7_0_99.md b/VIDEO_APPROVAL_PENDING_V7_0_99.md
+--- a/VIDEO_APPROVAL_PENDING_V7_0_99.md	1970-01-01 00:00:00.000000000 +0000
++++ b/VIDEO_APPROVAL_PENDING_V7_0_99.md	2026-10-26 11:56:54.000000000 +0000
+@@ -0,0 +1,109 @@
++# AutoVideoAI 7.0.99 · the Flow card that was waiting for a click
++
++Your screenshot from 14:50 answered the question. The saved project
++`37d8cf57-12b4-4a85-9934-5580e90d3781` holds the agent turn
++
++> I'm going to generate 1 video clip interpolating between your start and end frames using Omni 1.1 Flash
++> in 16:9 at 360p for 6 seconds. Would you like me to kick off this 1 video generation, costing 5 credits?
++> **[Approve] [Always approve] [Reject]**
++
++That card was never approved. **That is the whole blocker**: a Flow *video* request is confirmed by a
++click, not by a wait, so no video exists in the project. Every download-only scan was telling the truth —
++"6 gallery assets, 0 fresh candidates, no verified match" — and no amount of Resume could change it.
++7.0.98 named the right request but still only offered recovery, so it would have paused the same way.
++
++## The fastest fix, right now (5 credits, no new request)
++
++1. Click **Approve** in that Flow tab — click **Approve**, not *Always approve*, and never *Reject*.
++   That spends 5 credits once and generates the exact shot_014 take the job is waiting for.
++2. Wait for the clip to appear in the project (about 1–2 minutes at 360p).
++3. Pull it in (0 further credits, QC still runs):
++
++   ```
++   python3 cli.py v3 recover-flow-video outputs/20261022-143856-7-small-daily-habits-tha-9729 \
++       --shot-id shot_014 --wait-seconds 180
++   ```
++
++   If the automatic match still cannot prove the identity, open the new thumbnail, copy its
++   `/project/37d8cf57-…/edit/<id>` URL and add `--asset-url <url> --asset-reviewed`.
++
++Then Resume the job. **Do not** archive the request or press Resume first: archiving would abandon a card
++that is already waiting and a new video request would cost another 5 credits for the same shot.
++
++## What 7.0.99 adds so this is never invisible again
++
++| Piece | Behaviour |
++|---|---|
++| `engine/flow_pending_approval.py` (new) | read-only evidence per saved request: was it submitted, was an approval ever reserved/clicked, therefore is a card probably pending? Uses the submit ledger and the journal's `approval_reservations` |
++| Queue panel | when that evidence says "submitted, never approved", the panel warns that Flow is waiting for an approval click and that Resume can only scan |
++| Blocked-Resume message | the video paragraph now starts with the card: approve it once, or use the approve command; the download afterwards is free |
++| `tools/flow_resume_preflight.py` | prints `Approval: no approval click is recorded…` plus the exact `Approve once:` command |
++| `flow_browser.pending_approval_card()` | read-only probe: is an Approve control really clickable, what cost does the newest turn state, is it a video card. Never clicks |
++| `cli.py v3 approve-request` | approves **one** card for that saved request, then downloads. Every guard runs *before* the click |
++
++### The approve command
++
++```
++# read-only: is a card there, what does it cost? (never clicks)
++python3 cli.py v3 approve-request outputs/20261022-143856-7-small-daily-habits-tha-9729 \
++    --shot-id shot_014 --inspect
++
++# approve exactly one card and then download it
++python3 cli.py v3 approve-request outputs/20261022-143856-7-small-daily-habits-tha-9729 \
++    --shot-id shot_014 --confirm-credits 5 --wait-seconds 180
++```
++
++It refuses, before touching anything, when:
++
++- no Approve control is visible in the saved project;
++- the card does not state a readable credit cost;
++- the newest agent turn is not a video generation request (an image card needs no approval here);
++- `--confirm-credits` is missing or differs from the cost on the card;
++- the saved project in the request is not the one opened;
++- the same card is already reserved (the existing ledger refuses a duplicate click — no double spend);
++- an approval is already recorded for that request (it tells you to run the free recovery instead).
++
++It clicks `Approve` once — never `Always approve` — writes an `approval` line to the take ledger, then runs
++the normal download-and-QC path, so a recovered take still has to pass QC. `--inspect` opens the project,
++reads the card and clicks nothing.
++
++## Tests
++
++`tests/test_v799_approval_pending.py` — 23 fakes-only tests:
++
++- evidence: submitted-without-approval flagged; a recorded click clears it; a journal reservation counts;
++  an image request never needs a card; a downloaded request is not pending; a phase alone is enough when the
++  ledger is missing; the command uses the recorded cost when known;
++- the guard: no visible card, unreadable cost, image card, wrong cost, missing cost, exact cost;
++- the panel/preflight text: the card is named, the approve command is offered, a recorded approval is reported;
++- the provider with a fake browser: clicks once with `approval='once'` and `max_credits=<cost>`, never
++  `always`; never clicks when the cost differs or no card is visible; reports a refused click; refuses a
++  journal that belongs to another project;
++- the CLI exposes `approve-request` with an optional `--confirm-credits`.
++
++Neighbour suites (`flow`, `resume`, `approval`, `wait` selections): **445 passed, 9 failed** — the same 9
++environmental failures as the untouched 7.0.98 tree in this sandbox (no ffmpeg/ffprobe, Streamlit AppTest).
++
++## Install
++
++1. Stop the dashboard (all tabs).
++2. Extract `AutoVideoAI-v7.0.99-Flow-Approval-Card.zip` beside your installation.
++3. From inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.99/tools/update_v798_to_v799.py .            # dry run
++   python3 ../AutoVideoAI-v7.0.99/tools/update_v798_to_v799.py . --apply    # installs the code
++   ```
++
++   It accepts an installed 7.0.98 (or an already-updated 7.0.99), backs replaced files up under
++   `code-update-backups/v7.0.98-to-v7.0.99-<timestamp>`, and never touches outputs, jobs, Flow journals,
++   browser profiles or Clip Studio folders.
++
++You do not have to install 7.0.99 before clicking Approve — the click and the recovery above work on
++7.0.98. Install it so the next card of this kind is named instead of silently pausing.
++
++## Not verified live
++
++No Flow project was opened and no credit was spent while building this release: the click path is exercised
++against a fake browser, and the guards are pure functions. The card in your screenshot is the first real
++approval, so watch that one run.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/app.py b/app.py
+--- a/app.py	2026-10-26 09:55:06.000000000 +0000
++++ b/app.py	2026-10-26 11:54:06.000000000 +0000
+@@ -214,6 +214,12 @@
+                    + (f" — {state['flow_last_recovery_error']}" if state.get("flow_last_recovery_error") else ""))
+         if state.get("flow_next_action"):
+             st.info(state["flow_next_action"])
++        if state.get("flow_pending_approval"):
++            # v7.0.99: a saved video request is confirmed by a click, not by a wait.
++            st.warning("Flow's agent is probably still waiting for an approval click on the saved video request. "
++                       "Until that card is approved no video exists, so Resume only scans and pauses again. "
++                       "Approve it in the saved project above, or run the approve command below (it states the "
++                       "credit cost first and the download afterwards is free).")
+         if state.get("flow_saved_project_url") and state.get("flow_saved_project_url") != project_url:
+             st.caption(f"Saved project in the request: {state['flow_saved_project_url']}")
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/cli.py b/cli.py
+--- a/cli.py	2026-10-26 07:41:10.000000000 +0000
++++ b/cli.py	2026-10-26 11:54:18.000000000 +0000
+@@ -255,6 +255,20 @@
+     rv.add_argument("--allow-latest", action="store_true",
+                     help="allow newest-tile recovery without a saved baseline; use only after visually confirming it belongs to this shot")
+ 
++    ap_ = sub.add_parser(
++        "approve-request",
++        help="Approve ONCE the Flow credit card a saved video request is still waiting on, then download it "
++             "(v7.0.99; the card cost must be confirmed explicitly)")
++    ap_.add_argument("job_id")
++    ap_.add_argument("--shot-id", default="", help="shot whose saved video request is waiting; defaults to the first pending shot")
++    ap_.add_argument("--confirm-credits", type=int, default=None,
++                     help="the exact credit cost shown on the Flow card; a different cost is refused before any "
++                          "click, and omitting it only reads the card")
++    ap_.add_argument("--wait-seconds", type=int, default=180,
++                     help="how long to wait for the approved video to appear before reporting (default 180s)")
++    ap_.add_argument("--inspect", action="store_true",
++                     help="read-only: report whether a clickable card is visible and what it costs; never clicks")
++
+     fp = sub.add_parser("flow-project", help="Bind/rebind an AutoVideoAI job to an exact Google Flow project URL")
+     fp.add_argument("job_id")
+     fp.add_argument("url")
+@@ -826,6 +840,10 @@
+             f.set_flow_pause_on_unresolved_request(
+                 args.job_id, args.flow_pause_on_unresolved_request)
+         print(_run_and_record(f, args.job_id, cb))
++    elif args.cmd == "approve-request":
++        print(f.approve_flow_request(args.job_id, shot_id=args.shot_id or None,
++                                     confirm_credits=args.confirm_credits,
++                                     wait_seconds=args.wait_seconds, inspect_only=args.inspect))
+     elif args.cmd == "recover-flow-video":
+         print(f.recover_flow_video(args.job_id, shot_id=args.shot_id or None,
+                                    wait_seconds=args.wait_seconds,
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 09:54:00.000000000 +0000
++++ b/engine/factory.py	2026-10-26 12:01:00.000000000 +0000
+@@ -647,6 +647,7 @@
+             state.setdefault("flow_saved_project_url", diagnosis.get("saved_project_url"))
+             state.setdefault("flow_next_action", diagnosis.get("next_action"))
+             state["flow_journal_kind"] = diagnosis.get("kind", "")
++            state["flow_pending_approval"] = bool(diagnosis.get("pending_approval"))
+             # 7.0.98: the pause snapshot can name an older shot (shot_003 while the unresolved request is
+             # shot_014). The unresolved journal is the truth.
+             if diagnosis.get("shot_id") and diagnosis["shot_id"] in {s.shot_id for s in m.shots}:
+@@ -661,6 +662,9 @@
+             if diagnosis.get("video_recovery_command") and diagnosis["video_recovery_command"] not in commands:
+                 state["actions"].insert(0, {"label": "Recover the exact saved video (0 new credits)",
+                                             "command": diagnosis["video_recovery_command"]})
++            if diagnosis.get("approve_command") and diagnosis["approve_command"] not in commands:
++                state["actions"].insert(0, {"label": "Approve the pending Flow card once (spends credits)",
++                                            "command": diagnosis["approve_command"]})
+             if diagnosis.get("archive_command") and diagnosis["archive_command"] not in commands:
+                 label = ("Allow one new free image request" if diagnosis.get("kind", "image") == "image"
+                          else "Allow ONE new paid video request")
+@@ -679,7 +683,13 @@
+         if not row:
+             return {}
+         from .flow_resume_safety import image_request_row, journal_shot_id, journal_target
++        from .flow_pending_approval import approve_command, evidence_for
+         kind = 'image' if image_request_row(row) else (row.get('kind') or 'video')
++        approval = {}
++        try:
++            approval = evidence_for(Path(self.pm.job_dir(job_id)) / str(row.get('journal') or ''))
++        except (OSError, ValueError, TypeError):
++            approval = {}
+         notes = {
+             "saved_project_not_reachable": ("The saved Flow project no longer opens, so another wait cannot "
+                                             "produce this image. One new image request is free in Flow."),
+@@ -705,10 +715,22 @@
+             video_command = (f"python3 cli.py v3 recover-flow-video {job_id}{shot_flag} --wait-seconds 180")
+             command = f"python3 cli.py v3 archive-request {job_id} {journal_target(journal)} --confirm-new-credit-spend"
+         next_action = notes.get(state, "")
++        if kind != "image" and approval.get("suspected_pending"):
++            # v7.0.99: no approval click is recorded for this submitted video request, so no video exists yet
++            # and waiting again cannot produce one.
++            cost = approval.get("cost")
++            credits = f" ({cost} credits)" if isinstance(cost, int) else ""
++            next_action = ("Flow's agent is probably still waiting for your approval click" + credits
++                           + " on the saved request, so no video exists yet and another wait cannot find one. "
++                           "Approve that card once - in the saved project yourself, or with the command below - "
++                           "then the download is free and QC still runs.")
+         if kind != "image" and not next_action:
+             next_action = ("This is a video request: recover the exact saved video first (0 credits). A new video "
+                            "generation spends credits, so nothing is resubmitted automatically.")
+         return {"journal": journal, "recovery_state": state, "kind": kind, "shot_id": shot_id,
++                "pending_approval": bool(approval.get("suspected_pending")),
++                "approval_evidence": approval,
++                "approve_command": approve_command(job_id, approval) if approval else "",
+                 "last_recovery_error": row.get("last_recovery_error", ""),
+                 "saved_project_url": row.get("saved_project_url", ""),
+                 "next_action": next_action,
+@@ -3980,15 +4002,94 @@
+         self.pm.update_shot(job_id, s)
+         return {"qc": qc, "take": dst}
+ 
++    def approve_flow_request(self, job_id: str, shot_id: str | None = None,
++                             confirm_credits: int | None = None,
++                             wait_seconds: int = 180, inspect_only: bool = False) -> dict:
++        """Approve ONCE the Flow card a saved video request is still waiting on (v7.0.99).
++
++        A submitted Flow *video* request is confirmed by a click, not by a wait: until the card is approved
++        no video exists, so download-only recovery can only pause again. This names the exact saved request,
++        requires the credit cost to be stated up front, and clicks ``Approve`` once - never ``Always
++        approve``. ``inspect_only`` opens the project, reads the card and clicks nothing.
++        """
++        from .flow_pending_approval import approval_decision, evidence_for
++
++        try:
++            m = self.pm.load_manifest(job_id)
++        except (OSError, ValueError) as error:
++            raise ValueError(f"No saved production for job {job_id!r} "
++                             f"({type(error).__name__}); nothing was opened or clicked.")
++        unfinished = [s for s in m.shots if not s.accepted_take]
++        if shot_id:
++            shot = next((s for s in m.shots if s.shot_id == shot_id), None)
++            if shot is None:
++                raise ValueError(f"Unknown shot {shot_id!r} in job {job_id}")
++            if shot.accepted_take:
++                return {"job_id": job_id, "shot_id": shot_id, "status": "already_accepted",
++                        "message": (f"{shot_id} already has an accepted take; nothing was approved or downloaded.")}
++        elif unfinished:
++            shot = unfinished[0]
++        else:
++            return {"job_id": job_id, "status": "all_shots_accepted",
++                    "message": "All shots are already accepted; nothing was approved or downloaded."}
++
++        D = self.pm.dirs(job_id)
++        journals = sorted(glob.glob(os.path.join(D['flow'], 'shots', shot.shot_id, 'take_*.mp4.flow-request.json')))
++        if not journals:
++            raise RuntimeError(f"{shot.shot_id} has no saved Flow video request, so there is no card to approve. "
++                               "Nothing was clicked or submitted.")
++        if len(journals) > 1:
++            raise ValueError('Multiple request journals exist for this shot; export support diagnostics before '
++                             'approving anything. Nothing was clicked.')
++        journal = journals[0]
++        approval = evidence_for(journal)
++        if approval.get('approved'):
++            return {"job_id": job_id, "shot_id": shot.shot_id, "status": "already_approved",
++                    "approved": True,
++                    "message": ("An approval click is already recorded for this request; no second click was made. "
++                                "Run `python3 cli.py v3 recover-flow-video "
++                                f"{job_id} --shot-id {shot.shot_id} --wait-seconds 180` (0 credits) to download it.")}
++
++        if inspect_only:
++            from .providers.flow_browser import FlowBrowser, FlowBrowserProvider
++            with open(journal, encoding="utf-8") as handle:
++                saved_project = FlowBrowser.normalize_project_url(
++                    (json.load(handle) or {}).get("project_url"))
++            if not saved_project:
++                raise ValueError('The saved video request has no Flow project URL; nothing was opened or clicked.')
++            provider = FlowBrowserProvider()
++            try:
++                probe = provider.inspect_recorded_approval(
++                    f'AutoVideo-{job_id}', journal, project_url=saved_project)
++            finally:
++                try:
++                    provider.close()
++                except Exception:
++                    pass
++            allowed, reason = approval_decision(probe, confirm_credits)
++            self.pm.log(job_id, "flow_approval_inspected", {
++                "shot": shot.shot_id, "visible": bool(probe.get("visible")),
++                "cost": probe.get("cost"), "would_click": bool(allowed)})
++            return {"job_id": job_id, "shot_id": shot.shot_id, "status": "inspect",
++                    "card": probe, "would_click": bool(allowed), "reason": reason,
++                    "project_url": saved_project, "new_credits": 0}
++        return self.recover_flow_video(job_id, shot_id=shot.shot_id, wait_seconds=wait_seconds,
++                                       approve_credits=confirm_credits)
++
+     def recover_flow_video(self, job_id: str, shot_id: str | None = None,
+                            wait_seconds: int = 120,
+                            allow_latest: bool = False, asset_url: str = '',
+-                           asset_reviewed: bool = False) -> dict:
++                           asset_reviewed: bool = False,
++                           approve_credits: int | None = None) -> dict:
+         """Download an already-generated video from the bound Flow project.
+ 
+         This recovery path never fills/submits a prompt and therefore cannot
+         initiate a new credit-bearing generation. It is safe to run while the
+         account is usage-limited, provided the existing project remains readable.
++
++        v7.0.99: ``approve_credits`` approves the ONE card Flow is waiting on for this saved video request
++        (a card that was never clicked means no video exists, so no wait can find one). The click happens
++        first, is limited to the stated cost, and the download that follows is free.
+         """
+         from .providers.flow_browser import FlowBrowserProvider
+ 
+@@ -4059,9 +4160,26 @@
+         os.makedirs(D["downloads"], exist_ok=True)
+         recovered = os.path.join(D["downloads"], f"recovered_{shot.shot_id}.mp4")
+         provider = FlowBrowserProvider()
+-        print(f"[Flow] Recovery-only mode: checking {shot.shot_id} in {project_url}; "
+-              "no generation will be submitted and no new credits will be requested.")
++        approved = None
+         try:
++            if approve_credits is not None:
++                if not journal:
++                    raise RuntimeError(
++                        f"{shot.shot_id} has no saved Flow video request, so there is no card to approve. "
++                        "Nothing was clicked or submitted.")
++                if asset_url:
++                    raise ValueError("Approve and download a reviewed URL are separate actions; "
++                                     "run them one at a time. Nothing was clicked.")
++                print(f"[Flow] Approving the saved card for {shot.shot_id} once "
++                      f"({int(approve_credits)} credits explicitly confirmed) in {project_url}...")
++                approved = provider.approve_recorded_card(
++                    f'AutoVideo-{job_id}', journal, project_url=project_url,
++                    confirm_credits=int(approve_credits))
++                print(f"[Flow] Card approved ({approved.get('cost')} credits). Waiting for the video; "
++                      "the download itself is free.")
++            else:
++                print(f"[Flow] Recovery-only mode: checking {shot.shot_id} in {project_url}; "
++                      "no generation will be submitted and no new credits will be requested.")
+             if journal:
+                 result = provider.recover_recorded_video(f'AutoVideo-{job_id}', recovered, journal,
+                     project_url=project_url, wait_s=max(0, int(wait_seconds)), asset_url=asset_url)
+@@ -4104,9 +4222,11 @@
+             _save_json(os.path.join(self.pm.job_dir(job_id), "pause_state.json"), pause)
+             self.pm.log(job_id, "flow_existing_video_recovered", {
+                 "shot": shot.shot_id, "project_url": bound or project_url,
+-                "take": associated.get("take"), "qc": qc, "new_credits": 0})
++                "take": associated.get("take"), "qc": qc, "new_credits": 0,
++                "approved_credits": (approved or {}).get("cost")})
+             return {"job_id": job_id, "shot_id": shot.shot_id,
+                     "project_url": bound or project_url, "new_credits": 0,
++                    "approved_credits": (approved or {}).get("cost"),
+                     "accepted": accepted, **associated}
+         finally:
+             try:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/engine/flow_pending_approval.py b/engine/flow_pending_approval.py
+--- a/engine/flow_pending_approval.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/flow_pending_approval.py	2026-10-26 11:55:12.000000000 +0000
+@@ -0,0 +1,143 @@
++"""v7.0.99: read-only evidence that a saved Flow video request is waiting for an approval click.
++
++Field case (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-26 14:50 IST): the saved Flow
++project showed the agent turn
++
++    "I'm going to generate 1 video clip interpolating between your start and end frames using Omni 1.1
++     Flash in 16:9 at 360p for 6 seconds. Would you like me to kick off this 1 video generation, costing
++     5 credits?"   [Approve] [Always approve] [Reject]
++
++Nothing had been generated, so every download-only recovery scan honestly reported "no verified match" and
++paused again. The card is the whole blocker: a video request is confirmed by a *click*, not by a wait.
++
++This module answers, from files only and without opening a browser:
++
++* was this take submitted (intent/submitted ledger line, or a ``submitted``/``submission_uncertain`` phase)?
++* was an approval ever reserved or clicked for it (journal ``approval_reservations``, ledger ``approval``)?
++* therefore, is a pending card the most likely reason no video exists?
++
++It never clicks and never writes. ``approval_decision`` is the pure guard used by the provider before any
++approve action, so the rules can be tested without Playwright.
++"""
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++JOURNAL_SUFFIX = '.flow-request.json'
++SUBMITTED_PHASES = {'submitted', 'submission_uncertain'}
++
++
++def _load(path) -> dict:
++    try:
++        data = json.loads(Path(path).read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return {}
++    return data if isinstance(data, dict) else {}
++
++
++def shot_id_for(journal) -> str:
++    parts = Path(journal).as_posix().split('/')
++    for index, part in enumerate(parts):
++        if part == 'shots' and index + 1 < len(parts):
++            return parts[index + 1]
++    return ''
++
++
++def evidence_for(journal) -> dict:
++    """Describe one saved request: submitted, approved, and whether a card is probably pending."""
++    journal = Path(journal)
++    request = _load(journal)
++    target = journal.name[:-len(JOURNAL_SUFFIX)] if journal.name.endswith(JOURNAL_SUFFIX) else journal.name
++    ledger = journal.with_name(journal.name[:-len(JOURNAL_SUFFIX)] + '.submit-ledger.jsonl')
++    try:
++        from .flow_submit_guard import read_events
++        events = read_events(str(ledger))
++    except (OSError, ValueError, ImportError):
++        events = []
++    reservations = [r for r in (request.get('approval_reservations') or []) if isinstance(r, dict)]
++    # ``flow_approval.reserve`` writes a reservation immediately before the click, so a reservation is
++    # evidence that this card was approved (or an approval was attempted); the ledger line confirms it.
++    clicked = ([e for e in events if e.get('event') == 'approval'] or reservations)
++    submitted = (any(e.get('event') in ('intent', 'submitted', 'unreadable') for e in events)
++                 or str(request.get('phase') or '') in SUBMITTED_PHASES)
++    costs = [r.get('cost') for r in reservations if isinstance(r.get('cost'), int)]
++    kind = str(request.get('kind') or '')
++    # Only a video request needs a credit card. An image request is free and generates without one.
++    needs_card = kind == 'video'
++    suspected = bool(needs_card and submitted and not clicked
++                     and str(request.get('status') or '') != 'downloaded')
++    if not needs_card:
++        reason = 'an image request is free and needs no approval card'
++    elif clicked:
++        reason = 'an approval was already reserved/clicked for this request'
++    elif not submitted:
++        reason = 'this request was never submitted'
++    elif suspected:
++        reason = ('no approval click is recorded for this submitted video request: Flow is probably still '
++                  'waiting on its Approve/Reject card')
++    else:
++        reason = 'this request is already downloaded'
++    return {'journal': str(journal), 'target': target, 'shot_id': shot_id_for(journal),
++            'kind': kind, 'phase': str(request.get('phase') or ''),
++            'submitted': bool(submitted), 'approved': bool(clicked),
++            'needs_approval_card': bool(needs_card), 'suspected_pending': bool(suspected),
++            'cost': max(costs) if costs else None, 'reason': reason}
++
++
++def approval_evidence(job_dir) -> list[dict]:
++    """Every unresolved Flow journal of a job, with approval evidence. Read-only."""
++    root = Path(job_dir)
++    if not root.is_dir():
++        return []
++    rows = []
++    for journal in sorted(root.rglob('*' + JOURNAL_SUFFIX)):
++        rows.append(evidence_for(journal))
++    return rows
++
++
++def pending(job_dir) -> list[dict]:
++    return [row for row in approval_evidence(job_dir) if row.get('suspected_pending')]
++
++
++def approve_command(job_id: str, row: dict) -> str:
++    """The one command that approves this exact card once, or an empty string when none applies."""
++    if not row.get('suspected_pending'):
++        return ''
++    shot = row.get('shot_id')
++    if not shot:
++        return ''
++    cost = row.get('cost')
++    credits = str(cost) if isinstance(cost, int) else '<credits on the card>'
++    return (f'python3 cli.py v3 approve-request {job_id} --shot-id {shot} '
++            f'--confirm-credits {credits}')
++
++
++def approval_decision(probe, confirm_credits) -> tuple[bool, str]:
++    """Pure guard: may this visible card be clicked once? Nothing is clicked here.
++
++    ``probe`` is what the browser read: ``{'visible': bool, 'cost': int|None, 'question': str,
++    'video': bool}``. Every refusal names what to do instead.
++    """
++    probe = probe or {}
++    if not probe.get('visible'):
++        return False, ('no clickable Approve control is visible in the saved project; nothing was clicked. '
++                       'Wait for the card to appear, or download a video that already exists.')
++    cost = probe.get('cost')
++    if not isinstance(cost, int) or isinstance(cost, bool) or cost < 0:
++        return False, ('the visible card does not state a readable credit cost; nothing was clicked. '
++                       'Approve it yourself in the saved project if you accept the charge.')
++    if not probe.get('video'):
++        return False, ('the newest Flow agent turn is not a video generation request; nothing was clicked. '
++                       'Approve an image card - if any - in Flow directly; images need no approval here.')
++    if confirm_credits is None:
++        return False, (f'the card asks for {cost} credits; pass --confirm-credits {cost} to approve it once, '
++                       'or click Approve in the saved project yourself')
++    try:
++        confirmed = int(confirm_credits)
++    except (TypeError, ValueError):
++        return False, f'--confirm-credits must be a number of credits (the card asks for {cost}); nothing was clicked'
++    if confirmed != cost:
++        return False, (f'you confirmed {confirmed} credits but the card asks for {cost}; nothing was clicked. '
++                       f'Re-run with --confirm-credits {cost} if {cost} credits is acceptable.')
++    return True, f'card asks for {cost} credits; one approval will be clicked'
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/engine/flow_resume_safety.py b/engine/flow_resume_safety.py
+--- a/engine/flow_resume_safety.py	2026-10-26 09:55:02.000000000 +0000
++++ b/engine/flow_resume_safety.py	2026-10-26 11:54:22.000000000 +0000
+@@ -115,6 +115,11 @@
+                 reasons.append(f"{target}: {row['recovery_state']}"
+                                + (f" ({row['last_recovery_error']})" if row.get('last_recovery_error') else ''))
+         saved = images + videos
++        shot_hint = ''
++        if videos:
++            shots = sorted({journal_shot_id(item) for item in videos if journal_shot_id(item)})
++            shot_hint = (' --shot-id ' + shots[0]) if len(shots) == 1 else ''
++
+         message = (f"Safe Resume blocked: {report['unresolved_count']} unresolved Flow request journal(s) for {job}. "
+                    f"Saved request(s): {', '.join(saved) or 'see logs/resume-reconciliation.json'}. ")
+         if reasons:
+@@ -131,8 +136,13 @@
+             shot_ids = sorted({journal_shot_id(item) for item in videos} - {''})
+             shot_flag = (' --shot-id ' + shot_ids[0]) if len(shot_ids) == 1 else ''
+             message += ("Video request(s) " + ', '.join(videos) + " cannot be redone for free: a new Flow video "
+-                        "spends credits, so nothing is resubmitted automatically. First recover the exact saved "
+-                        "video (0 credits, QC still runs): "
++                        "spends credits, so nothing is resubmitted automatically. If the saved project shows an "
++                        "agent turn asking \"Would you like me to kick off this 1 video generation, costing N "
++                        "credits?\" with Approve/Reject buttons, that card was never approved and no video exists "
++                        "yet - waiting again cannot produce one. Approve that one card (N credits) in the saved "
++                        "project, or run `python3 cli.py v3 approve-request " + job + shot_hint + " --confirm-credits N` "
++                        "(it refuses any other cost), and the download after it is free. Otherwise recover the exact "
++                        "saved video (0 credits, QC still runs): "
+                         f"`python3 cli.py v3 recover-flow-video {job}{shot_flag} --wait-seconds 180`. If you can see "
+                         "that video in the saved project, pass its exact editor URL: "
+                         f"`python3 cli.py v3 recover-flow-video {job}{shot_flag} --asset-url https://flow.google.com/project/<id>/edit/<id> "
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-26 07:40:54.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-26 11:53:48.000000000 +0000
+@@ -3976,6 +3976,99 @@
+         except OSError as error:
+             print(f"[Flow] Approval click could not be logged ({type(error).__name__}).")
+ 
++    def _clickable_action(self, label: str):
++        """The exact approval control, only when it is really clickable. v7.0.99 extracted."""
++        pat = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
++        # Best case: a real accessible button.
++        try:
++            locs = self._page.get_by_role("button", name=pat)
++            if hasattr(locs, "count") and hasattr(locs, "nth"):
++                candidates = [locs.nth(i) for i in range(locs.count() - 1, -1, -1)]
++            else:
++                candidates = [getattr(locs, "first", locs)]
++            for loc in candidates:
++                if loc.is_visible(timeout=100):
++                    try:
++                        if loc.is_enabled(timeout=100):
++                            return loc
++                    except Exception:
++                        return loc
++        except Exception:
++            pass
++
++        # Some Flow cohorts render the text inside a clickable div.  Require a
++        # clickable ancestor; never return the raw historical text node.
++        try:
++            texts = self._page.get_by_text(label, exact=True)
++            if hasattr(texts, "count") and hasattr(texts, "nth"):
++                text_candidates = [texts.nth(i) for i in range(texts.count() - 1, -1, -1)]
++            else:
++                text_candidates = [getattr(texts, "first", texts)]
++            for txt in text_candidates:
++                if not txt.is_visible(timeout=80):
++                    continue
++                try:
++                    anc = txt.locator(
++                        "xpath=ancestor-or-self::*[self::button or @role='button' or @tabindex or @href][1]"
++                    )
++                    if (not hasattr(anc, "count") or anc.count()) and anc.is_visible(timeout=80):
++                        disabled = (anc.get_attribute("disabled") is not None or
++                                    str(anc.get_attribute("aria-disabled") or "").lower() == "true")
++                        if not disabled:
++                            return anc
++                except Exception:
++                    continue
++        except Exception:
++            pass
++        return None
++
++    def _approval_labels(self, approval: str = "once") -> list[str]:
++        """Approval labels to look for; ``Always approve`` only when explicitly requested."""
++        configured = self.ui.get("actions", {}).get("agent_confirmation_buttons", []) or []
++        approve_labels = [x for x in configured if "approve" in str(x).lower()]
++        if approval == "always":
++            labels = ["Always approve", "Approve", "Approve once"]
++        else:
++            labels = ["Approve", "Approve once"]
++        for x in approve_labels:
++            if x not in labels and not (approval != "always" and str(x).lower() == "always approve"):
++                labels.append(x)
++        return labels
++
++    def pending_approval_card(self, timeout_s: int = 5) -> dict:
++        """Read-only: the newest Flow approval card, its stated cost, and whether it is a video card.
++
++        v7.0.99: a saved *video* request is confirmed by a click, not by a wait. A job whose card was never
++        approved has no video in the project, so every download-only scan honestly reports "no verified
++        match" and pauses again. This looks and never clicks.
++        """
++        labels = self._approval_labels("once")
++        deadline = time.time() + max(1, int(timeout_s))
++        while True:
++            try:
++                body_raw = self._page.inner_text("body") or ""
++            except Exception as error:
++                if self._looks_like_browser_closed_error(error):
++                    raise FlowBrowserClosedError(str(error))
++                body_raw = ""
++            tail = body_raw[-4200:]
++            questions = list(re.finditer(r'would you like me to (?:kick off|start|create|generate)', tail, re.I))
++            question = ' '.join(tail[questions[-1].start():].split()) if questions else ''
++            question = re.split(r'\b(?:Approve|Always approve|Reject)\b', question, flags=re.I)[0].strip()
++            visible = [label for label in labels if self._clickable_action(label) is not None]
++            if visible or time.time() >= deadline:
++                match = (re.search(r"cost(?:ing|s)?\s+([0-9][0-9,]*)\s+(?:ai\s+)?credits?", question, re.I)
++                         or re.search(r"([0-9][0-9,]*)\s+(?:ai\s+)?credits?", question, re.I))
++                return {"visible": bool(visible), "labels": visible,
++                        "cost": int(match.group(1).replace(",", "")) if match else None,
++                        "question": question[:400],
++                        "video": bool(re.search(r"\b(?:video|clip|interpolat)", question, re.I))}
++            try:
++                self._page.wait_for_timeout(300)
++            except Exception as error:
++                if self._looks_like_browser_closed_error(error):
++                    raise FlowBrowserClosedError(str(error))
++
+     def confirm_agent_generation(self, timeout_s: int = 12, approval: str = "once",
+                                  max_credits: int | None = None) -> bool:
+         """Approve only a *currently clickable* Flow credit card.
+@@ -4003,15 +4096,7 @@
+ 
+         # Deliberately ignore generic Generate/Create/Continue/Yes controls. They
+         # occur elsewhere in Flow and are not reliable credit-approval signals.
+-        configured = self.ui.get("actions", {}).get("agent_confirmation_buttons", []) or []
+-        approve_labels = [x for x in configured if "approve" in str(x).lower()]
+-        if approval == "always":
+-            labels = ["Always approve", "Approve", "Approve once"]
+-        else:
+-            labels = ["Approve", "Approve once"]
+-        for x in approve_labels:
+-            if x not in labels and not (approval != "always" and str(x).lower() == "always approve"):
+-                labels.append(x)
++        labels = self._approval_labels(approval)
+ 
+         def reserve_card():
+             journal = getattr(self, '_approval_journal', None)
+@@ -4029,50 +4114,7 @@
+                 print('[Flow] Approval stopped: '+str(error))
+                 return False
+ 
+-        def clickable_action(label: str):
+-            pat = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
+-            # Best case: a real accessible button.
+-            try:
+-                locs = self._page.get_by_role("button", name=pat)
+-                if hasattr(locs, "count") and hasattr(locs, "nth"):
+-                    candidates = [locs.nth(i) for i in range(locs.count() - 1, -1, -1)]
+-                else:
+-                    candidates = [getattr(locs, "first", locs)]
+-                for loc in candidates:
+-                    if loc.is_visible(timeout=100):
+-                        try:
+-                            if loc.is_enabled(timeout=100):
+-                                return loc
+-                        except Exception:
+-                            return loc
+-            except Exception:
+-                pass
+-
+-            # Some Flow cohorts render the text inside a clickable div.  Require a
+-            # clickable ancestor; never return the raw historical text node.
+-            try:
+-                texts = self._page.get_by_text(label, exact=True)
+-                if hasattr(texts, "count") and hasattr(texts, "nth"):
+-                    text_candidates = [texts.nth(i) for i in range(texts.count() - 1, -1, -1)]
+-                else:
+-                    text_candidates = [getattr(texts, "first", texts)]
+-                for txt in text_candidates:
+-                    if not txt.is_visible(timeout=80):
+-                        continue
+-                    try:
+-                        anc = txt.locator(
+-                            "xpath=ancestor-or-self::*[self::button or @role='button' or @tabindex or @href][1]"
+-                        )
+-                        if (not hasattr(anc, "count") or anc.count()) and anc.is_visible(timeout=80):
+-                            disabled = (anc.get_attribute("disabled") is not None or
+-                                        str(anc.get_attribute("aria-disabled") or "").lower() == "true")
+-                            if not disabled:
+-                                return anc
+-                    except Exception:
+-                        continue
+-            except Exception:
+-                pass
+-            return None
++        clickable_action = self._clickable_action
+ 
+         deadline = time.time() + max(1, int(timeout_s))
+         saw_clickable = False
+@@ -5010,6 +5052,50 @@
+         self._save_request(original, request)
+         return {'path': out_path, 'project_url': project_url, 'credits': 0}
+ 
++
++    def inspect_recorded_approval(self, project, request_path, *, project_url):
++        """Read-only: is this saved video request waiting on an approval card? Never clicks."""
++        with open(request_path, encoding='utf-8') as handle:
++            request = json.load(handle)
++        if (request.get('kind') != 'video'
++                or FlowBrowser.normalize_project_url(request.get('project_url'))
++                != FlowBrowser.normalize_project_url(project_url)):
++            raise ValueError('The saved video request does not belong to this Flow project')
++        b = self._ensure()
++        b.ensure_project(project, project_url=project_url)
++        probe = b.pending_approval_card()
++        probe.update(request=str(request_path), project_url=project_url)
++        return probe
++
++    def approve_recorded_card(self, project, request_path, *, project_url, confirm_credits):
++        """Approve ONE pending card for a saved video request; every guard runs before the click.
++
++        Used only by the explicit ``cli.py v3 approve-request`` command: the human names this request and
++        states the credit cost, so the card is not an unsolicited approval. The existing ledger reservation
++        still refuses a second click for the same card.
++        """
++        from ..flow_pending_approval import approval_decision
++        probe = self.inspect_recorded_approval(project, request_path, project_url=project_url)
++        allowed, reason = approval_decision(probe, confirm_credits)
++        if not allowed:
++            raise FlowUIChanged('Flow approval refused: ' + reason)
++        with open(request_path, encoding='utf-8') as handle:
++            request = json.load(handle)
++        b = self._ensure()
++        b._approval_journal = str(request_path)
++        b._awaiting_request_id = str(request.get('request_id') or ('approve:' + Path(request_path).name))
++        b._approval_card_limit = 1
++        clicked = b.confirm_agent_generation(timeout_s=20, approval='once',
++                                             max_credits=int(probe['cost']))
++        info = dict(getattr(b, 'last_agent_confirmation', {}) or {})
++        info.update(probe=probe, clicked_once=bool(clicked), confirmed_credits=int(confirm_credits))
++        if not clicked:
++            raise FlowUIChanged('Flow approval was not clicked: '
++                                + str(info.get('reason') or 'unknown reason'))
++        print(f"[Flow] Approval clicked once ({info.get('cost')} credits, "
++              f"{int(confirm_credits)} explicitly confirmed).")
++        return info
++
+     def _record_asset(self, out_path, signature):
+         with open(out_path + ".flow-request.json", encoding="utf-8") as f:
+             request = json.load(f)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/tests/test_v799_approval_pending.py b/tests/test_v799_approval_pending.py
+--- a/tests/test_v799_approval_pending.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v799_approval_pending.py	2026-10-26 11:54:36.000000000 +0000
+@@ -0,0 +1,294 @@
++"""v7.0.99: a saved Flow video request can be waiting for an approval click, and that is now said out loud.
++
++Field case (job 20261022-143856-7-small-daily-habits-tha-9729, 2026-10-26 14:50 IST): the saved project
++showed the agent turn
++
++    "I'm going to generate 1 video clip interpolating between your start and end frames using Omni 1.1
++     Flash in 16:9 at 360p for 6 seconds. Would you like me to kick off this 1 video generation, costing
++     5 credits?"   [Approve] [Always approve] [Reject]
++
++The card had never been clicked, so no video existed; each download-only recovery honestly found nothing and
++paused again. Nothing in the app named the card.
++
++These tests cover the read-only evidence, the pure click guard, the message/preflight text and the CLI
++plumbing. No browser is opened and no credit is spent: the "browser" here is a fake that only records calls.
++"""
++import json
++
++import pytest
++
++from engine import flow_pending_approval as fpa
++from engine.flow_resume_safety import FlowResumeBlocked, check_job
++from tools import flow_resume_preflight as preflight
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++PROJECT = 'https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781'
++QUESTION = ("I'm going to generate 1 video clip interpolating between your start and end frames using Omni 1.1 "
++            "Flash in 16:9 at 360p for 6 seconds. Would you like me to kick off this 1 video generation, "
++            "costing 5 credits? ")
++
++
++def _job(tmp_path):
++    job = tmp_path / JOB
++    (job / 'flow' / 'shots' / 'shot_014').mkdir(parents=True)
++    (job / 'production_manifest.json').write_text('{"shots": []}')
++    return job
++
++
++def _journal(job, kind='video', phase='submitted', status='pending', reservations=None, name='take_01.mp4'):
++    path = job / 'flow' / 'shots' / 'shot_014' / (name + '.flow-request.json')
++    payload = {'kind': kind, 'scope': 'video_flow_v1' if kind == 'video' else 'isolated_image_v1',
++               'phase': phase, 'status': status, 'project_url': PROJECT, 'baseline': [], 'signature': ''}
++    if reservations is not None:
++        payload['approval_reservations'] = reservations
++    path.write_text(json.dumps(payload))
++    return path
++
++
++def _ledger(journal, *events):
++    lines = ''.join(json.dumps({'event': event, 'take': journal.name}) + '\n' for event in events)
++    journal.with_name(journal.name[:-len('.flow-request.json')] + '.submit-ledger.jsonl').write_text(lines)
++
++
++# ----------------------------------------------------------------- read-only evidence
++
++def test_submitted_without_an_approval_is_flagged_as_a_pending_card(tmp_path):
++    journal = _journal(_job(tmp_path))
++    _ledger(journal, 'intent', 'submitted')
++    row = fpa.evidence_for(journal)
++    assert row['submitted'] is True and row['approved'] is False
++    assert row['needs_approval_card'] is True and row['suspected_pending'] is True
++    assert 'waiting on its Approve/Reject card' in row['reason']
++    assert row['shot_id'] == 'shot_014'
++
++
++def test_a_recorded_approval_click_clears_the_flag(tmp_path):
++    journal = _journal(_job(tmp_path))
++    _ledger(journal, 'intent', 'submitted', 'approval')
++    row = fpa.evidence_for(journal)
++    assert row['approved'] is True and row['suspected_pending'] is False
++    assert 'already reserved/clicked' in row['reason']
++
++
++def test_a_journal_reservation_also_counts_as_an_approval_attempt(tmp_path):
++    journal = _journal(_job(tmp_path), reservations=[{'key': 'k', 'cost': 5, 'status': 'reserved'}])
++    row = fpa.evidence_for(journal)
++    assert row['approved'] is True and row['suspected_pending'] is False
++    assert row['cost'] == 5
++
++
++def test_an_image_request_never_needs_a_card(tmp_path):
++    journal = _journal(_job(tmp_path), kind='image', phase='submitted')
++    row = fpa.evidence_for(journal)
++    assert row['needs_approval_card'] is False and row['suspected_pending'] is False
++    assert 'free' in row['reason']
++
++
++def test_a_downloaded_request_is_not_pending(tmp_path):
++    journal = _journal(_job(tmp_path), status='downloaded')
++    _ledger(journal, 'intent', 'submitted')
++    assert fpa.evidence_for(journal)['suspected_pending'] is False
++
++
++def test_the_phase_alone_is_enough_when_the_ledger_is_missing(tmp_path):
++    journal = _journal(_job(tmp_path), phase='submission_uncertain')
++    assert fpa.evidence_for(journal)['suspected_pending'] is True
++
++
++def test_the_command_uses_the_recorded_cost_when_it_is_known(tmp_path):
++    journal = _journal(_job(tmp_path), reservations=[])
++    _ledger(journal, 'intent', 'submitted')
++    row = fpa.evidence_for(journal)
++    assert fpa.approve_command(JOB, row) == (
++        f'python3 cli.py v3 approve-request {JOB} --shot-id shot_014 --confirm-credits <credits on the card>')
++    row['cost'] = 5
++    assert fpa.approve_command(JOB, row).endswith('--confirm-credits 5')
++
++
++# ----------------------------------------------------------------- the click guard
++
++def test_the_guard_refuses_a_card_that_is_not_visible():
++    allowed, reason = fpa.approval_decision({'visible': False}, 5)
++    assert not allowed and 'no clickable Approve control' in reason
++
++
++def test_the_guard_refuses_an_unreadable_cost():
++    allowed, reason = fpa.approval_decision({'visible': True, 'cost': None, 'video': True}, 5)
++    assert not allowed and 'readable credit cost' in reason
++
++
++def test_the_guard_refuses_an_image_card():
++    allowed, reason = fpa.approval_decision({'visible': True, 'cost': 0, 'video': False}, 0)
++    assert not allowed and 'not a video generation request' in reason
++
++
++def test_the_guard_refuses_a_different_cost_than_the_one_confirmed():
++    allowed, reason = fpa.approval_decision({'visible': True, 'cost': 5, 'video': True}, 9)
++    assert not allowed and 'but the card asks for 5' in reason
++    assert '--confirm-credits 5' in reason
++
++
++def test_the_guard_refuses_without_a_confirmed_cost():
++    allowed, reason = fpa.approval_decision({'visible': True, 'cost': 5, 'video': True}, None)
++    assert not allowed and 'pass --confirm-credits 5' in reason
++
++
++def test_the_guard_allows_exactly_the_stated_cost():
++    allowed, reason = fpa.approval_decision({'visible': True, 'cost': 5, 'video': True}, 5)
++    assert allowed and '5 credits' in reason
++
++
++# ----------------------------------------------------------------- what the panel and tools say
++
++def test_the_blocked_resume_message_names_the_card_and_the_approve_command(tmp_path):
++    job = _job(tmp_path)
++    journal = _journal(job)
++    _ledger(journal, 'intent', 'submitted')
++    message = str(FlowResumeBlocked(check_job(job)))
++    assert 'that card was never approved' in message
++    assert f'approve-request {JOB} --shot-id shot_014 --confirm-credits N' in message
++    assert 'the download after it is free' in message
++
++
++def test_the_preflight_reports_the_approval_state(tmp_path, capsys):
++    job = _job(tmp_path)
++    journal = _journal(job, reservations=[{'key': 'k', 'cost': 5, 'status': 'reserved'}])
++    _ledger(journal, 'intent', 'submitted')
++    argv = __import__('sys').argv
++    __import__('sys').argv = ['flow_resume_preflight.py', str(job)]
++    try:
++        assert preflight.main() == 3
++    finally:
++        __import__('sys').argv = argv
++    printed = capsys.readouterr().out
++    assert 'Approval:     an approval was already clicked for this request' in printed
++    assert 'Recover:      python3 cli.py v3 recover-flow-video' in printed
++
++
++def test_the_preflight_offers_the_approve_command_when_no_click_is_recorded(tmp_path, capsys):
++    job = _job(tmp_path)
++    journal = _journal(job)
++    _ledger(journal, 'intent', 'submitted')
++    argv = __import__('sys').argv
++    __import__('sys').argv = ['flow_resume_preflight.py', str(job)]
++    try:
++        assert preflight.main() == 3
++    finally:
++        __import__('sys').argv = argv
++    printed = capsys.readouterr().out
++    assert 'no approval click is recorded' in printed
++    assert f'Approve once: python3 cli.py v3 approve-request {JOB} --shot-id shot_014 --confirm-credits' in printed
++
++
++# ----------------------------------------------------------------- the provider wiring (fake browser)
++
++class FakeBridge:
++    """Only what approve_recorded_card touches; nothing here reaches Flow."""
++
++    def __init__(self, probe, click_ok=True, reason=''):
++        self._probe = probe
++        self._click_ok = click_ok
++        self._reason = reason
++        self.calls = []
++        self.last_agent_confirmation = {}
++
++    def ensure_project(self, project, project_url):
++        self.calls.append(('ensure_project', project_url))
++
++    def pending_approval_card(self, timeout_s=5):
++        self.calls.append(('probe', timeout_s))
++        return dict(self._probe)
++
++    def confirm_agent_generation(self, timeout_s=12, approval='once', max_credits=None):
++        self.calls.append(('click', approval, max_credits, timeout_s))
++        self.last_agent_confirmation = ({'cost': self._probe.get('cost'), 'clicked': 'Approve'}
++                                       if self._click_ok else
++                                       {'cost': self._probe.get('cost'), 'clicked': None,
++                                        'blocked': True, 'reason': self._reason})
++        return self._click_ok
++
++
++def _provider_with(fake):
++    from engine.providers.flow_browser import FlowBrowserProvider
++    provider = FlowBrowserProvider.__new__(FlowBrowserProvider)
++    provider._ensure = lambda: fake
++    return provider
++
++
++def _video_request(tmp_path, cost=None):
++    journal = _journal(_job(tmp_path))
++    data = json.loads(journal.read_text())
++    if cost is not None:
++        data['approval_reservations'] = [{'key': 'k', 'cost': cost, 'status': 'reserved'}]
++    journal.write_text(json.dumps(data))
++    return journal
++
++
++def test_the_provider_clicks_once_when_the_confirmed_cost_matches(tmp_path):
++    journal = _video_request(tmp_path)
++    fake = FakeBridge({'visible': True, 'cost': 5, 'video': True, 'question': QUESTION})
++    info = _provider_with(fake).approve_recorded_card('job', str(journal), project_url=PROJECT,
++                                                      confirm_credits=5)
++    assert info['clicked_once'] is True and info['cost'] == 5
++    assert ('click', 'once', 5, 20) in fake.calls          # never 'always approve'
++    assert [call[0] for call in fake.calls] == ['ensure_project', 'probe', 'click']
++
++
++def test_the_provider_never_clicks_when_the_cost_differs(tmp_path):
++    journal = _video_request(tmp_path)
++    fake = FakeBridge({'visible': True, 'cost': 5, 'video': True, 'question': QUESTION})
++    with pytest.raises(Exception) as error:
++        _provider_with(fake).approve_recorded_card('job', str(journal), project_url=PROJECT, confirm_credits=50)
++    assert 'nothing was clicked' in str(error.value).lower() or 'asks for 5' in str(error.value)
++    assert not any(call[0] == 'click' for call in fake.calls)
++
++
++def test_the_provider_never_clicks_without_a_visible_card(tmp_path):
++    journal = _video_request(tmp_path)
++    fake = FakeBridge({'visible': False, 'cost': None, 'video': False, 'question': ''})
++    with pytest.raises(Exception):
++        _provider_with(fake).approve_recorded_card('job', str(journal), project_url=PROJECT, confirm_credits=5)
++    assert not any(call[0] == 'click' for call in fake.calls)
++
++
++def test_the_provider_reports_a_refused_click(tmp_path):
++    journal = _video_request(tmp_path)
++    fake = FakeBridge({'visible': True, 'cost': 5, 'video': True, 'question': QUESTION},
++                      click_ok=False, reason='This approval card is already reserved; no duplicate click')
++    with pytest.raises(Exception) as error:
++        _provider_with(fake).approve_recorded_card('job', str(journal), project_url=PROJECT, confirm_credits=5)
++    assert 'already reserved' in str(error.value)
++
++
++def test_an_old_journal_for_another_project_is_refused(tmp_path):
++    journal = _video_request(tmp_path)
++    fake = FakeBridge({'visible': True, 'cost': 5, 'video': True})
++    with pytest.raises(ValueError):
++        _provider_with(fake).approve_recorded_card(
++            'job', str(journal), project_url='https://flow.google.com/project/08d0cf93-326d-43a8-bb93-4b36653721c1',
++            confirm_credits=5)
++    assert not any(call[0] == 'probe' for call in fake.calls)
++
++
++# ----------------------------------------------------------------- the CLI wiring
++
++def test_the_cli_exposes_the_approve_command_with_an_optional_cost():
++    import cli
++    parser = cli.build_parser() if hasattr(cli, 'build_parser') else None
++    if parser is None:  # older layout: the sub-parsers live in main()
++        source = open(cli.__file__, encoding='utf-8').read()
++        assert '"approve-request"' in source
++        assert '--confirm-credits' in source
++        return
++    args = parser.parse_args(['v3', 'approve-request', JOB, '--shot-id', 'shot_014'])
++    assert args.cmd == 'approve-request' and args.confirm_credits is None
++
++
++def test_the_ledger_file_name_matches_the_submit_guard(tmp_path):
++    from engine.flow_submit_guard import take_ledger
++    journal = _journal(_job(tmp_path))
++    target = str(journal)[:-len('.flow-request.json')]
++    _ledger(journal, 'intent')
++    assert fpa.evidence_for(journal)['submitted'] is True
++    assert take_ledger(target) == str(journal.with_name(journal.name[:-len('.flow-request.json')]
++                                                        + '.submit-ledger.jsonl'))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/tools/flow_resume_preflight.py b/tools/flow_resume_preflight.py
+--- a/tools/flow_resume_preflight.py	2026-10-26 09:54:18.000000000 +0000
++++ b/tools/flow_resume_preflight.py	2026-10-26 11:54:06.000000000 +0000
+@@ -14,6 +14,7 @@
+ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ from engine.flow_resume_safety import check_job, image_request_row, journal_shot_id, journal_target
++from engine.flow_pending_approval import approve_command, evidence_for
+ 
+ NEXT_ACTION = {
+     'saved_project_not_reachable': (
+@@ -62,6 +63,17 @@
+                  'resubmitted automatically. Recover the exact saved video first (0 credits, QC still runs); '
+                  'if you can see it in the saved project, download that exact editor URL (it must belong to the '
+                  'saved project). Only if it does not exist there is a paid replacement needed.')
++    approval = evidence_for(job_dir / str(row.get('journal') or ''))
++    if approval.get('suspected_pending'):
++        cost = approval.get('cost')
++        lines.append('  Approval:     no approval click is recorded for this submitted video request, so Flow is '
++                     + ('probably still waiting on a card that costs about ' + str(cost) + ' credits'
++                        if isinstance(cost, int) else 'probably still waiting on its Approve/Reject card'))
++        lines.append('  Approve once: ' + (approve_command(job_dir.name, approval)
++                                            or f'python3 cli.py v3 approve-request {job_dir.name}{shot_flag} '
++                                               '--confirm-credits <credits on the card>'))
++    elif approval.get('approved'):
++        lines.append('  Approval:     an approval was already clicked for this request')
+     lines.append(f'  Recover:      python3 cli.py v3 recover-flow-video {job_dir.name}{shot_flag} --wait-seconds 180')
+     lines.append(f'  Reviewed URL: python3 cli.py v3 recover-flow-video {job_dir.name}{shot_flag} '
+                  '--asset-url https://flow.google.com/project/<id>/edit/<id> --asset-reviewed')
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/tools/update_v797_to_v798.py b/tools/update_v797_to_v798.py
+--- a/tools/update_v797_to_v798.py	2026-10-26 09:55:28.000000000 +0000
++++ b/tools/update_v797_to_v798.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,160 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.98 update to a v7.0.97 installation.
+-
+-A blocked Resume now describes the request it is actually stuck on:
+-
+-- an **image** journal keeps the free-image advice (one new image request needs no credit approval);
+-- a **video** journal says what is true: a new Flow video spends credits, so nothing is resubmitted
+-  automatically. The panel offers download-only recovery first (`cli.py v3 recover-flow-video`, then the
+-  exact reviewed editor URL), and names the archive command only as a PAID action that needs
+-  --confirm-new-credit-spend;
+-- journals from older releases are classified by their path, so `flow/shots/<shot>/take_*.mp4` is a video
+-  request even without a recorded kind;
+-- the Queue panel lets the unresolved journal decide which shot it names, drops commands for requests that
+-  are already resolved, and labels the two actions honestly;
+-- `tools/flow_resume_preflight.py` prints the same split.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.98 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.98/tools/update_v797_to_v798.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.98/tools/update_v797_to_v798.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['VIDEO_BLOCKED_RESUME_V7_0_98.md', 'VERSION', 'app.py',
+-           'engine/factory.py', 'engine/flow_request_archive.py', 'engine/flow_resume_safety.py',
+-           'tests/test_v798_video_blocked_message.py', 'tools/flow_resume_preflight.py',
+-           'tools/update_v797_to_v798.py']
+-# Files as they exist in 7.0.97: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['1887e5c0ca98f8eb824ba6556bbf61dbff7a9e4094cf49cd1b81e31041841e65'],
+-    'app.py': ['e0a573f61a45a2d2d5cfa2c20a9d76e18ef2733b96607a8d3cccb92a0b3932a8'],
+-    'engine/factory.py': ['1eab3e974b91916aeeeabe85f3a04baa8d07bab9f6b7482afcb09d80fed1dd19'],
+-    'engine/flow_request_archive.py': ['46c8e28a0a91fab04061acff7a388d01404cd9580b8dda18764a7d2143f2503a'],
+-    'engine/flow_resume_safety.py': ['1b83f095d178e7aeedcb279d60031db5fb9db2da1305796a5b7dd15c5d281fe3'],
+-    'tools/flow_resume_preflight.py': ['4b792ffa4e1f9c6f68cd02519e6f75ea819dbc62c1b114539f469a0d59f583e7'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.97', '7.0.98')  # 7.0.98 allows a safe re-run after success
+-
+-# The 7.0.97 to 7.0.98 update ships in the 7.0.98 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.96', '7.0.97', 'tools/update_v796_to_v797.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.97 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.97 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.97 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.98 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.98 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.98 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.97-to-v7.0.98-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.98. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers a/tools/update_v798_to_v799.py b/tools/update_v798_to_v799.py
+--- a/tools/update_v798_to_v799.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v798_to_v799.py	2026-10-26 11:57:04.000000000 +0000
+@@ -0,0 +1,161 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.99 update to a v7.0.98 installation.
++
++A Flow *video* request is confirmed by a click, not by a wait. v7.0.98 named the right request but only
++offered download-only recovery, so a job whose card was never approved paused again and again ("0 fresh
++candidates, no verified match"). v7.0.99 makes the card visible and resolvable:
++
++- new ``engine/flow_pending_approval``: read-only evidence (submit ledger + journal reservations) that a
++  submitted video request was never approved, so a card is probably still waiting;
++- the Queue panel, the blocked-Resume message and ``tools/flow_resume_preflight.py`` say so, and offer the
++  approve command;
++- ``flow_browser.pending_approval_card()`` reads the newest card's cost without clicking;
++- ``cli.py v3 approve-request <job> --shot-id <shot> --confirm-credits N`` approves ONE card
++  (``Approve``, never ``Always approve``) after every guard has passed, then downloads it for free;
++  ``--inspect`` is read-only.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.99 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.99/tools/update_v798_to_v799.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.99/tools/update_v798_to_v799.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['VIDEO_APPROVAL_PENDING_V7_0_99.md', 'VERSION', 'app.py', 'cli.py',
++           'engine/factory.py', 'engine/flow_pending_approval.py', 'engine/flow_resume_safety.py',
++           'engine/providers/flow_browser.py', 'tests/test_v799_approval_pending.py',
++           'tools/flow_resume_preflight.py', 'tools/update_v798_to_v799.py']
++# Files as they exist in 7.0.98: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['32b1d7eec2cf5ccb1d26e5ecffbdf1f6ccc8412cad8d8631e1ae1d064bd32bec'],
++    'app.py': ['e3b89efcfed9e85bad707dfcb75b57211861f86e9a37823489ad44f5f2c17171'],
++    'cli.py': ['ea0f73b25a2d6e9c438a9c6c40872ef04464ffbd550474b75c46656717a9c85f'],
++    'engine/factory.py': ['6a0f1e1c4638e1857c792a966478f7c6c04a6dc9f4e09bcc37ba0933b2471ddc'],
++    'engine/flow_resume_safety.py': ['6848a974a84cb46fd470d2fefff283bedcb4894923ced6b457e722efe3f0320f'],
++    'engine/providers/flow_browser.py': ['66edec36373e60477eaccb162aa3e5e2a6961b48027e3913d122f09ab9350e8d'],
++    'tools/flow_resume_preflight.py': ['b03b2f1e25bfb8599cf3fe791d7a3b8b65c04eb43f76e73e6652317b35a72769'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.98', '7.0.99')  # 7.0.99 allows a safe re-run after success
++
++# The 7.0.98 zip carries the 7.0.97 to 7.0.98 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.97', '7.0.98', 'tools/update_v797_to_v798.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.98 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.98 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.98 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.99 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.99 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.99 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.98-to-v7.0.99-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.99. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

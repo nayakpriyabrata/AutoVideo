@@ -1,0 +1,1936 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/APPROVE_ONCE_AND_RENDER_BACKUPS_V7_0_106.md b/APPROVE_ONCE_AND_RENDER_BACKUPS_V7_0_106.md
+--- a/APPROVE_ONCE_AND_RENDER_BACKUPS_V7_0_106.md	1970-01-01 00:00:00.000000000 +0000
++++ b/APPROVE_ONCE_AND_RENDER_BACKUPS_V7_0_106.md	2026-10-27 08:40:24.000000000 +0000
+@@ -0,0 +1,89 @@
++# v7.0.106 — one approval per Flow video, and the rendered video is never lost
++
++Two requests from the same session.
++
++## 1. "Approve each video request once — not the first one only, and never 'Always approve'"
++
++Every Flow video request is a separate credit card, and the app was only reliably clicking the first one. The
++rest waited for a human, so a job with eight Flow videos needed seven manual clicks (and, after a pause, a
++manual `approve-request` before Resume could do anything).
++
++The rule is now enforced **per saved request**, from files rather than from session memory:
++
++| Situation | What happens |
++|---|---|
++| a saved video request, card visible, cost readable, within the per-take cap | **one** Approve click, recorded, then the (free) download |
++| the same request again — a re-rendered card, a new browser, a resumed job | **never clicked**; the video it already paid for is waited for |
++| card cost above `max_generation_credits` (default 10) | nothing clicked, the reason is written |
++| cost not readable, or no clickable card | nothing clicked, the reason is written |
++| `flow_approval = manual` | nothing is ever clicked for you |
++| the only visible control is "Always approve" | never used |
++
++Where it clicks:
++
++- **while generating** — the existing wait now also writes its one click into the request journal
++  (`approval_clicks`, `approval_cost`, `approval_label`) and into `<job>/flow_approvals.jsonl`;
++- **on Resume** — `reconcile_job` approves the saved request's own card once before the download-only wait
++  (this is the path that used to stall: "no approval click is recorded … every scan finds nothing");
++- **on an automatic retry** — the retry loop now reconciles the saved request (approve once + download) instead
++  of restarting the whole run into the same blocked journal;
++- **`cli.py v3 recover-flow-video … --auto-approve`** — same rule, on demand.
++
++`python3 cli.py v3 status <job>` and the Job panel now show `flow_approvals:` (each click, its cost and
++`1/1`), which saved requests are still waiting for a card, and whether automatic approval is on for the job.
++Turn it off for one job with `"flow_auto_approve_video_requests": false` in `settings.json`, or with
++`"flow_approval": "manual"` for no automatic click at all.
++
++## 2. "Where does the rendered file go when a job is cleaned up?"
++
++**Nowhere — it was deleted.** The completed-job deletion moved the folder into `outputs/.deletion-quarantine/`
++and then removed it; the Clip Studio cleanup unlinked its clips. Neither kept the video.
++
++v7.0.106 moves rendered videos out before anything is deleted:
++
++```
++<outputs>/_render-backups/<job id>/<file>.mp4        finished job videos (permanent deletion)
++<clips folder>/_render-backups/clips/<stamp>/*.mp4   Clip Studio clips (Clip Studio cleanup)
++```
++
++- the move is a rename inside one filesystem (instant, no extra space); across filesystems the bytes are
++  copied, hashed and verified before the original is removed;
++- if the backup cannot be verified, **the deletion is refused** and nothing is removed;
++- an identical backup already present is recognised (no duplicate copies);
++- the location is configurable: `AUTOVIDEO_RENDER_BACKUP_DIR` (absolute; another disk is fine) or the
++  `render_backup_dir` setting;
++- `python3 cli.py v3 backups` lists what is kept; `python3 cli.py v3 backups --restore <job>` copies a job's
++  videos back to `outputs/<job>/render/` (the production itself is not recreated);
++- the Job panel shows the exact folder before deleting and the kept path afterwards; the Clip Studio cleanup
++  has "Keep the rendered clips" ticked by default (`keep_clips=False` still deletes them outright).
++
++## Files
++
++- `engine/flow_approval_once.py` (new) — `plan()`, `record_click()`, `clicks_for()`, `auto_allowed()`,
++  `approve_saved_video_request()`.
++- `engine/render_backup.py` (new) — `backup_root()`, `plan()`, `backup_files()`, `restore()`, `inventory()`.
++- `engine/providers/flow_browser.py` — the strict one-click budget before any click; each click recorded.
++- `engine/flow_resume_recovery.py`, `engine/automatic_recovery.py` — approve the saved card once, then download.
++- `engine/factory.py` — `recover_flow_video(auto_approve=True)`, approval state for the panel.
++- `engine/job_delete.py`, `engine/clip_cleanup.py`, `app.py`, `cli.py` — keep videos, `v3 backups`, UI.
++- `tests/test_v7106_approval_and_backups.py` — 33 tests, no browser, no credits.
++
++## Honest limits
++
++- Nothing here was exercised against live Flow; the card probes, clicks and duplicate guards are covered by
++  fakes. No credits were spent.
++- A request that Flow never approved (e.g. the account is out of credits) still cannot produce a video; the
++  refusal is reported instead of retried.
++- The backup keeps the **rendered file**, not the production: journals, takes and the manifest stay in the job
++  folder, which is deleted. Restore copies the video back and says so.
++
++## Upgrade
++
++```
++python3 ../AutoVideoAI-v7.0.106/tools/update_v7105_to_v7106.py .            # dry run
++python3 ../AutoVideoAI-v7.0.106/tools/update_v7105_to_v7106.py . --apply    # install
++```
++
++Stop the dashboard first. Outputs, saved jobs, Flow journals, browser profiles and Clip Studio folders are
++never copied, moved or deleted by the updater; code backups go to
++`code-update-backups/v7.0.105-to-v7.0.106-<timestamp>`.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VERSION b/VERSION
+--- a/VERSION	2026-10-27 06:27:26.000000000 +0000
++++ b/VERSION	2026-10-27 08:40:26.000000000 +0000
+@@ -1 +1 @@
+-7.0.105
+\ No newline at end of file
++7.0.106
+\ No newline at end of file
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/app.py b/app.py
+--- a/app.py	2026-10-27 04:40:08.000000000 +0000
++++ b/app.py	2026-10-27 08:38:10.000000000 +0000
+@@ -239,6 +239,23 @@
+             else:
+                 st.caption("The two roles use different projects, as they must. Inspect with "
+                            f"`python3 cli.py v3 flow-projects {job_id}`.")
++    # v7.0.106: one click per saved video request, and exactly which requests already had theirs.
++    if state.get("flow_approvals") or state.get("flow_unapproved_requests") or "flow_auto_approve" in state:
++        with st.expander("Flow credit approvals — one click per video request"):
++            if state.get("flow_auto_approve"):
++                st.caption("Automatic: each saved video request is approved once when its card is visible and "
++                           "its cost is within this job's per-take cap. A duplicate card is never clicked and "
++                           '"Always approve" is never used (' + str(state.get("flow_auto_approve_reason") or "") + ").")
++            else:
++                st.caption("Off: " + str(state.get("flow_auto_approve_reason") or
++                                         "approve each card yourself in Flow"))
++            for row in state.get("flow_approvals") or []:
++                st.caption(f"approved · {row.get('cost')} credits · {row.get('clicks_after', 1)}/1 · "
++                           f"{str(row.get('journal', '')).rsplit('/', 1)[-1]} · {row.get('at', '')}")
++            if state.get("flow_unapproved_requests"):
++                st.caption("Waiting for their card: " + ", ".join(
++                    str(row).rsplit('/', 1)[-1] for row in state["flow_unapproved_requests"]))
++            st.code(f"python3 cli.py v3 status {job_id}", language="bash")
+     if state.get("flow_recovery_state"):
+         # 7.0.96: say why the last resume stopped and what moves the job forward, instead of
+         # leaving the same wait to run again.
+@@ -3159,7 +3176,16 @@
+         else:
+             st.info('No missing job folders found.')
+     with st.expander('Delete completed job · permanent', expanded=False):
+-        st.warning('Permanent deletion removes the selected completed job folder, including its final video and recovery history. It cannot be resumed afterward. Browser login profiles and external worker clones are not touched. Back up any media you want to retain first.')
++        # v7.0.106: the finished video is moved to the backup folder before the job folder goes away.
++        from engine.render_backup import backup_root as _backup_root
++        try:
++            _keep_root = _backup_root(F.pm.root)
++        except Exception:
++            _keep_root = _backup_root(F.pm.root)
++        st.warning('Permanent deletion removes the selected completed job folder and its recovery history. It '
++                   'cannot be resumed afterward. The finished video is moved to the backup folder below, not '
++                   'destroyed. Browser login profiles and external worker clones are not touched.')
++        st.caption(f'Rendered videos are kept in: {_keep_root}')
+         from engine.job_delete import completed_job_delete
+         completed_rows = [r for r in DB.list(100000) if r.get('status') == 'done']
+         candidates = [r['job_id'] for r in completed_rows]
+@@ -3167,9 +3193,12 @@
+             st.info('No completed jobs available for permanent deletion.')
+         else:
+             delete_job_id = st.selectbox('Completed job', candidates, key='delete-completed-job')
++            keep_video = st.checkbox('Keep a backup of the finished video (moved to the backup folder)',
++                                     value=True, key='delete-job-keep-video')
+             if st.button('Preview permanent deletion',key='delete-job-preview'):
+                 try:
+-                    st.session_state['job-delete-preview'] = completed_job_delete(F.pm.root, DB.path, delete_job_id)
++                    st.session_state['job-delete-preview'] = completed_job_delete(
++                        F.pm.root, DB.path, delete_job_id, keep_videos=keep_video)
+                 except (ValueError, RuntimeError, OSError) as error:
+                     st.error(str(error))
+             report = st.session_state.get('job-delete-preview')
+@@ -3178,6 +3207,14 @@
+                 if report.get('final_video'):
+                     st.caption(f"Finished video found: {report['final_video']} · "
+                                f"{report.get('final_bytes',0)/1024**3:.2f} GB")
++                if report.get('video_backups'):
++                    st.caption('Kept after deletion: '
++                               + ', '.join(f"{Path(row['target']).name} ({row['bytes']/1024**2:.0f} MB)"
++                                           for row in report['video_backups'])
++                               + f" in {report.get('backup_folder')}")
++                elif report.get('reason_code') != 'no_final_video':
++                    st.caption('No finished video will be kept: tick the backup box above, or the video is '
++                               'deleted with the job folder.')
+                 allow_missing = False
+                 if report['eligible']:
+                     pass
+@@ -3204,10 +3241,14 @@
+                     if st.button('Permanently delete job and DB entry',disabled=typed!=delete_job_id,key='delete-job-apply'):
+                         try:
+                             deleted = completed_job_delete(F.pm.root, DB.path, delete_job_id,apply=True,
+-                                                           confirmation=typed,allow_missing_final=allow_missing)
++                                                           confirmation=typed,allow_missing_final=allow_missing,
++                                                           keep_videos=keep_video)
+                             st.json(deleted)
+                             st.session_state.pop('job-delete-preview',None)
+-                            if deleted.get('deleted'):st.success('Completed job deleted. A database backup was preserved.')
++                            if deleted.get('deleted'):
++                                kept = deleted.get('kept_videos') or []
++                                st.success('Completed job deleted. A database backup was preserved.'
++                                           + (f' Finished video kept: {kept[0]}' if kept else ''))
+                             else:st.warning('Quarantined files require manual review; see report.')
+                         except (ValueError,RuntimeError,OSError) as error:
+                             st.error(str(error))
+@@ -3265,23 +3306,29 @@
+             for category in chosen['categories']:
+                 size = category['bytes']/1024**2
+                 if category['destructive']:
+-                    ticked = st.checkbox(f"{category['label']} · {size:.1f} MB · deletes the finished "
+-                                         'clips of this folder', key=f"clip-clean-clips-{chosen['folder']}")
++                    ticked = st.checkbox(f"{category['label']} · {size:.1f} MB · moves the finished "
++                                         'clips out of this folder', key=f"clip-clean-clips-{chosen['folder']}")
+                 else:
+                     ticked = st.checkbox(f"{category['label']} · {size:.1f} MB",
+                                          value=bool(category['bytes']),
+                                          key=f"clip-clean-{category['key']}-{chosen['folder']}")
+                 if ticked:
+                     picked.append(category['key'])
+-            st.caption('Will remove: ' + (', '.join(picked) or 'nothing selected'))
++            keep_clips = st.checkbox('Keep the rendered clips · move them to _render-backups/clips in this '
++                                     'folder instead of deleting them', value=True,
++                                     key=f"clip-clean-keep-{chosen['folder']}")
++            st.caption('Will remove: ' + (', '.join(picked) or 'nothing selected')
++                       + (' · rendered clips are moved, not deleted' if keep_clips and 'clips' in picked else ''))
+             if st.button('Apply Clip Studio cleanup · rechecks running state', disabled=not picked,
+                          key='clip-cleanup-apply'):
+                 try:
+                     with st.spinner('Removing the selected Clip Studio files…'):
+                         report = cleanup_clips(chosen['folder'], picked, apply=True,
+-                                               include_clips='clips' in picked)
++                                               include_clips='clips' in picked, keep_clips=keep_clips)
+                     st.success(f"Freed {report.get('freed_bytes',0)/1024**3:.2f} GB from "
+                                f"{Path(chosen['folder']).name}.")
++                    if report.get('clip_backup_folder'):
++                        st.info('Rendered clips kept in ' + str(report['clip_backup_folder']))
+                     st.json(report)
+                     st.session_state.pop('clip-cleanup-rows', None)
+                 except (OSError, ValueError) as error:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/cli.py b/cli.py
+--- a/cli.py	2026-10-27 06:26:14.000000000 +0000
++++ b/cli.py	2026-10-27 08:37:58.000000000 +0000
+@@ -287,6 +287,9 @@
+     rv.add_argument('--asset-reviewed', action='store_true', help='Confirm the editor video belongs to the selected pending shot')
+     rv.add_argument("--allow-latest", action="store_true",
+                     help="allow newest-tile recovery without a saved baseline; use only after visually confirming it belongs to this shot")
++    rv.add_argument("--auto-approve", action="store_true",
++                    help="approve this saved request's Flow card ONCE (readable cost within the job's per-take "
++                         "cap) before the download-only wait; a duplicate card is never clicked")
+ 
+     ap_ = sub.add_parser(
+         "approve-request",
+@@ -302,6 +305,13 @@
+     ap_.add_argument("--inspect", action="store_true",
+                      help="read-only: report whether a clickable card is visible and what it costs; never clicks")
+ 
++    bk = sub.add_parser(
++        "backups",
++        help="Show where rendered videos are kept after a job or Clip Studio cleanup, and restore one")
++    bk.add_argument("--restore", default="", metavar="JOB_ID",
++                    help="copy this job's backed-up videos back to outputs/<job>/render (the job itself is not recreated)")
++    bk.add_argument("--outputs", default="outputs", help="Outputs root (default: outputs)")
++
+     fps = sub.add_parser(
+         "flow-projects",
+         help="Show the stills and video Flow projects of a job (read-only), or repair them explicitly: "
+@@ -903,7 +913,8 @@
+         print(f.recover_flow_video(args.job_id, shot_id=args.shot_id or None,
+                                    wait_seconds=args.wait_seconds,
+                                    allow_latest=args.allow_latest,
+-                                   asset_url=args.asset_url, asset_reviewed=args.asset_reviewed))
++                                   asset_url=args.asset_url, asset_reviewed=args.asset_reviewed,
++                                   auto_approve=bool(args.auto_approve)))
+     elif args.cmd == "gemini-open":
+         from engine.providers.gemini_web import GeminiWebBrowser
+         b = GeminiWebBrowser()
+@@ -935,6 +946,24 @@
+                 pass
+         finally:
+             b.close()
++    elif args.cmd == "backups":
++        from engine.render_backup import backup_root, inventory, restore
++        root = backup_root(args.outputs)
++        print(f"Render backups: {root}\n"
++              "Finished job videos are moved here before a job folder is deleted "
++              "(AUTOVIDEO_RENDER_BACKUP_DIR overrides this folder).")
++        rows = inventory(root)
++        if not rows:
++            print("No backed-up videos yet.")
++        for row in rows:
++            print(f"  {row['job']} · {len(row['files'])} video(s) · {row['bytes']/1024**2:.0f} MB · {row['folder']}")
++            for row_file in row['files']:
++                print(f"     {row_file['name']} · {row_file['bytes']/1024**2:.0f} MB")
++        if args.restore:
++            report = restore(root, args.restore, outputs=args.outputs)
++            print(json.dumps(report, indent=2))
++            if report.get('warning'):
++                raise SystemExit(1)
+     elif args.cmd == "flow-projects":
+         from engine.flow_projects_cli import run_flow_projects
+         raise SystemExit(run_flow_projects(f, args))
+@@ -988,6 +1017,17 @@
+                           f'Run: python3 cli.py v3 flow-projects {args.job_id}')
+         except Exception:
+             pass
++        try:
++            from engine.flow_approval_once import audit_rows, auto_allowed, clicks_for
++            rows = audit_rows(f.pm.job_dir(args.job_id))
++            allowed, why = auto_allowed(f._settings(args.job_id))
++            print(f"  flow_approvals: {len(rows)} clicked here (one per request; {why})")
++            for row in rows[-5:]:
++                journal = str(row.get('journal') or '')
++                print(f"    {journal.rsplit('/', 1)[-1]} · {row.get('cost')} credits · "
++                      f"{row.get('clicks_after', 0)}/1 · {row.get('at', '')}")
++        except Exception:
++            pass
+         for s in m.shots:
+             print(f"  {s.shot_id} {s.status} {s.media_strategy} {s.provider}/{s.model} "
+                   f"est={s.estimated_credits}cr takes={len(s.takes)} retries={s.retry_count}")
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/automatic_recovery.py b/engine/automatic_recovery.py
+--- a/engine/automatic_recovery.py	2026-10-27 06:26:04.000000000 +0000
++++ b/engine/automatic_recovery.py	2026-10-27 08:39:40.000000000 +0000
+@@ -87,6 +87,21 @@
+     try:
+         while True:
+             factory._active_job_providers = []
++            # v7.0.106: a retry used to restart the whole run and hit the same saved request again. Before
++            # retrying, reconcile what is already saved: approve a card that was never clicked (once), and
++            # download a clip Flow has finished. No new prompt is ever sent here.
++            if total and enabled:
++                try:
++                    from .flow_resume_recovery import reconcile_job
++                    from .flow_resume_safety import check_job
++                    job_dir = factory.pm.job_dir(job_id)
++                    if check_job(job_dir).get('unresolved_count'):
++                        progress.emit('Recovering the saved Flow request', 26,
++                                      'approval and download only; no new prompt is sent')
++                        reconcile_job(job_dir, factory._settings(job_id), progress.emit)
++                except Exception as error:                      # noqa: BLE001 - retries must continue
++                    history.append({'attempt': total, 'reconcile_error': type(error).__name__,
++                                    'error': str(error)[:300]})
+             try:
+                 with reference_recovery_episode():
+                     result = factory._run_job(job_id, progress_cb, auto_render)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/clip_cleanup.py b/engine/clip_cleanup.py
+--- a/engine/clip_cleanup.py	2026-10-26 07:42:30.000000000 +0000
++++ b/engine/clip_cleanup.py	2026-10-27 08:37:40.000000000 +0000
+@@ -9,6 +9,11 @@
+ Nothing here is deleted without a preview, an explicit category list and (for the rendered clips)
+ a separate opt-in. A folder with a running clip render is never touched, symlinks are skipped, and
+ nothing outside the selected folder is ever removed.
++
++v7.0.106: with ``include_clips`` the rendered clips are **moved** to ``<folder>/_render-backups/clips/
++<timestamp>/`` instead of being unlinked, so the clips still exist afterwards (``keep_clips=False``
++deletes them outright). The backup is verified before the original is dropped; a failed backup stops the
++cleanup and leaves the clips where they are.
+ """
+ from __future__ import annotations
+ 
+@@ -167,10 +172,12 @@
+     return [folder_inventory(path) for path in sorted(found.values())]
+ 
+ 
+-def cleanup(folder, categories=SAFE_CATEGORIES, *, apply=False, include_clips=False) -> dict:
++def cleanup(folder, categories=SAFE_CATEGORIES, *, apply=False, include_clips=False,
++            keep_clips=True) -> dict:
+     """Remove the requested categories from one Clip Studio output folder.
+ 
+-    ``include_clips`` must be True to remove rendered clips; they are the product, not scratch data.
++    ``include_clips`` must be True to remove rendered clips from the folder; they are the product, not
++    scratch data. ``keep_clips`` (default) moves them to ``_render-backups/clips/<stamp>`` first.
+     """
+     folder = Path(folder).expanduser().absolute()
+     if folder.is_symlink() or not folder.is_dir():
+@@ -190,9 +197,10 @@
+     if render_running(folder):
+         report['warnings'].append('A clip render is running for this folder; nothing was removed')
+         return report
++    clip_files = _clip_files(folder) if 'clips' in wanted else []
+     targets = {'work': [folder / WORK_DIR], 'render_state': [folder / RENDER_STATE_DIR],
+                'history': [folder / HISTORY_DIR], 'reviews': _review_files(folder),
+-               'clips': _clip_files(folder)}
++               'clips': clip_files if not keep_clips else []}
+     for key in wanted:
+         for target in targets[key]:
+             if not _inside(folder, target):
+@@ -213,4 +221,22 @@
+                 report['removed'].append(str(target.relative_to(folder)))
+             except OSError as error:
+                 report['warnings'].append(f'{target.name}: {type(error).__name__}')
++    if 'clips' in wanted and keep_clips and clip_files:
++        report['eligible_bytes'] += sum(path.stat().st_size for path in clip_files)
++        if apply:
++            import time as _time
++            from .render_backup import backup_files
++            stamp = _time.strftime('%Y%m%d-%H%M%S')
++            try:
++                moved = backup_files(clip_files, root=folder / '_render-backups' / 'clips',
++                                     label=stamp, apply=True)
++            except OSError as error:
++                report['warnings'].append('Rendered clips were kept (backup failed: '
++                                          + type(error).__name__ + ')')
++            else:
++                report['freed_bytes'] += moved['bytes']
++                report['clip_backup_folder'] = moved['folder']
++                report['clips_kept'] = [row['target'] for row in moved['files']]
++                report['removed'].extend(row['source'].rsplit('/', 1)[-1] for row in moved['files'])
++                report['warnings'].extend(moved['warnings'])
+     return report
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-27 04:41:00.000000000 +0000
++++ b/engine/factory.py	2026-10-27 08:38:02.000000000 +0000
+@@ -746,9 +746,27 @@
+                 state.pop("reason_detail", None)
+         except Exception:
+             pass
++        settings = self._settings(job_id)
++        # v7.0.106: each saved Flow video request is approved once - say whether that is on, what was clicked
++        # in this job, and which saved requests are still waiting for their card.
++        try:
++            from .flow_approval_once import audit_rows, auto_allowed, clicks_for
++            allowed, approve_reason = auto_allowed(settings)
++            state["flow_auto_approve"] = bool(allowed)
++            state["flow_auto_approve_reason"] = approve_reason
++            state["flow_approvals"] = audit_rows(self.pm.job_dir(job_id))[-8:]
++            pending_cards = []
++            for row in (state.get("unresolved_journals") or []):
++                journal = os.path.join(self.pm.job_dir(job_id), str(row))
++                counts = clicks_for(journal)
++                if counts["clicks"] < 1:
++                    pending_cards.append(str(row))
++            state["flow_unapproved_requests"] = pending_cards
++        except Exception:
++            pass
+         state.update(job_id=job_id, shot_id=shot.shot_id, accepted_shots=m.accepted_count(),
+                      total_shots=len(m.shots), status=m.status,
+-                     pause_on_unresolved=bool(self._settings(job_id).get("flow_pause_on_unresolved_request", False)))
++                     pause_on_unresolved=bool(settings.get("flow_pause_on_unresolved_request", False)))
+         state.setdefault("actions", [{"label": "Resume saved job", "command": f"python3 cli.py v3 resume {job_id}"}])
+         state.setdefault("flow_project_url", self._flow_project_url(job_id))
+         # 7.0.96: a paused job used to repeat the same wait with no explanation. The last
+@@ -4225,7 +4243,8 @@
+                            wait_seconds: int = 120,
+                            allow_latest: bool = False, asset_url: str = '',
+                            asset_reviewed: bool = False,
+-                           approve_credits: int | None = None) -> dict:
++                           approve_credits: int | None = None,
++                           auto_approve: bool = False) -> dict:
+         """Download an already-generated video from the bound Flow project.
+ 
+         This recovery path never fills/submits a prompt and therefore cannot
+@@ -4235,6 +4254,10 @@
+         v7.0.99: ``approve_credits`` approves the ONE card Flow is waiting on for this saved video request
+         (a card that was never clicked means no video exists, so no wait can find one). The click happens
+         first, is limited to the stated cost, and the download that follows is free.
++
++        v7.0.106: ``auto_approve`` reads that card and clicks Approve once when its cost is readable and
++        within this job's per-take cap - the same rule ``cli.py v3 resume`` applies, so each Flow video is
++        approved once without a human and a duplicate card is never clicked.
+         """
+         from .providers.flow_browser import FlowBrowserProvider
+         from .job_ref import job_lookup_error
+@@ -4328,6 +4351,16 @@
+                     confirm_credits=int(approve_credits))
+                 print(f"[Flow] Card approved ({approved.get('cost')} credits). Waiting for the video; "
+                       "the download itself is free.")
++            elif auto_approve and journal:
++                from .flow_approval_once import approve_saved_video_request
++                approval = approve_saved_video_request(provider, journal, settings=self._settings(job_id),
++                                                       project=f'AutoVideo-{job_id}')
++                print(f"[Flow] Approval check for {shot.shot_id}: {approval.get('reason')}")
++                if approval.get('clicked'):
++                    approved = {'cost': approval.get('cost'), 'clicked': True}
++                    self.pm.log(job_id, 'flow_auto_approval',
++                                {'shot': shot.shot_id, 'cost': approval.get('cost'),
++                                 'journal': os.path.basename(str(journal)), 'clicks': approval.get('clicks')})
+             else:
+                 print(f"[Flow] Recovery-only mode: checking {shot.shot_id} in {project_url}; "
+                       "no generation will be submitted and no new credits will be requested.")
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/flow_approval_once.py b/engine/flow_approval_once.py
+--- a/engine/flow_approval_once.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/flow_approval_once.py	2026-10-27 08:36:48.000000000 +0000
+@@ -0,0 +1,269 @@
++"""v7.0.106: approve each Flow video request exactly once, automatically, and never a second time.
++
++The field report: a job needs eight Flow videos, the first one is approved by itself, and the rest sit
++behind an unclicked ``Approve`` card until a human clicks it. Meanwhile "Always approve" is unacceptable
++- it would also confirm a request nobody planned.
++
++So the rule this module enforces is *per saved request*, not per job and not per session:
++
++* one click, for this request, when its card is visible and states a readable cost within the cap;
++* never a second click for the same request, even across browser restarts, runs and processes;
++* never the "Always approve" label;
++* ``flow_approval = manual`` disables every automatic click.
++
++The decision is a pure function (``plan``) so it can be tested without Playwright, and every click is
++recorded twice: in the request journal (``approval_clicks``) and in a job-level audit file
++(``flow_approvals.jsonl``) that the Queue panel and ``cli.py v3 status`` can show.
++"""
++from __future__ import annotations
++
++import json
++import os
++import time
++from pathlib import Path
++
++MAX_CLICKS_PER_REQUEST = 1
++JOURNAL_SUFFIX = '.flow-request.json'
++AUDIT_NAME = 'flow_approvals.jsonl'
++FORBIDDEN_LABEL = 'always approve'
++
++
++def journal_for(output_path) -> Path:
++    return Path(str(output_path) + JOURNAL_SUFFIX)
++
++
++def _load(path) -> dict:
++    try:
++        data = json.loads(Path(path).read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return {}
++    return data if isinstance(data, dict) else {}
++
++
++def ledger_clicks(journal) -> int:
++    """How many ``approval`` clicks the submission ledger records for this request."""
++    journal = Path(journal)
++    name = journal.name
++    if not name.endswith(JOURNAL_SUFFIX):
++        return 0
++    ledger = journal.with_name(name[:-len(JOURNAL_SUFFIX)] + '.submit-ledger.jsonl')
++    if not ledger.is_file():
++        return 0
++    try:
++        from .flow_submit_guard import read_events
++        return sum(1 for event in read_events(str(ledger)) if event.get('event') == 'approval')
++    except (OSError, ValueError, ImportError):
++        return 0
++
++
++def clicks_for(journal) -> dict:
++    """Clicks already spent on this request: journal counter, reservations and ledger lines."""
++    journal = Path(journal)
++    request = _load(journal)
++    try:
++        recorded = int(request.get('approval_clicks') or 0)
++    except (TypeError, ValueError):
++        recorded = 0
++    reserved = len([row for row in (request.get('approval_reservations') or []) if isinstance(row, dict)])
++    ledger = ledger_clicks(journal)
++    return {'clicks': max(recorded, reserved, ledger), 'recorded': recorded,
++            'reserved': reserved, 'ledger': ledger,
++            'last_label': str(request.get('approval_label') or ''),
++            'last_cost': request.get('approval_cost'),
++            'last_at': str(request.get('approval_clicked_at') or '')}
++
++
++def auto_allowed(settings) -> tuple[bool, str]:
++    """May this job click approval cards by itself? ``manual`` always wins."""
++    settings = settings or {}
++    mode = str(settings.get('flow_approval', 'once') or 'once').strip().lower()
++    if mode == 'manual':
++        return False, ('flow_approval is "manual" in this job\'s settings, so no card is clicked automatically')
++    explicit = settings.get('flow_auto_approve_video_requests', True)
++    if explicit is False:
++        return False, ('automatic approval is switched off for this job '
++                       '(settings.json flow_auto_approve_video_requests = false)')
++    return True, f'flow_approval is "{mode}"; one click per saved video request is allowed'
++
++
++def credit_cap(settings) -> int:
++    try:
++        cap = int((settings or {}).get('max_generation_credits', 10))
++    except (TypeError, ValueError):
++        return 10
++    return cap if cap >= 0 else 10
++
++
++def plan(journal, probe, *, setting='once', cap=10, allow_auto=True) -> dict:
++    """Decide what to do with the card visible for ``journal``. Never clicks.
++
++    Returns ``{'action', 'reason', 'cost', 'clicks'}`` where action is one of
++
++    ``approve``    click the visible Approve control once
++    ``duplicate``  this request was already approved; never click again
++    ``manual``     the user asked to approve every card by hand
++    ``no_card``    no clickable card is visible yet
++    ``no_cost``    the card does not state a readable credit cost
++    ``not_video``  the newest turn is not a video generation request
++    ``over_cap``   the card costs more than this job allows for one take
++    ``disabled``   automatic approval is off for this job
++    """
++    journal = Path(journal)
++    counts = clicks_for(journal)
++    clicks = counts['clicks']
++    probe = probe or {}
++    mode = str(setting or 'once').strip().lower()
++    if clicks >= MAX_CLICKS_PER_REQUEST:
++        return {'action': 'duplicate', 'clicks': clicks, 'cost': probe.get('cost'),
++                'reason': (f'this request was already approved once '
++                           f'({counts["last_at"] or "earlier"}{", " + str(counts["last_cost"]) + " credits" if counts["last_cost"] is not None else ""}); '
++                           'a second card is never clicked, and the video it paid for is waited for')}
++    if not allow_auto or mode == 'manual':
++        return {'action': 'manual', 'clicks': clicks, 'cost': probe.get('cost'),
++                'reason': 'automatic approval is off: click Approve in the saved Flow project yourself'}
++    if not probe.get('visible'):
++        return {'action': 'no_card', 'clicks': clicks, 'cost': None,
++                'reason': 'no clickable Approve control is visible in the saved project'}
++    cost = probe.get('cost')
++    if not isinstance(cost, int) or isinstance(cost, bool) or cost < 0:
++        return {'action': 'no_cost', 'clicks': clicks, 'cost': None,
++                'reason': 'the visible card does not state a readable credit cost'}
++    if probe.get('video') is False:
++        return {'action': 'not_video', 'clicks': clicks, 'cost': cost,
++                'reason': 'the newest Flow turn is not a video generation request'}
++    if cap is not None and int(cap) >= 0 and cost > int(cap):
++        return {'action': 'over_cap', 'clicks': clicks, 'cost': cost,
++                'reason': (f'the card asks for {cost} credits, above this job\'s {int(cap)}-credit cap for one '
++                           'take; nothing was clicked')}
++    return {'action': 'approve', 'clicks': clicks, 'cost': cost,
++            'reason': f'one approval will be clicked for this request ({cost} credits)'}
++
++
++def record_click(journal, *, label, cost, job_dir=None) -> dict:
++    """Persist one click in the request journal and in the job's audit log."""
++    journal = Path(journal)
++    request = _load(journal)
++    counts = clicks_for(journal)
++    request['approval_clicks'] = max(1, counts['clicks'] + (0 if counts['ledger'] else 1))
++    request['approval_clicked_at'] = time.strftime('%Y-%m-%dT%H:%M:%S%z')
++    request['approval_label'] = str(label or '')[:80]
++    if isinstance(cost, int):
++        request['approval_cost'] = cost
++    _write_json(journal, request)
++    audit = {'journal': str(journal), 'label': str(label or '')[:80], 'cost': cost if isinstance(cost, int) else None,
++             'clicks_after': request['approval_clicks'], 'at': request['approval_clicked_at'],
++             'max_clicks_per_request': MAX_CLICKS_PER_REQUEST}
++    root = Path(job_dir) if job_dir else _job_dir_for(journal)
++    if root:
++        append_audit(root, audit)
++    return audit
++
++
++def _job_dir_for(journal) -> Path | None:
++    """``<job>/flow/shots/<shot>/take.mp4.flow-request.json`` -> ``<job>``."""
++    parts = Path(journal).resolve().parts
++    for index in range(len(parts) - 1, 0, -1):
++        if parts[index] == 'flow' and parts[index - 1] != 'logs':
++            return Path(*parts[:index])
++    return None
++
++
++def _write_json(path, data) -> None:
++    path = Path(path)
++    tmp = path.with_suffix(path.suffix + '.tmp')
++    with tmp.open('w', encoding='utf-8') as handle:
++        json.dump(data, handle, ensure_ascii=False, indent=2)
++        handle.flush()
++        os.fsync(handle.fileno())
++    os.replace(tmp, path)
++
++
++def audit_path(job_dir) -> Path:
++    return Path(job_dir) / AUDIT_NAME
++
++
++def append_audit(job_dir, row) -> None:
++    try:
++        job_dir = Path(job_dir)
++        job_dir.mkdir(parents=True, exist_ok=True)
++        with open(audit_path(job_dir), 'a', encoding='utf-8') as handle:
++            handle.write(json.dumps(row, sort_keys=True) + '\n')
++            handle.flush()
++            os.fsync(handle.fileno())
++    except OSError:
++        pass
++
++
++def audit_rows(job_dir) -> list[dict]:
++    path = audit_path(job_dir)
++    if not path.is_file():
++        return []
++    rows = []
++    try:
++        for raw in path.read_text(encoding='utf-8').splitlines():
++            raw = raw.strip()
++            if not raw:
++                continue
++            try:
++                rows.append(json.loads(raw))
++            except ValueError:
++                continue
++    except OSError:
++        return []
++    return rows
++
++
++def safe_label(approval_mode: str) -> str:
++    """The label to click for a mode. 'Always approve' is never returned unless the user asked for it."""
++    return 'Always approve' if str(approval_mode or '').strip().lower() == 'always' else 'Approve'
++
++
++def approve_saved_video_request(provider, journal, *, settings=None, project='AutoVideo-Recovery',
++                                emit=None) -> dict:
++    """Approve the card of one saved video request once, if the evidence and the guards allow it.
++
++    Opens/uses ``provider``'s browser to read the card, so the caller owns the browser's lifetime.
++    Returns ``{'clicked', 'action', 'reason', 'cost', 'clicks'}``; a refusal is a result, not an exception,
++    so the caller can still attempt the download-only recovery.
++    """
++    journal = Path(journal)
++    settings = settings or {}
++    allow, why = auto_allowed(settings)
++    request = _load(journal)
++    probe = {}
++    if request.get('kind') != 'video':
++        return {'clicked': False, 'action': 'not_video', 'cost': None, 'clicks': 0,
++                'reason': 'only a video request needs a credit card'}
++    counts = clicks_for(journal)
++    if counts['clicks'] >= MAX_CLICKS_PER_REQUEST:
++        return {'clicked': False, 'action': 'duplicate', 'cost': None, 'clicks': counts['clicks'],
++                'reason': plan(journal, {}, setting=str(settings.get('flow_approval', 'once') or 'once'),
++                               cap=credit_cap(settings), allow_auto=allow)['reason']}
++    if not allow:
++        return {'clicked': False, 'action': 'manual', 'cost': None, 'clicks': counts['clicks'], 'reason': why}
++    project_url = provider.normalize_project_url(request.get('project_url'))
++    if not project_url:
++        return {'clicked': False, 'action': 'no_project', 'cost': None, 'clicks': counts['clicks'],
++                'reason': 'the saved video request has no project URL; nothing was clicked'}
++    try:
++        probe = provider.inspect_recorded_approval(project, str(journal), project_url=project_url)
++    except Exception as error:                      # noqa: BLE001 - reported, never fatal
++        return {'clicked': False, 'action': 'probe_failed', 'cost': None, 'clicks': counts['clicks'],
++                'reason': f'the saved project could not be read for an approval card: {str(error)[:300]}'}
++    decision = plan(journal, probe, setting=str(settings.get('flow_approval', 'once') or 'once'),
++                    cap=credit_cap(settings), allow_auto=allow)
++    if emit:
++        emit(f'{journal.name}: {decision["reason"]}')
++    if decision['action'] != 'approve':
++        return {'clicked': False, **{k: decision[k] for k in ('action', 'reason', 'cost', 'clicks')}}
++    labels = [str(label).strip().lower() for label in (probe.get('labels') or [])]
++    if labels and all(label == FORBIDDEN_LABEL for label in labels):
++        return {'clicked': False, 'action': 'refused_label', 'cost': decision['cost'], 'clicks': counts['clicks'],
++                'reason': 'the only visible control is "Always approve"; it is never clicked automatically'}
++    info = provider.approve_recorded_card(project, str(journal), project_url=project_url,
++                                          confirm_credits=int(decision['cost']))
++    label = str(info.get('clicked') or 'Approve')
++    audit = record_click(journal, label=label, cost=int(decision['cost']))
++    return {'clicked': True, 'action': 'approved', 'cost': int(decision['cost']),
++            'clicks': audit['clicks_after'], 'label': label,
++            'reason': f'approved once for {int(decision["cost"])} credits; the download that follows is free'}
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/flow_resume_recovery.py b/engine/flow_resume_recovery.py
+--- a/engine/flow_resume_recovery.py	2026-10-26 07:41:02.000000000 +0000
++++ b/engine/flow_resume_recovery.py	2026-10-27 08:37:04.000000000 +0000
+@@ -101,8 +101,23 @@
+                 request.update(status='downloaded', media_sha256=sha(output))
+                 write_json(path, request)
+             elif request.get('kind') == 'video' and request.get('project_url'):
++                # v7.0.106: a submitted video request whose card was never clicked has no video to find, so
++                # every download-only scan "honestly" found nothing and Resume stayed blocked. Approve THIS
++                # request once (readable cost within the cap, never "Always approve", never twice), then wait
++                # for the clip it paid for.
++                from .flow_approval_once import approve_saved_video_request
++                approval = approve_saved_video_request(
++                    provider, path, settings=settings,
++                    emit=(lambda message: progress('Flow approval', 0, message)) if progress else None)
++                if approval.get('clicked'):
++                    events.append({'journal': row['journal'], 'status': 'approval_clicked',
++                                   'cost': approval.get('cost'), 'reason': approval.get('reason')})
++                elif approval.get('action') not in ('no_card', 'duplicate', 'manual', 'not_video'):
++                    events.append({'journal': row['journal'], 'status': 'approval_refused',
++                                   'reason': approval.get('reason')})
++                wait_s = 180 if approval.get('clicked') else 120
+                 provider.recover_recorded_video('AutoVideo-Recovery', output, str(path),
+-                    project_url=request['project_url'], wait_s=120)
++                    project_url=request['project_url'], wait_s=wait_s)
+                 request = json.loads(path.read_text())
+                 request.update(status='downloaded', media_sha256=sha(output))
+                 write_json(path, request)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/job_delete.py b/engine/job_delete.py
+--- a/engine/job_delete.py	2026-10-26 07:42:02.000000000 +0000
++++ b/engine/job_delete.py	2026-10-27 08:37:34.000000000 +0000
+@@ -5,6 +5,10 @@
+ ``final_path``) instead of one hard-coded name, and can delete a completed job folder that has no
+ finished video when the user ticks that explicit choice. An unfinished job or an unresolved Flow
+ request is never eligible. Never follows job-directory symlinks or touches shared browser logins.
++
++v7.0.106: the finished video is moved to ``<outputs>/_render-backups/<job>/`` *before* the folder is removed
++(``keep_videos=True``, the default). Deleting the job no longer destroys the video it produced; if the backup
++cannot be verified the deletion is refused and nothing is removed.
+ """
+ from pathlib import Path
+ import json
+@@ -17,8 +21,29 @@
+ from .production_lock import acquire, release
+ 
+ 
++def _backup_targets(job, final, candidates):
++    """Finished videos worth keeping: the validated final plus any other complete final file."""
++    found, seen = [], set()
++    for path in [final] + [Path(row['path']) for row in candidates if row.get('valid')]:
++        if not path:
++            continue
++        try:
++            resolved = path.resolve()
++        except OSError:
++            continue
++        if str(resolved) in seen or not resolved.is_file():
++            continue
++        try:
++            resolved.relative_to(Path(job).resolve())      # never back up something outside the job
++        except (OSError, ValueError):
++            continue
++        seen.add(str(resolved))
++        found.append(str(resolved))
++    return found
++
++
+ def completed_job_delete(outputs, db_path, job_id, *, apply=False, confirmation='',
+-                         allow_missing_final=False):
++                         allow_missing_final=False, keep_videos=True, backup_dir=None):
+     outputs=Path(outputs).absolute()
+     db_path=Path(db_path).absolute()
+     if not job_id or job_id in ('.','..') or Path(job_id).name!=job_id or '/' in job_id or '\\' in job_id:
+@@ -45,6 +70,16 @@
+                            'reason':row.get('reason','')} for row in candidates],
+             'bytes':_size(job),'apply':apply,
+             'includes':'job folder and SQLite index only; external browser profiles excluded'}
++    from .render_backup import backup_root, plan as plan_backup
++    keep_root = Path(backup_dir) if backup_dir else backup_root(outputs)
++    keep_list = _backup_targets(job, final, candidates) if keep_videos else []
++    if keep_list:
++        planned = plan_backup(keep_list, root=keep_root, label=job_id)
++        result['video_backups'] = planned['files']
++        result['backup_folder'] = planned['folder']
++        result['backup_bytes'] = planned['bytes']
++    result['keep_videos'] = bool(keep_videos)
++    result['backup_root'] = str(keep_root)
+     if not apply:return result
+     if confirmation!=job_id:raise ValueError('Type the exact job ID to confirm permanent deletion')
+     if not eligible:raise ValueError('Deletion refused: '+reason)
+@@ -62,6 +97,23 @@
+             if code and not (code=='no_final_video' and allow_missing_final):
+                 raise ValueError('Job changed: '+reason)
+             if not db_path.is_file():raise ValueError('Job DB missing; deletion refused')
++            # v7.0.106: move the finished video out first. A failure aborts the deletion.
++            from .render_backup import backup_files
++            if keep_list:
++                try:
++                    moved = backup_files(keep_list, root=keep_root, label=job_id, apply=True)
++                except OSError as error:
++                    raise RuntimeError('The finished video could not be backed up (' + str(error)
++                                       + '); the job was NOT deleted. Fix the backup folder and try again.')
++                kept = [row for row in moved['files'] if row.get('target')]
++                if len(kept) != len(keep_list):
++                    raise RuntimeError('Not every finished video was backed up ('
++                                       + ', '.join(moved.get('warnings') or ['unknown reason'])
++                                       + '); the job was NOT deleted. Nothing else was removed.')
++                result['video_backups'] = moved['files']
++                result['backup_folder'] = moved['folder']
++                result['backup_bytes'] = moved['bytes']
++                result['kept_videos'] = [row['target'] for row in kept]
+             with sqlite3.connect(db_path) as cx:
+                 backup=db_path.with_name('jobs-before-delete-'+str(time.time_ns())+'.db')
+                 with sqlite3.connect(backup) as dst:cx.backup(dst)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-27 06:25:54.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-27 08:36:54.000000000 +0000
+@@ -4090,6 +4090,21 @@
+         except OSError as error:
+             print(f"[Flow] Approval click could not be logged ({type(error).__name__}).")
+ 
++    def _record_approval_once(self, label) -> None:
++        """v7.0.106: persist this request's one allowed click (journal + job audit log)."""
++        journal = getattr(self, "_approval_journal", None)
++        if not journal or not str(journal).endswith(".flow-request.json"):
++            return
++        try:
++            from engine.flow_approval_once import record_click
++            audit = record_click(journal, label=label,
++                                 cost=(self.last_agent_confirmation or {}).get("cost"))
++            print(f"[Flow] Approval recorded: {audit['clicks_after']}/1 for this request "
++                  f"({audit['cost']} credits); a duplicate card will not be clicked.")
++        except (OSError, ValueError, TypeError) as error:
++            print(f"[Flow] Approval click could not be recorded ({type(error).__name__}); "
++                  "the card still counts as approved in this session.")
++
+     def _clickable_action(self, label: str):
+         """The exact approval control, only when it is really clickable. v7.0.99 extracted."""
+         pat = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
+@@ -4217,6 +4232,16 @@
+             if not journal:
+                 return True  # legacy unjournaled adapter compatibility
+             from engine.flow_approval import ApprovalCardLimitReached, reserve
++            # v7.0.106: exactly one click per saved request, decided from files (journal, reservations and
++            # ledger), so a fresh browser session or a re-rendered card can never approve the same request
++            # twice. A refusal here is the "keep waiting" verdict, not a failure.
++            from engine.flow_approval_once import clicks_for
++            spent = clicks_for(journal)
++            if spent['clicks'] >= 1:
++                self.last_agent_confirmation.update(
++                    blocked=True, card_limit_reached=True, approved_cards=spent['clicks'],
++                    reason=('this request was already approved once; a second card is never clicked'))
++                return False
+             try:
+                 allowed = reserve(journal, body_raw, self.last_agent_confirmation.get('cost'),
+                                   max_credits, getattr(self, '_approval_card_limit', 1))
+@@ -4314,6 +4339,7 @@
+                             loc.click()
+                         self.last_agent_confirmation["clicked"] = label
+                         self._log_approval_click(label)
++                        self._record_approval_once(label)
+                         print(f"[Flow] Credit confirmation: clicked {label!r}"
+                               + (f" ({self.last_agent_confirmation.get('cost')} credits)"
+                                  if self.last_agent_confirmation.get('cost') is not None else ""))
+@@ -4355,6 +4381,7 @@
+                         if self._click_text_action(label, timeout_ms=450):
+                             self.last_agent_confirmation["clicked"] = label
+                             self._log_approval_click(label)
++                            self._record_approval_once(label)
+                             print(f"[Flow] Credit confirmation: clicked nonsemantic {label!r}"
+                                   + (f" ({self.last_agent_confirmation.get('cost')} credits)"
+                                      if self.last_agent_confirmation.get('cost') is not None else ""))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/render_backup.py b/engine/render_backup.py
+--- a/engine/render_backup.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/render_backup.py	2026-10-27 08:37:26.000000000 +0000
+@@ -0,0 +1,203 @@
++"""v7.0.106: a rendered video is never deleted without a copy that can be found again.
++
++The user asked where a finished video goes when a job is cleaned up. Until now: nowhere. The completed-job
++deletion moved the whole job folder into ``outputs/.deletion-quarantine/`` and then removed it, and the Clip
++Studio cleanup unlinked rendered clips - the finished video was gone with the file that produced it.
++
++This module moves (not copies) a rendered file into a predictable folder, so cleanup still frees the job
++folder while the video survives:
++
++    <outputs>/_render-backups/<job id>/<file name>          finished job videos
++    <clips folder>/_render-backups/<stamp>/<file name>      Clip Studio clips
++
++The location can be changed with ``AUTOVIDEO_RENDER_BACKUP_DIR`` (absolute, outside ``outputs`` is fine) or
++the ``render_backup_dir`` setting. A move inside one filesystem is an atomic rename; across filesystems the
++bytes are copied, hashed, verified and only then is the original removed. If a backup cannot be verified the
++caller is told so and must not delete the original - no silent data loss.
++"""
++from __future__ import annotations
++
++import hashlib
++import os
++import shutil
++from pathlib import Path
++
++BACKUP_DIRNAME = '_render-backups'
++ENV_VAR = 'AUTOVIDEO_RENDER_BACKUP_DIR'
++VIDEO_SUFFIXES = ('.mp4', '.mov', '.mkv', '.webm', '.m4v')
++
++
++def backup_root(outputs=None, settings=None) -> Path:
++    """Where rendered files are kept after cleanup.
++
++    ``AUTOVIDEO_RENDER_BACKUP_DIR`` wins, then the ``render_backup_dir`` setting, then
++    ``<outputs>/_render-backups`` (same drive, so the move is an instant rename).
++    """
++    override = str(os.environ.get(ENV_VAR) or (settings or {}).get('render_backup_dir') or '').strip()
++    if override:
++        return Path(override).expanduser().absolute()
++    base = Path(outputs) if outputs else Path('outputs')
++    base = base.expanduser()
++    try:
++        base = base.resolve()
++    except OSError:
++        base = base.absolute()
++    return base / BACKUP_DIRNAME
++
++
++def _sha256(path: Path) -> str:
++    digest = hashlib.sha256()
++    with open(path, 'rb') as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def _safe_label(label: str) -> str:
++    cleaned = ''.join(char if char.isalnum() or char in '-._' else '-' for char in str(label or ''))
++    return cleaned.strip('.-') or 'job'
++
++
++def _free_target(folder: Path, name: str, source: Path) -> tuple[Path, str]:
++    """A target path that does not overwrite a different file; notes an identical existing backup."""
++    candidate = folder / name
++    if not candidate.exists():
++        return candidate, ''
++    try:
++        if candidate.is_file() and not candidate.is_symlink() and candidate.stat().st_size == source.stat().st_size \
++                and _sha256(candidate) == _sha256(source):
++            return candidate, 'identical backup already exists'
++    except OSError:
++        pass
++    stem, suffix = os.path.splitext(name)
++    for index in range(2, 1000):
++        candidate = folder / f'{stem}-{index}{suffix}'
++        if not candidate.exists():
++            return candidate, ''
++    raise OSError(f'No free backup name for {name}')
++
++
++def plan(paths, *, root, label) -> dict:
++    """Report what a backup would move, without touching anything."""
++    root = Path(root)
++    folder = root / _safe_label(label)
++    rows = []
++    for raw in paths:
++        path = Path(raw)
++        rows.append({'source': str(path), 'target': str(folder / path.name),
++                     'bytes': path.stat().st_size if path.is_file() and not path.is_symlink() else 0,
++                     'exists': path.is_file() and not path.is_symlink()})
++    return {'root': str(root), 'folder': str(folder), 'files': rows,
++            'bytes': sum(row['bytes'] for row in rows)}
++
++
++def backup_files(paths, *, root, label, apply=True) -> dict:
++    """Move each rendered file into the backup folder. Raises before deleting anything it cannot verify.
++
++    Returns ``{'root', 'folder', 'files': [...], 'bytes', 'warnings'}``. Each moved row carries its
++    ``target``, ``bytes``, ``sha256`` and ``mode`` ('move' or 'copy+verify').
++    """
++    root = Path(root)
++    folder = root / _safe_label(label)
++    report = {'root': str(root), 'folder': str(folder), 'apply': bool(apply), 'files': [],
++              'bytes': 0, 'warnings': []}
++    selected = []
++    for raw in paths:
++        path = Path(raw)
++        if path.is_symlink():
++            report['warnings'].append(f'skipped symlink: {path.name}')
++            continue
++        if not path.is_file():
++            report['warnings'].append(f'missing: {path.name}')
++            continue
++        if path.suffix.lower() not in VIDEO_SUFFIXES:
++            report['warnings'].append(f'not a video file: {path.name}')
++            continue
++        selected.append(path)
++    if not selected:
++        return report
++    if not apply:
++        for path in selected:
++            report['files'].append({'source': str(path), 'target': str(folder / path.name),
++                                    'bytes': path.stat().st_size, 'state': 'would move'})
++        report['bytes'] = sum(row['bytes'] for row in report['files'])
++        return report
++    folder.mkdir(parents=True, exist_ok=True)
++    for path in selected:
++        size = path.stat().st_size
++        digest = _sha256(path)
++        target, note = _free_target(folder, path.name, path)
++        if note:
++            # Same bytes are already backed up: dropping the original loses nothing.
++            path.unlink()
++            report['files'].append({'source': str(path), 'target': str(target), 'bytes': size,
++                                    'sha256': digest, 'mode': 'already-backed-up', 'note': note})
++            report['bytes'] += size
++            continue
++        mode = 'move'
++        try:
++            os.replace(path, target)
++        except OSError:
++            # Different filesystem (or a locked file on Windows): copy, verify, then remove.
++            mode = 'copy+verify'
++            partial = target.with_name(target.name + '.part')
++            shutil.copy2(path, partial)
++            if partial.stat().st_size != size or _sha256(partial) != digest:
++                partial.unlink(missing_ok=True)
++                raise OSError(f'Backup verification failed for {path.name}; the original was kept')
++            os.replace(partial, target)
++            path.unlink()
++        if target.stat().st_size != size:
++            raise OSError(f'Backup size mismatch for {path.name}; the original was kept')
++        report['files'].append({'source': str(path), 'target': str(target), 'bytes': size,
++                                'sha256': digest, 'mode': mode})
++        report['bytes'] += size
++    return report
++
++
++def restore(root, label, *, outputs, subdir='render') -> dict:
++    """Put a job's backed-up videos back into ``<outputs>/<job>/<subdir>/``.
++
++    The job folder may no longer exist (it was deleted); the videos are restored so they can be watched,
++    copied or delivered. Restoring does not recreate the production, its manifest or its database entry.
++    """
++    root = Path(root)
++    folder = root / _safe_label(label)
++    target_dir = Path(outputs) / _safe_label(label) / subdir
++    report = {'folder': str(folder), 'target': str(target_dir), 'files': [], 'bytes': 0}
++    if not folder.is_dir():
++        report['warning'] = 'No backup folder for this job'
++        return report
++    target_dir.mkdir(parents=True, exist_ok=True)
++    for source in sorted(path for path in folder.iterdir() if path.is_file() and not path.is_symlink()):
++        if source.suffix.lower() not in VIDEO_SUFFIXES:
++            continue
++        target = target_dir / source.name
++        if target.exists() and target.stat().st_size == source.stat().st_size:
++            report['files'].append({'source': str(source), 'target': str(target), 'state': 'already there'})
++            continue
++        partial = target.with_name(target.name + '.part')
++        shutil.copy2(source, partial)
++        os.replace(partial, target)
++        report['files'].append({'source': str(source), 'target': str(target), 'state': 'restored',
++                                'bytes': target.stat().st_size})
++        report['bytes'] += target.stat().st_size
++    return report
++
++
++def inventory(root) -> list[dict]:
++    """Every backed-up video, newest folder first: what exists and how big it is."""
++    root = Path(root)
++    rows = []
++    if not root.is_dir():
++        return rows
++    for folder in sorted(root.iterdir(), key=lambda item: item.name):
++        if not folder.is_dir() or folder.is_symlink():
++            continue
++        files = [path for path in sorted(folder.iterdir())
++                 if path.is_file() and not path.is_symlink() and path.suffix.lower() in VIDEO_SUFFIXES]
++        rows.append({'job': folder.name, 'folder': str(folder),
++                     'files': [{'name': path.name, 'bytes': path.stat().st_size, 'path': str(path)}
++                               for path in files],
++                     'bytes': sum(path.stat().st_size for path in files)})
++    return rows
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/studio_config.py b/engine/studio_config.py
+--- a/engine/studio_config.py	2026-10-26 07:41:02.000000000 +0000
++++ b/engine/studio_config.py	2026-10-27 08:40:10.000000000 +0000
+@@ -73,6 +73,8 @@
+     "frame_source": "auto",
+     "flow_video_mode": "frames",
+     "flow_approval": "once",
++    # v7.0.106: approve each saved video request once, automatically (None = default on).
++    "flow_auto_approve_video_requests": None,
+     "flow_project_url": "",
+     "flow_reuse_project_media": True,
+     "flow_reuse_mode": "exact",
+@@ -158,7 +160,8 @@
+         raise ValueError("flow_approval_cards must be 1–3")
+     for key, default in DEFAULTS.items():
+         if type(default) is bool or key in ('flow_pause_on_unresolved_request', 'text_cards_enabled',
+-                                          'sound_effects_enabled', 'ambience_enabled'):
++                                          'sound_effects_enabled', 'ambience_enabled',
++                                          'flow_auto_approve_video_requests'):
+             if cfg[key] is None and default is None:
+                 continue
+             if type(cfg[key]) is not bool:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v7106_approval_and_backups.py b/tests/test_v7106_approval_and_backups.py
+--- a/tests/test_v7106_approval_and_backups.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7106_approval_and_backups.py	2026-10-27 08:39:52.000000000 +0000
+@@ -0,0 +1,458 @@
++"""v7.0.106 — one approval per Flow video request, and a rendered video that survives cleanup.
++
++Field report: a job needs eight Flow videos; the first request is approved automatically and the rest wait
++for a human click. "Always approve" is not acceptable (it would also confirm a request nobody planned).
++
++The rule is per *saved request*: exactly one click when its card is visible with a readable cost inside the
++job's per-take cap, never a second click for the same request, never the "Always approve" label, and nothing
++at all when ``flow_approval`` is ``manual``.
++
++The second half covers the cleanup question: where does a rendered video go? Before v7.0.106 it went nowhere -
++the completed-job deletion removed the folder that held it, and Clip Studio cleanup unlinked its clips.
++
++No browser is opened, no credit is spent and no real render is produced here.
++"""
++import json
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from engine import flow_approval_once as once
++from engine.render_backup import backup_files, backup_root, inventory, plan, restore
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++CARD = {'visible': True, 'cost': 6, 'video': True, 'labels': ['Approve', 'Reject'],
++        'question': 'Would you like me to kick off this 1 video generation, costing 6 credits?'}
++
++
++def _job(tmp_path):
++    root = tmp_path / 'outputs' / JOB
++    (root / 'flow' / 'shots' / 'shot_020').mkdir(parents=True)
++    return root
++
++
++def _journal(root, name='take_01.mp4', **fields):
++    path = root / 'flow' / 'shots' / 'shot_020' / (name + '.flow-request.json')
++    payload = {'kind': 'video', 'phase': 'submitted', 'status': 'pending',
++               'project_url': 'https://flow.google.com/project/fe1ccc67-bf80-4948-8530-0bf9c39e5a17',
++               'approval_reservations': []}
++    payload.update(fields)
++    path.write_text(json.dumps(payload))
++    return path
++
++
++def _ledger(journal, *events):
++    journal.with_name(journal.name[:-len('.flow-request.json')] + '.submit-ledger.jsonl').write_text(
++        ''.join(json.dumps({'event': event}) + '\n' for event in events))
++
++
++# --------------------------------------------------------------- the decision
++
++def test_a_visible_affordable_card_is_approved_once(tmp_path):
++    journal = _journal(_job(tmp_path))
++    decision = once.plan(journal, CARD)
++    assert decision['action'] == 'approve'
++    assert decision['cost'] == 6 and decision['clicks'] == 0
++    assert 'one approval will be clicked' in decision['reason']
++
++
++@pytest.mark.parametrize('probe, action, needle', [
++    ({}, 'no_card', 'no clickable Approve'),
++    ({'visible': True, 'cost': None, 'video': True}, 'no_cost', 'readable credit cost'),
++    ({'visible': True, 'cost': 6, 'video': False}, 'not_video', 'not a video generation request'),
++])
++def test_a_card_that_cannot_be_read_safely_is_left_alone(tmp_path, probe, action, needle):
++    journal = _journal(_job(tmp_path))
++    decision = once.plan(journal, probe)
++    assert decision['action'] == action
++    assert needle in decision['reason']
++
++
++def test_a_card_above_the_per_take_cap_is_refused(tmp_path):
++    journal = _journal(_job(tmp_path))
++    decision = once.plan(journal, dict(CARD, cost=25), cap=10)
++    assert decision['action'] == 'over_cap'
++    assert 'above this job' in decision['reason'] and '10-credit cap' in decision['reason']
++
++
++def test_manual_mode_never_approves(tmp_path):
++    journal = _journal(_job(tmp_path))
++    assert once.plan(journal, CARD, setting='manual')['action'] == 'manual'
++    allow, why = once.auto_allowed({'flow_approval': 'manual'})
++    assert allow is False and 'manual' in why
++
++
++def test_automatic_approval_can_be_switched_off_for_a_job(tmp_path):
++    allow, why = once.auto_allowed({'flow_approval': 'once', 'flow_auto_approve_video_requests': False})
++    assert allow is False and 'flow_auto_approve_video_requests' in why
++    assert once.auto_allowed({'flow_approval': 'once'})[0] is True
++
++
++def test_a_recorded_click_makes_every_later_card_a_duplicate(tmp_path):
++    root = _job(tmp_path)
++    journal = _journal(root)
++    once.record_click(journal, label='Approve', cost=6)
++    decision = once.plan(journal, CARD)
++    assert decision['action'] == 'duplicate'
++    assert 'already approved once' in decision['reason']
++
++
++def test_a_ledger_approval_from_an_older_build_counts_as_the_one_click(tmp_path):
++    journal = _journal(_job(tmp_path), approval_clicks=0)
++    _ledger(journal, 'intent', 'submitted', 'approval')
++    assert once.clicks_for(journal)['clicks'] == 1
++    assert once.plan(journal, CARD)['action'] == 'duplicate'
++
++
++def test_an_older_reservation_counts_as_the_one_click(tmp_path):
++    journal = _journal(_job(tmp_path), approval_reservations=[{'key': 'x', 'cost': 6}])
++    assert once.plan(journal, CARD)['action'] == 'duplicate'
++
++
++def test_each_request_has_its_own_one_click(tmp_path):
++    root = _job(tmp_path)
++    first = _journal(root, name='take_01.mp4')
++    second = _journal(root, name='take_02.mp4')
++    once.record_click(first, label='Approve', cost=6)
++    assert once.plan(first, CARD)['action'] == 'duplicate'
++    assert once.plan(second, CARD)['action'] == 'approve'
++
++
++def test_the_click_is_written_to_the_journal_and_the_job_audit(tmp_path):
++    root = _job(tmp_path)
++    journal = _journal(root)
++    audit = once.record_click(journal, label='Approve', cost=5)
++    assert audit['clicks_after'] == 1 and audit['cost'] == 5
++    saved = json.loads(journal.read_text())
++    assert saved['approval_clicks'] == 1 and saved['approval_cost'] == 5
++    assert saved['approval_label'] == 'Approve'
++    rows = once.audit_rows(root)
++    assert len(rows) == 1 and rows[0]['cost'] == 5
++    assert rows[0]['max_clicks_per_request'] == 1
++
++
++def test_the_audit_file_is_inside_the_job_folder(tmp_path):
++    root = _job(tmp_path)
++    once.record_click(_journal(root), label='Approve', cost=6)
++    assert once.audit_path(root).name == 'flow_approvals.jsonl'
++    assert once.audit_path(root).is_file()
++
++
++def test_never_always_approve():
++    assert once.safe_label('once') == 'Approve'
++    assert once.safe_label('manual') == 'Approve'
++    assert once.safe_label('always') == 'Always approve'      # only when the user asked for it
++
++
++# --------------------------------------------------------------- the provider guard
++
++def test_the_browser_refuses_a_second_click_for_the_same_request(tmp_path):
++    """The provider-level guard must not depend on the approval module's own bookkeeping."""
++    from engine.providers.flow_browser import FlowBrowser
++
++    root = _job(tmp_path)
++    journal = _journal(root)
++    once.record_click(journal, label='Approve', cost=6)
++
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._approval_journal = str(journal)
++    browser._awaiting_request_id = 'req-1'
++    browser._approval_card_limit = 1
++    browser.last_agent_confirmation = {'approval': 'once', 'cost': 6, 'clicked': None, 'blocked': False}
++    browser._page = SimpleNamespace(inner_text=lambda selector: CARD['question'])
++    clicked = {'count': 0}
++    browser._approval_labels = lambda approval='once': ['Approve']
++    browser._clickable_action = lambda label: SimpleNamespace(click=lambda timeout=1200: clicked.update(
++        count=clicked['count'] + 1))
++    browser._log_approval_click = lambda label: None
++    browser._record_approval_once = lambda label: None
++    browser._looks_like_browser_closed_error = lambda error: False
++    browser.network_issue_detected = lambda: False
++
++    result = browser.confirm_agent_generation(timeout_s=1, approval='once', max_credits=10)
++    assert result is False and clicked['count'] == 0
++    assert browser.last_agent_confirmation['blocked'] is True
++    assert browser.last_agent_confirmation.get('card_limit_reached') is True
++    assert browser.last_agent_confirmation.get('approved_cards') == 1
++
++
++# --------------------------------------------------------------- recovery wiring
++
++class FakeProvider:
++    """The smallest provider that can approve a saved request: no browser, no network."""
++
++    def __init__(self, probe=None, clicks=None, raises=None):
++        self.probe = probe if probe is not None else dict(CARD)
++        self.clicks = clicks
++        self.raises = raises
++        self.approved = []
++
++    def normalize_project_url(self, url):
++        return str(url or '')
++
++    def inspect_recorded_approval(self, project, request_path, *, project_url):
++        if self.raises:
++            raise self.raises
++        return dict(self.probe)
++
++    def approve_recorded_card(self, project, request_path, *, project_url, confirm_credits):
++        self.approved.append(int(confirm_credits))
++        return {'clicked': 'Approve', 'cost': int(confirm_credits)}
++
++    def recover_recorded_video(self, project, output, request_path, *, project_url, wait_s):
++        self.recovered = {'wait_s': wait_s, 'journal': str(request_path)}
++        Path(output).parent.mkdir(parents=True, exist_ok=True)
++        Path(output).write_bytes(b'\x00' * 2048)
++        return {'path': output}
++
++
++def test_a_saved_video_request_is_approved_once_then_never_again(tmp_path):
++    root = _job(tmp_path)
++    journal = _journal(root)
++    provider = FakeProvider()
++    first = once.approve_saved_video_request(provider, journal, settings={'flow_approval': 'once'})
++    assert first['clicked'] is True and first['cost'] == 6
++    assert provider.approved == [6]
++    second = once.approve_saved_video_request(provider, journal, settings={'flow_approval': 'once'})
++    assert second['clicked'] is False and second['action'] == 'duplicate'
++    assert provider.approved == [6]                       # nothing clicked the second time
++
++
++def test_manual_settings_stop_the_automatic_click(tmp_path):
++    journal = _journal(_job(tmp_path))
++    provider = FakeProvider()
++    result = once.approve_saved_video_request(provider, journal, settings={'flow_approval': 'manual'})
++    assert result['clicked'] is False and result['action'] == 'manual'
++    assert provider.approved == []
++
++
++def test_an_unreadable_project_is_reported_not_raised(tmp_path):
++    journal = _journal(_job(tmp_path))
++    provider = FakeProvider(raises=RuntimeError('project not found'))
++    result = once.approve_saved_video_request(provider, journal, settings={})
++    assert result['clicked'] is False and result['action'] == 'probe_failed'
++    assert 'project not found' in result['reason']
++    assert provider.approved == []
++
++
++def test_an_image_request_never_asks_for_a_card(tmp_path):
++    journal = _journal(_job(tmp_path), kind='image')
++    provider = FakeProvider()
++    result = once.approve_saved_video_request(provider, journal, settings={})
++    assert result['clicked'] is False and result['action'] == 'not_video'
++    assert provider.approved == []
++
++
++def test_resume_reconciliation_approves_the_pending_video_card(tmp_path, monkeypatch):
++    """The resume path must click the card of its own saved request, not wait for a human."""
++    from engine import flow_resume_recovery
++
++    root = _job(tmp_path)
++    (root / 'production_manifest.json').write_text(json.dumps({'job_id': JOB, 'shots': []}))
++    journal = _journal(root)
++    _ledger(journal, 'intent', 'submitted')
++    provider = FakeProvider()
++
++    report = flow_resume_recovery.reconcile_job(root, {'flow_approval': 'once'},
++                                                provider_factory=lambda: provider)
++    assert provider.approved == [6]
++    assert provider.recovered['wait_s'] == 180           # a longer wait: the clip has to be generated
++    logged = json.loads((root / 'logs' / 'resume-reconciliation.json').read_text())
++    assert any(event.get('status') == 'approval_clicked' for event in logged['events'])
++    assert report.get('unresolved_count') == 0
++
++
++# --------------------------------------------------------------- rendered-video backups
++
++def _video(path, payload=b'\x00' * 2048):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_bytes(payload)
++    return path
++
++
++def test_the_default_backup_folder_is_inside_outputs(tmp_path):
++    root = backup_root(tmp_path / 'outputs')
++    assert root == (tmp_path / 'outputs').resolve() / '_render-backups'
++
++
++def test_the_backup_folder_can_be_moved_with_an_environment_variable(tmp_path, monkeypatch):
++    monkeypatch.setenv('AUTOVIDEO_RENDER_BACKUP_DIR', str(tmp_path / 'elsewhere'))
++    assert backup_root(tmp_path / 'outputs') == (tmp_path / 'elsewhere').absolute()
++
++
++def test_a_finished_video_is_moved_and_verified(tmp_path):
++    job = tmp_path / 'outputs' / JOB
++    video = _video(job / 'render' / f'{JOB}-final.mp4')
++    report = backup_files([str(video)], root=tmp_path / 'outputs' / '_render-backups', label=JOB)
++    kept = Path(report['files'][0]['target'])
++    assert kept.is_file() and not video.exists()
++    assert kept.read_bytes() == b'\x00' * 2048
++    assert report['files'][0]['bytes'] == 2048
++    assert report['files'][0]['sha256'] and report['files'][0]['mode'] == 'move'
++    assert kept.parent.name == JOB
++
++
++def test_two_renders_of_the_same_name_do_not_overwrite_each_other(tmp_path):
++    root = tmp_path / 'backups'
++    first = _video(tmp_path / 'a' / 'final.mp4', b'a' * 100)
++    second = _video(tmp_path / 'b' / 'final.mp4', b'b' * 100)
++    backup_files([str(first)], root=root, label=JOB)
++    report = backup_files([str(second)], root=root, label=JOB)
++    target = Path(report['files'][0]['target'])
++    assert target.name == 'final-2.mp4'
++    assert target.read_bytes() == b'b' * 100
++
++
++def test_an_identical_backup_does_not_duplicate_the_file(tmp_path):
++    root = tmp_path / 'backups'
++    video = _video(tmp_path / 'a' / 'final.mp4')
++    backup_files([str(video)], root=root, label=JOB)
++    again = _video(tmp_path / 'b' / 'final.mp4')
++    report = backup_files([str(again)], root=root, label=JOB)
++    assert report['files'][0]['mode'] == 'already-backed-up'
++    assert len(list((root / JOB).iterdir())) == 1
++
++
++def test_a_preview_touches_nothing(tmp_path):
++    video = _video(tmp_path / 'a' / 'final.mp4')
++    report = plan([str(video)], root=tmp_path / 'backups', label=JOB)
++    assert report['bytes'] == 2048 and video.exists()
++    assert not (tmp_path / 'backups').exists()
++
++
++def test_symlinks_and_non_videos_are_never_moved(tmp_path):
++    real = _video(tmp_path / 'a' / 'final.mp4')
++    link = tmp_path / 'a' / 'link.mp4'
++    link.symlink_to(real)
++    text = tmp_path / 'a' / 'notes.txt'
++    text.write_text('keep')
++    report = backup_files([str(link), str(text)], root=tmp_path / 'backups', label=JOB)
++    assert link.is_symlink() and text.exists()
++    assert any('symlink' in warning for warning in report['warnings'])
++    assert any('not a video' in warning for warning in report['warnings'])
++
++
++def test_the_job_backup_is_listed_and_can_be_restored(tmp_path):
++    outputs = tmp_path / 'outputs'
++    job = outputs / JOB
++    video = _video(job / 'render' / f'{JOB}-final.mp4')
++    root = outputs / '_render-backups'
++    backup_files([str(video)], root=root, label=JOB)
++    rows = inventory(root)
++    assert rows[0]['job'] == JOB and rows[0]['files'][0]['name'] == f'{JOB}-final.mp4'
++    restored = restore(root, JOB, outputs=outputs)
++    target = Path(restored['files'][0]['target'])
++    assert target.is_file() and target.read_bytes() == b'\x00' * 2048
++    assert (root / JOB / f'{JOB}-final.mp4').is_file()          # restoring copies, it does not move
++
++
++def test_deleting_a_completed_job_keeps_its_finished_video(tmp_path, monkeypatch):
++    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
++    from engine import job_delete
++
++    outputs = tmp_path / 'outputs'
++    job = outputs / JOB
++    video = _video(job / 'render' / f'{JOB}-final.mp4', b'\x00' * 4096)
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'done'}))
++    monkeypatch.setattr(job_delete, 'job_completion_state', lambda path: ('', 'completed'))
++    monkeypatch.setattr(job_delete, 'find_final_video', lambda path, *a, **k: (video, [
++        {'path': str(video), 'valid': True, 'bytes': video.stat().st_size, 'reason': ''}]))
++    db = tmp_path / 'jobs.db'
++    import sqlite3
++    with sqlite3.connect(db) as cx:
++        cx.execute('CREATE TABLE jobs (job_id TEXT)')
++        cx.execute('INSERT INTO jobs VALUES (?)', (JOB,))
++    result = job_delete.completed_job_delete(outputs, db, JOB, apply=True, confirmation=JOB)
++    kept = Path(result['kept_videos'][0])
++    assert result['deleted'] is True
++    assert not job.exists()
++    assert kept.is_file() and kept.read_bytes() == b'\x00' * 4096
++    assert kept.parent.name == JOB and kept.parent.parent.name == '_render-backups'
++
++
++def test_deletion_is_refused_when_the_video_cannot_be_kept(tmp_path, monkeypatch):
++    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
++    from engine import job_delete
++    from engine import render_backup
++
++    outputs = tmp_path / 'outputs'
++    job = outputs / JOB
++    video = _video(job / 'render' / f'{JOB}-final.mp4')
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'done'}))
++    monkeypatch.setattr(job_delete, 'job_completion_state', lambda path: ('', 'completed'))
++    monkeypatch.setattr(job_delete, 'find_final_video', lambda path, *a, **k: (video, [
++        {'path': str(video), 'valid': True, 'bytes': video.stat().st_size, 'reason': ''}]))
++
++    def refuse(*args, **kwargs):
++        raise OSError('disk full')
++    monkeypatch.setattr(render_backup, 'backup_files', refuse)
++    db = tmp_path / 'jobs.db'
++    import sqlite3
++    with sqlite3.connect(db) as cx:
++        cx.execute('CREATE TABLE jobs (job_id TEXT)')
++        cx.execute('INSERT INTO jobs VALUES (?)', (JOB,))
++    with pytest.raises(RuntimeError) as caught:
++        job_delete.completed_job_delete(outputs, db, JOB, apply=True, confirmation=JOB)
++    assert 'was NOT deleted' in str(caught.value)
++    assert job.is_dir() and video.is_file()
++
++
++def test_clips_are_moved_to_a_backup_instead_of_deleted(tmp_path):
++    from engine import clip_cleanup
++
++    folder = tmp_path / 'my-clips'
++    folder.mkdir()
++    clip = _video(folder / 'clip-01.mp4', b'c' * 512)
++    _video(folder / '_clip_work' / 'source.mp4', b's' * 100)
++    (folder / 'highlights.json').write_text('{}')
++    preview = clip_cleanup.cleanup(folder, ['clips'], include_clips=True)
++    assert clip.exists() and preview['apply'] is False
++    report = clip_cleanup.cleanup(folder, ['clips'], apply=True, include_clips=True)
++    assert not clip.exists()
++    kept = Path(report['clip_backup_folder']) / 'clip-01.mp4'
++    assert kept.is_file() and kept.read_bytes() == b'c' * 512
++    assert report['freed_bytes'] == 512
++
++
++def test_clips_can_still_be_deleted_outright(tmp_path):
++    from engine import clip_cleanup
++
++    folder = tmp_path / 'my-clips'
++    folder.mkdir()
++    clip = _video(folder / 'clip-01.mp4')
++    report = clip_cleanup.cleanup(folder, ['clips'], apply=True, include_clips=True, keep_clips=False)
++    assert not clip.exists()
++    assert 'clip_backup_folder' not in report
++
++
++def test_a_retry_reconciles_the_saved_request_before_restarting_the_run(tmp_path, monkeypatch):
++    """A queued-but-approved clip must be fetched during the retry loop, not only after a manual Resume."""
++    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
++    from engine import automatic_recovery
++    from engine.factory import Factory, RecoverableInterruption
++    from engine.providers.flow_browser import FlowRequestPending
++
++    factory = Factory(str(tmp_path / 'outputs'), str(tmp_path / 'data/jobs.db'))
++    job = factory.create_job('Retry reconciliation', dry_run=True)
++    shot_dir = Path(factory.pm.job_dir(job)) / 'flow' / 'shots' / 'shot_001'
++    shot_dir.mkdir(parents=True, exist_ok=True)
++    (shot_dir / 'take_01.mp4.flow-request.json').write_text(json.dumps(
++        {'kind': 'video', 'phase': 'submitted', 'status': 'pending',
++         'project_url': 'https://flow.google.com/project/fe1ccc67-bf80-4948-8530-0bf9c39e5a17'}))
++    calls, reconciled = [], []
++
++    def run(*args):
++        calls.append(1)
++        raise RecoverableInterruption(job, 'shot_001',
++                                      FlowRequestPending('Existing request still has no single identifiable asset'),
++                                      'https://flow.google.com/project/x')
++
++    factory._run_job = run
++    import engine.flow_resume_recovery as frr
++    monkeypatch.setattr(frr, 'reconcile_job',
++                        lambda job_dir, settings, emit=None, **kwargs: reconciled.append(str(job_dir)))
++    with pytest.raises(RecoverableInterruption):
++        automatic_recovery.run_with_recovery(factory, job, None, True, sleep=lambda _: None)
++    # the first attempt runs the job, later attempts reconcile first
++    assert len(calls) == 5 and len(reconciled) == 4
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7104_to_v7105.py b/tools/update_v7104_to_v7105.py
+--- a/tools/update_v7104_to_v7105.py	2026-10-27 06:27:36.000000000 +0000
++++ b/tools/update_v7104_to_v7105.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,162 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.105 update to a v7.0.104 installation.
+-
+-Field log (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27): Flow produced the shot_020 video,
+-the app approved its 6 credits, and then walked away from it after 29 seconds because a *second* approval card
+-appeared - while the request still had ~870 s of high-demand queue left. The follow-up recovery counted a
+-queueing request as "no progress", gave up after five gallery scans, and paused with "no single identifiable
+-asset". A 45 s composer check had also declared shot_020's references unattached although the upload had landed.
+-
+-v7.0.105:
+-
+-- a further approval card for an already-approved request is never clicked, and the wait continues for the video
+-  that was paid for (`ApprovalCardLimitReached`, `wait_decision()`);
+-- a request Flow is still queueing is exempt from the no-progress retry budget (1 500 s wall clock, total
+-  attempt bound unchanged), with 30/60/90 s backoff;
+-- the composer attachment check waits 90 s and, if it still fails, attaches the same alias from the project's
+-  uploaded media once instead of failing the shot;
+-- ``python3 cli.py v3 status`` prints the current pause via ``pause_guidance_lines()`` - the superseded notice is
+-  marked, the manifest's accepted count is used, and unresolved journals are listed.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.105 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.105/tools/update_v7104_to_v7105.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.105/tools/update_v7104_to_v7105.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['QUEUED_REQUEST_V7_0_105.md', 'VERSION', 'cli.py', 'engine/automatic_recovery.py',
+-           'engine/flow_approval.py', 'engine/providers/flow_browser.py',
+-           'tests/test_v7105_queued_approval.py', 'tools/update_v7104_to_v7105.py']
+-# Files as they exist in 7.0.104: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['0f224c1ea5d3d73fcac3128abbdbcca73a3d11b3f26c20724234bb508e92be2b'],
+-    'cli.py': ['993aa778128ccfa9c7e50c53c6592927a7b4f5129363788d4e52e93133d40d12'],
+-    'engine/automatic_recovery.py': ['84056dd21d62010673691733c0fabb6309f0b830e35b2ee9a991d7b72249fd66'],
+-    'engine/flow_approval.py': ['86a336002610137b0ce1ce1c28869b935627cd55acef8b82643608c530d6e7c5'],
+-    'engine/providers/flow_browser.py': ['041ea957abde9ec172fe9d8365f5a951ee942bb0728e3829c46fe51c48acad14'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.104', '7.0.105')  # 7.0.105 allows a safe re-run after success
+-
+-# The 7.0.104 zip carries the 7.0.103 to 7.0.104 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.103', '7.0.104', 'tools/update_v7103_to_v7104.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.104 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.104 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.104 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.105 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.105 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.105 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.104-to-v7.0.105-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.105. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7105_to_v7106.py b/tools/update_v7105_to_v7106.py
+--- a/tools/update_v7105_to_v7106.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7105_to_v7106.py	2026-10-27 08:40:38.000000000 +0000
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.106 update to a v7.0.105 installation.
++
++Two field requests:
++
++1. **Approve every Flow video request once, not just the first.** A job needing eight Flow videos needed seven
++   manual clicks, and after a pause a manual ``approve-request`` before Resume could do anything - because a
++   submitted request whose card was never clicked has no video to download, so every scan "honestly" found
++   nothing. Now each saved request is approved exactly once (visible card, readable cost, within the per-take
++   cap), never twice, never with "Always approve", and never when ``flow_approval = manual``.
++2. **Keep the rendered video when a job is cleaned up.** Permanent deletion used to remove the folder that held
++   the finished video. It is now moved to ``<outputs>/_render-backups/<job>/`` first, and Clip Studio cleanup
++   moves its clips to ``_render-backups/clips`` - with a verification step that refuses the deletion if the
++   backup cannot be made.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.106 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.106/tools/update_v7105_to_v7106.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.106/tools/update_v7105_to_v7106.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['APPROVE_ONCE_AND_RENDER_BACKUPS_V7_0_106.md', 'VERSION', 'app.py', 'cli.py',
++           'engine/automatic_recovery.py', 'engine/clip_cleanup.py', 'engine/factory.py',
++           'engine/flow_approval_once.py', 'engine/flow_resume_recovery.py', 'engine/job_delete.py',
++           'engine/providers/flow_browser.py', 'engine/render_backup.py', 'engine/studio_config.py',
++           'tests/test_v7106_approval_and_backups.py', 'tools/update_v7105_to_v7106.py']
++# Files as they exist in 7.0.105: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['e419a0b909b90b8f47baa4f77239b41800bdf4e5ad16462e8cd8b700156e1fed'],
++    'app.py': ['db9144975ecfad553cf7e4cb398a6b34412a426a3394f8953e0058ef4c1ba13e'],
++    'cli.py': ['12d3f84e7f6ad2c6ccbc4c9c2382afcd0a3a4d81c5693b9393f7b06c86a8b597'],
++    'engine/automatic_recovery.py': ['cef8a0ca826eee4bd61331a61919b6901bb495a7ba3a15f950572c2c129b222b'],
++    'engine/clip_cleanup.py': ['2bcc4727301a5ff430dd3532f7786ad4b12a7d268904bd9e83a5cdbe6c47ed01'],
++    'engine/factory.py': ['273fd0904fb660f6b91c9e6ede5165c18754386ba5db3caa8eb72bb547ab93e9'],
++    'engine/flow_resume_recovery.py': ['f566687aa97cac15b7195d014dfa4758991796c8aeaa8b8be18d9d98323ff847'],
++    'engine/job_delete.py': ['66925467fa070bde4fdf45f2766829b855a3b29fb295e6b7b592785e1aad5cc6'],
++    'engine/providers/flow_browser.py': ['c1c5a014394c24df7125b1b22acf83573390c3bb9b90c590a590543c2214a1ee'],
++    'engine/studio_config.py': ['136f71af15372264c2f0a9fd2a77e41536dace8a19663dafa1a1efb04e984894'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.105', '7.0.106')  # 7.0.106 allows a safe re-run after success
++
++# The 7.0.105 zip carries the 7.0.104 to 7.0.105 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.104', '7.0.105', 'tools/update_v7104_to_v7105.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.105 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.105 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.105 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.106 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.106 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.106 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.105-to-v7.0.106-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.106. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

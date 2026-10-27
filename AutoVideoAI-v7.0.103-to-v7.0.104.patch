@@ -1,0 +1,1001 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/FLOW_PROJECT_404_V7_0_104.md b/FLOW_PROJECT_404_V7_0_104.md
+--- a/FLOW_PROJECT_404_V7_0_104.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FLOW_PROJECT_404_V7_0_104.md	2026-10-27 04:41:38.000000000 +0000
+@@ -0,0 +1,109 @@
++# v7.0.104 — a current pause notice, and a dead project URL that says so
++
++Two reports from **job `20261022-143856-7-small-daily-habits-tha-9729`** on 2026-10-27, both visible in the same
++Queue panel.
++
++## 1. The pause notice described a shot that was already finished
++
++The panel said:
++
++```
++Job needs recovery at shot_018 · 17/45 accepted shots are saved.
++Flow video request is saved at …/flow/shots/shot_014/take_01.mp4.flow-request.json.
++Generation is blocked to avoid spending again.
++Cause: FlowRequestPending: Existing request still has no single identifiable asset …
++```
++
++**shot_014 was accepted hours earlier.** The pause snapshot had been saved while shot_014 was still open, and
++nothing ever rewrote it, so the panel mixed the current stopping point (shot_018) with an obsolete cause.
++
++v7.0.104 rewrites the notice before it is shown. If the saved reason quotes a journal that is no longer
++unresolved, or the production has moved past the saved shot, the notice becomes:
++
++```
++Superseded notice: this job was paused at shot_014, but that request is no longer unresolved
++(it was downloaded or archived). No unresolved Flow request remains, so nothing blocks a Resume.
++17/45 shots are accepted; Resume continues at shot_018.
++```
++
++When requests *are* still open, they are listed with their journal paths and shot ids. The old text is not
++deleted: the Job panel keeps it in a collapsible "Earlier pause notice (superseded — kept for the record)".
++Nothing is inferred — a notice is only replaced when the evidence (the unresolved journals, the next unfinished
++shot) contradicts it.
++
++## 2. `flow.google.com/404?reason=project` — "Project not found"
++
++A stored project URL had been deleted, belonged to another Google account, or held a stale id. The run surfaced
++it as the generic *"Configured Flow project URL opened but composer was not found"*, which says nothing about the
++repair.
++
++v7.0.104 detects the 404 page itself (URL contains `/404` or `reason=project`, or the body says "Project not
++found") and raises `FlowProjectMissing`. Two details matter:
++
++- it retries three times, 1.5 s apart, because a project created seconds ago can answer 404 while Flow
++  provisions it — a 404 is not proof of a dead URL until it persists;
++- it is raised **after** the composer timeout too, so a slow page cannot disguise the real cause.
++
++The job then pauses with the event `flow_project_missing` and this message (job-scoped, with the real id and file):
++
++```
++Flow answered 'Project not found' for the stored video project (https://flow.google.com/project/<id>), so it was
++deleted, belongs to another Google account, or the stored id is stale. Nothing was submitted or charged. That URL
++is stored in flow_video_project.json; see both bindings with `python3 cli.py v3 flow-projects <job>`.
++Repair options: `… --clear-video --confirm` (the next video submission opens its own project) or
++`… --set-video https://flow.google.com/project/<real-project-id> --confirm`. The stills project is untouched. Any
++clip that was only in the deleted project is gone; a shot whose clip no longer exists needs a replacement request
++(it spends credits) - nothing does that automatically.
++```
++
++No image-motion fallback is taken on this path: falling back would hide a binding problem behind different
++content.
++
++Where it is shown:
++
++- the Job panel shows the message as an error, above both bindings;
++- `python3 cli.py v3 status <job>` prints it as `LAST PROJECT ERROR:` and lists `flow_project_missing` as the stop
++  reason;
++- the message never suggests rebinding the stills project when the dead URL is the video project (that was the
++  v7.0.99 bug), and never claims a clip exists.
++
++## Repair for the field job
++
++```
++python3 cli.py v3 flow-projects 20261022-143856-7-small-daily-habits-tha-9729 --clear-video --confirm
++python3 cli.py v3 resume 20261022-143856-7-small-daily-habits-tha-9729
++```
++
++The stills binding stays on project `37d8cf57-12b4-4a85-9934-5580e90d3781`, which is live and holds the
++storyboard images. Free disk space first (`2.7 GB` was reported free): Settings → Disk cleanup.
++
++## Files
++
++- `engine/pause_freshness.py` (new) — `refresh()`; pure, no I/O.
++- `engine/factory.py` — `recovery_state` applies it and sets `pause_notice_stale`, `pause_notice_superseded`,
++  `paused_shot`, `unresolved_journals`; `flow_project_missing_record()`, `_record_flow_project_missing()`,
++  `flow_project_missing_message()`; the video recovery and the generation loop convert `FlowProjectMissing` into a
++  paused job with that message.
++- `engine/providers/flow_browser.py` — `FlowProjectMissing`, `project_missing()`, and the persisted-URL wiring.
++- `engine/job_activity.py` — `flow_project_missing` is a stop reason.
++- `app.py`, `cli.py` — show the superseded notice and the last project error.
++- `tests/test_v7104_stale_pause_and_404.py` (new) — 15 tests, no browser, no credits.
++
++## Upgrade
++
++```
++python3 ../AutoVideoAI-v7.0.104/tools/update_v7103_to_v7104.py .            # dry run
++python3 ../AutoVideoAI-v7.0.104/tools/update_v7103_to_v7104.py . --apply    # install
++```
++
++Stop the dashboard first. Outputs, jobs, journals, browser profiles and Clip Studio folders are untouched; code
++backups go to `code-update-backups/v7.0.103-to-v7.0.104-<timestamp>`.
++
++## Honest limits
++
++- Nothing in this release was exercised against live Flow: no project was opened and no credits were spent. The
++  404 detection and the pause freshness are covered by tests against fakes.
++- A clip that existed only inside the deleted project cannot be recovered from it. Re-creating it spends credits
++  and is never done automatically.
++- `needs_picture` for the Hindi and Odia versions of this job is unrelated: they need `production/visual_master.json`,
++  which only a completed FFmpeg staging render writes.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 23:35:14.000000000 +0000
++++ b/VERSION	2026-10-27 04:41:20.000000000 +0000
+@@ -1 +1 @@
+-7.0.103
++7.0.104
+\ No newline at end of file
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/app.py b/app.py
+--- a/app.py	2026-10-26 23:34:14.000000000 +0000
++++ b/app.py	2026-10-27 04:40:08.000000000 +0000
+@@ -201,6 +201,10 @@
+     kind = state.get("kind", "flow_recovery")
+     st.warning(f"Job needs recovery at `{shot_id}` · {accepted}/{total} accepted shots are saved.")
+     st.write(state.get("reason") or reason or "Flow needs attention before the job can continue.")
++    if state.get("pause_notice_stale") and state.get("pause_notice_superseded"):
++        # v7.0.104: name what was replaced instead of leaving two shots in one panel.
++        with st.expander("Earlier pause notice (superseded — kept for the record)"):
++            st.caption(state["pause_notice_superseded"])
+     if kind == "flow_usage_limit":
+         st.info("Flow reported a usage/rate limit. Your displayed credit balance can still be positive. "
+                 "Do not create a new job: wait for access to reset, or recover a video that already exists in the project.")
+@@ -210,6 +214,13 @@
+     # v7.0.103: storyboard images and video clips must live in two different Flow projects. Show both
+     # bindings (and the repair commands) instead of failing later with a one-line error.
+     try:
++        missing = F.flow_project_missing_record(job_id)
++    except Exception:
++        missing = {}
++    if missing:
++        st.error(F.flow_project_missing_message(job_id, missing.get("project_url", ""),
++                                                missing.get("role", "video")))
++    try:
+         bindings = F.flow_project_bindings(job_id)
+     except Exception:
+         bindings = {}
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/cli.py b/cli.py
+--- a/cli.py	2026-10-26 23:34:48.000000000 +0000
++++ b/cli.py	2026-10-27 04:40:08.000000000 +0000
+@@ -937,6 +937,13 @@
+         except Exception as error:
+             print(f"  (activity unknown: {type(error).__name__})")
+         try:
++            missing = f.flow_project_missing_record(args.job_id)
++            if missing:
++                print("  LAST PROJECT ERROR: " + f.flow_project_missing_message(
++                    args.job_id, missing.get('project_url', ''), missing.get('role', 'video')))
++        except Exception:
++            pass
++        try:
+             bindings = f.flow_project_bindings(args.job_id)
+             if bindings.get('stills_project') or bindings.get('video_project'):
+                 print(f"  stills_project={bindings.get('stills_project') or '(not bound)'}"
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 23:33:54.000000000 +0000
++++ b/engine/factory.py	2026-10-27 04:41:00.000000000 +0000
+@@ -639,6 +639,45 @@
+             "the stills binding, which is how a job can end up with both roles on one project; 7.0.103 no "
+             "longer does that. No images or credits are touched by either repair command.")
+ 
++    def flow_project_missing_record(self, job_id: str) -> dict:
++        """The last recorded 'Project not found' for this job, or {} (v7.0.104)."""
++        path = os.path.join(self.pm.job_dir(job_id), "flow_project_missing.json")
++        try:
++            with open(path, encoding="utf-8") as handle:
++                data = json.load(handle)
++            return data if isinstance(data, dict) else {}
++        except (OSError, ValueError):
++            return {}
++
++    def _record_flow_project_missing(self, job_id: str, url: str, role: str = "video") -> dict:
++        payload = {"project_url": str(url or ""), "role": role,
++                   "at": __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds"),
++                   "job_id": job_id}
++        _save_json(os.path.join(self.pm.job_dir(job_id), "flow_project_missing.json"), payload)
++        self.pm.log(job_id, "flow_project_missing", payload)
++        return payload
++
++    def flow_project_missing_message(self, job_id: str, url: str, role: str = "video") -> str:
++        """Explain a 404 project with the exact repair for this job."""
++        fallback = "flow_video_project.json" if role == "video" else "settings.json flow_project_url"
++        try:
++            bound = (self.flow_project_bindings(job_id).get(
++                "video_source" if role == "video" else "stills_source") or fallback)
++        except Exception:
++            bound = fallback
++        other = "stills" if role == "video" else "video"
++        return (
++            "Flow answered 'Project not found' for the stored " + role + " project (" + (url or "<none>")
++            + "), so it was deleted, belongs to another Google account, or the stored id is stale. Nothing was "
++            "submitted or charged. That URL is stored in " + bound + "; see both bindings with "
++            "`python3 cli.py v3 flow-projects " + job_id + "`. Repair options: "
++            "`python3 cli.py v3 flow-projects " + job_id + " --clear-" + role + " --confirm` (the next "
++            + role + " submission opens its own project) or "
++            "`python3 cli.py v3 flow-projects " + job_id + " --set-" + role
++            + " https://flow.google.com/project/<real-project-id> --confirm`. The " + other + " project is "
++            "untouched. Any clip that was only in the deleted project is gone; a shot whose clip no longer "
++            "exists needs a replacement request (it spends credits) - nothing does that automatically.")
++
+     def _remember_flow_video_project_url(self, job_id: str, url: str | None) -> str:
+         from .providers.flow_browser import FlowBrowser
+         from .flow_project_isolation import persist_project_binding
+@@ -689,6 +728,24 @@
+         shot = next((s for s in pending if s.shot_id == state.get("shot_id")), pending[0])
+         if state.get("kind") == "legacy_pause_recovery" or not state.get("reason"):
+             state["reason"] = reason or f"Saved job status: {m.status}. Exact request recovery is available."
++        # v7.0.104: the saved pause can describe a request that has since been resolved (shot_014 while the
++        # production stopped at shot_018). Say what is true now instead of two shots in one panel.
++        try:
++            from .flow_resume_safety import check_job
++            from .pause_freshness import refresh as refresh_pause
++            unresolved = check_job(self.pm.job_dir(job_id)).get("unresolved", [])
++            fresh = refresh_pause(state.get("reason"), state.get("shot_id"), unresolved,
++                                  shot.shot_id, m.accepted_count(), len(m.shots))
++            state["reason"] = fresh["reason"]
++            state["paused_shot"] = fresh["paused_shot"]
++            state["pause_notice_stale"] = fresh["stale"]
++            state["unresolved_journals"] = fresh["unresolved_targets"]
++            if fresh["stale"]:
++                state["pause_notice_superseded"] = fresh["superseded"]
++                # The saved reason described a resolved request; its stale cause must not be shown as current.
++                state.pop("reason_detail", None)
++        except Exception:
++            pass
+         state.update(job_id=job_id, shot_id=shot.shot_id, accepted_shots=m.accepted_count(),
+                      total_shots=len(m.shots), status=m.status,
+                      pause_on_unresolved=bool(self._settings(job_id).get("flow_pause_on_unresolved_request", False)))
+@@ -3775,6 +3832,20 @@
+                     raise
+                 except (FlowUIChanged, FlowAuthNeeded, FlowQuotaExceeded,
+                         FlowBrowserClosedError, FlowServiceBusy) as e:
++                    # v7.0.104: a stored project that answers "Project not found" is a binding problem, not a
++                    # selector problem. Stop with the file to repair instead of falling back to image motion.
++                    from .providers.flow_browser import FlowProjectMissing
++                    if isinstance(e, FlowProjectMissing):
++                        missing_role = "video" if str(take_path).lower().endswith(".mp4") else "stills"
++                        self._record_flow_project_missing(m.job_id, e.url, missing_role)
++                        message = self.flow_project_missing_message(m.job_id, e.url, missing_role)
++                        current = self.pm.load_manifest(m.job_id)
++                        current.status = "paused"
++                        self.pm.save_manifest(current)
++                        self.db.upsert(m.job_id, status="paused")
++                        self._write_pause_state(m.job_id, s.shot_id, message, kind="flow_project_missing",
++                                                project_url=e.url)
++                        raise RuntimeError(message) from e
+                     flow_baseline = set(getattr(
+                         providers.get("flow"), "_last_video_baseline", set()) or set())
+                     if current_prov == "flow":
+@@ -4316,6 +4387,12 @@
+                     "project_url": bound or project_url, "new_credits": 0,
+                     "approved_credits": (approved or {}).get("cost"),
+                     "accepted": accepted, **associated}
++        except Exception as error:
++            from .providers.flow_browser import FlowProjectMissing
++            if isinstance(error, FlowProjectMissing):
++                self._record_flow_project_missing(job_id, error.url, "video")
++                raise RuntimeError(self.flow_project_missing_message(job_id, error.url, "video")) from error
++            raise
+         finally:
+             try:
+                 provider.close()
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/job_activity.py b/engine/job_activity.py
+--- a/engine/job_activity.py	2026-10-26 23:34:44.000000000 +0000
++++ b/engine/job_activity.py	2026-10-27 04:41:04.000000000 +0000
+@@ -21,7 +21,8 @@
+ 
+ LOCK_NAME = '.production.lock'
+ STOP_EVENTS = ('job_paused', 'flow_request_failed_without_pause', 'job_failed', 'run_failed',
+-               'flow_project_conflict', 'flow_recovery_exhausted')
++               'flow_project_conflict', 'flow_recovery_exhausted',
++               'flow_project_missing')
+ 
+ 
+ def _read_json(path):
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/pause_freshness.py b/engine/pause_freshness.py
+--- a/engine/pause_freshness.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/pause_freshness.py	2026-10-27 04:40:40.000000000 +0000
+@@ -0,0 +1,90 @@
++"""v7.0.104: a saved pause must not describe a request that is already resolved.
++
++Field case (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27 10:07 IST): the Queue said
++
++    Job needs recovery at shot_018 · 17/45 accepted shots are saved.
++    Flow video request is saved at …/flow/shots/shot_014/take_01.mp4.flow-request.json …
++    Cause: FlowRequestPending: Existing request still has no single identifiable asset …
++
++Two different shots in one panel. shot_014 had been downloaded, QC-accepted and saved hours earlier; the pause
++snapshot was simply never rewritten. shot_018 was where the production had actually stopped.
++
++``refresh()`` is a pure function: given the saved reason, the saved shot, the journals that are *still*
++unresolved and the next unfinished shot, it returns the reason that is true now, plus evidence of what it
++replaced. It never guesses and never hides the old text - it says it was superseded.
++"""
++from __future__ import annotations
++
++JOURNAL_SUFFIX = '.flow-request.json'
++JOB_FLOW_DIR = 'flow/shots/'
++
++
++def _journal_shot(journal) -> str:
++    parts = str(journal or '').split('/')
++    for index, part in enumerate(parts):
++        if part == 'shots' and index + 1 < len(parts):
++            return parts[index + 1]
++    return ''
++
++
++def _journals_in(reason) -> list[str]:
++    """Journal paths quoted inside a saved reason (e.g. ``…/flow/shots/shot_014/take_01.mp4.flow-request.json``)."""
++    text = str(reason or '')
++    found = []
++    start = 0
++    while True:
++        # a reason may quote an absolute path (/…/flow/shots/…) or a job-relative one (flow/shots/…)
++        index = text.find(JOB_FLOW_DIR, start)
++        if index < 0:
++            break
++        end = text.find(JOURNAL_SUFFIX, index)
++        if end < 0:
++            break
++        end += len(JOURNAL_SUFFIX)
++        found.append(text[index:end])
++        start = end
++    return found
++
++
++def refresh(reason, paused_shot, unresolved, next_shot, accepted, total) -> dict:
++    """Return ``{'reason', 'stale', 'paused_shot', 'unresolved_targets', 'superseded', ...}``.
++
++    ``unresolved`` rows are ``check_job()['unresolved']`` entries (dicts with ``journal``).
++    """
++    rows = [row for row in (unresolved or []) if isinstance(row, dict)]
++    targets = [str(row.get('journal') or '') for row in rows if row.get('journal')]
++    target_shots = sorted({_journal_shot(target) for target in targets} - {''})
++    saved_reason = ' '.join(str(reason or '').split())
++    paused_shot = str(paused_shot or '')
++    next_shot = str(next_shot or '')
++    moved_on = bool(paused_shot and next_shot and paused_shot != next_shot)
++
++    stale = False
++    if saved_reason:
++        resolved_mentions = [journal for journal in _journals_in(saved_reason) if journal not in targets]
++        if resolved_mentions:
++            stale = True                      # it names a request that is no longer unresolved
++        elif targets and paused_shot:
++            stale = paused_shot not in target_shots
++        elif not targets and moved_on:
++            stale = True
++
++    if not stale:
++        return {'reason': saved_reason, 'stale': False, 'paused_shot': paused_shot,
++                'unresolved_targets': targets, 'unresolved_shots': target_shots, 'superseded': ''}
++
++    if saved_reason:
++        head = (f"Superseded notice: this job was paused at {paused_shot or 'an older shot'}, but that request "
++                "is no longer unresolved (it was downloaded or archived).")
++    else:
++        head = f"The job is paused at {next_shot or paused_shot or 'an unfinished shot'}."
++    if targets:
++        body = (f" Still unresolved: {len(targets)} Flow request(s) at {', '.join(targets)}"
++                + (f" - shot(s) {', '.join(target_shots)}." if target_shots else '.'))
++    else:
++        body = " No unresolved Flow request remains, so nothing blocks a Resume."
++    tail = (f" {int(accepted)}/{int(total)} shots are accepted; Resume continues at {next_shot}."
++            if next_shot else '')
++    return {'reason': head + body + tail, 'stale': True, 'paused_shot': paused_shot,
++            'unresolved_targets': targets, 'unresolved_shots': target_shots,
++            'superseded': saved_reason[:600]}
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-26 15:28:00.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-27 04:39:58.000000000 +0000
+@@ -512,6 +512,26 @@
+     pass
+ 
+ 
++class FlowProjectMissing(FlowUIChanged):
++    """Flow answered "Project not found" for a stored project URL (v7.0.104).
++
++    The URL is kept as an attribute so a caller can name the exact binding file to repair. Nothing was
++    submitted by the page load that discovered this.
++    """
++
++    def __init__(self, url, detail=''):
++        self.url = str(url or '')
++        self.detail = str(detail or '')
++        super().__init__(
++            "Flow answered 'Project not found' for the stored Flow project " + (self.url or '<none>')
++            + ". The project was deleted, belongs to another Google account, or the stored id is stale - a "
++              "page that never opened cannot hold a clip to download. Nothing was submitted or charged. "
++              "Run `python3 cli.py v3 flow-projects <job-id>` to see which file stores this URL; for the "
++              "video project `--clear-video --confirm` lets the next video submission open its own, and for "
++              "the stills project `--set-stills <real project URL> --confirm` rebinds it."
++            + ((' Detail: ' + self.detail) if self.detail else ''))
++
++
+ class FlowReferenceUnavailable(FlowUIChanged):
+     """Pre-submit reference attachment exhausted its bounded recovery.
+ 
+@@ -1586,6 +1606,20 @@
+         self._project_ready = name
+         return project
+ 
++    def project_missing(self) -> bool:
++        """True when the current page is Flow's "Project not found" answer (read-only, v7.0.104)."""
++        try:
++            url = str(getattr(self._page, "url", "") or "")
++        except Exception:
++            return False
++        if "/404" in url or "reason=project" in url:
++            return True
++        try:
++            body = (self._page.inner_text("body") or "")[:1500].lower()
++        except Exception:
++            body = ""
++        return "project not found" in body
++
+     def ensure_project(self, name: str, project_url: str | None = None):
+         """Enter a usable Flow project and prefer an exact persisted project URL.
+ 
+@@ -1640,7 +1674,20 @@
+                 if self._looks_like_browser_closed_error(e):
+                     raise FlowBrowserClosedError(str(e))
+                 raise FlowUIChanged(f"Could not open configured Flow project URL {wanted_url}: {e}")
++            missing = self.project_missing()
++            if missing:
++                # A project created seconds ago can answer 404 while Flow provisions it; retry briefly
++                # before declaring the stored URL dead.
++                for _ in range(3):
++                    self._page.wait_for_timeout(1500)
++                    if not self.project_missing():
++                        missing = False
++                        break
++                if missing:
++                    raise FlowProjectMissing(wanted_url)
+             if not self._composer_visible(20000):
++                if self.project_missing():
++                    raise FlowProjectMissing(wanted_url)
+                 raise FlowUIChanged(
+                     f"Configured Flow project URL opened but composer was not found: {wanted_url}")
+             self._project_ready = name
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v7104_stale_pause_and_404.py b/tests/test_v7104_stale_pause_and_404.py
+--- a/tests/test_v7104_stale_pause_and_404.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7104_stale_pause_and_404.py	2026-10-27 04:41:04.000000000 +0000
+@@ -0,0 +1,206 @@
++"""v7.0.104: a stale pause notice, and a stored Flow project that answers "Project not found".
++
++Two field reports on job 20261022-143856-7 (2026-10-27 10:07 IST):
++
++1. the Queue said "Job needs recovery at shot_018" and then described
++   ``flow/shots/shot_014/take_01.mp4.flow-request.json`` with the old FlowRequestPending cause - a request that
++   had been downloaded and QC-accepted hours earlier;
++2. a browser tab showed ``https://flow.google.com/404?reason=project`` ("Project not found") while the run
++   opened stored project URLs, and the failure surfaced as the generic "composer was not found".
++
++``pause_freshness.refresh()`` is pure; ``FlowBrowser.project_missing()`` reads only the current page. Nothing
++here opens a browser or spends credits.
++"""
++import json
++from types import SimpleNamespace
++
++import pytest
++
++from engine.pause_freshness import refresh as refresh_pause
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++JOURNAL = 'flow/shots/shot_014/take_01.mp4.flow-request.json'
++OLD_REASON = ('Flow video request is saved at ' + JOURNAL + '. Generation is blocked to avoid spending again. '
++              'Cause: FlowRequestPending: Existing request still has no single identifiable asset after '
++              'bounded gallery scans; no recovery click submitted')
++
++
++# ----------------------------------------------------------------- stale pause notices
++
++def test_a_notice_about_a_resolved_request_is_superseded():
++    fresh = refresh_pause(OLD_REASON, 'shot_014', [], 'shot_018', 17, 45)
++    assert fresh['stale'] is True
++    assert 'Superseded notice' in fresh['reason']
++    assert 'shot_014' in fresh['reason']
++    assert 'No unresolved Flow request remains' in fresh['reason']
++    assert 'shot_018' in fresh['reason']
++    assert '17/45' in fresh['reason']
++    assert JOURNAL in fresh['superseded']          # the old text is kept, not hidden
++
++
++def test_a_notice_about_a_still_unresolved_request_is_left_alone():
++    unresolved = [{'journal': JOURNAL, 'kind': 'video'}]
++    fresh = refresh_pause(OLD_REASON, 'shot_014', unresolved, 'shot_014', 17, 45)
++    assert fresh['stale'] is False
++    assert fresh['reason'] == ' '.join(OLD_REASON.split())
++
++
++def test_a_notice_that_names_a_different_journal_is_superseded_even_with_another_one_open():
++    unresolved = [{'journal': 'flow/shots/shot_018/take_01.mp4.flow-request.json', 'kind': 'video'}]
++    fresh = refresh_pause(OLD_REASON, 'shot_014', unresolved, 'shot_018', 17, 45)
++    assert fresh['stale'] is True
++    assert 'flow/shots/shot_018/take_01.mp4.flow-request.json' in fresh['reason']
++    assert 'shot(s) shot_018' in fresh['reason']
++
++
++def test_no_saved_reason_is_not_called_stale():
++    fresh = refresh_pause('', '', [], 'shot_018', 17, 45)
++    assert fresh['stale'] is False
++    assert fresh['reason'] == ''
++
++
++def test_the_job_did_not_move_but_the_request_is_resolved():
++    fresh = refresh_pause(OLD_REASON, 'shot_014', [], 'shot_014', 17, 45)
++    assert fresh['stale'] is True                   # the named journal is not unresolved any more
++    assert 'No unresolved Flow request remains' in fresh['reason']
++
++
++def test_the_unresolved_targets_are_reported_verbatim():
++    unresolved = [{'journal': JOURNAL}, {'journal': 'storyboard/shot_020_open.jpg.flow-request.json'}]
++    fresh = refresh_pause(OLD_REASON, 'shot_014', unresolved, 'shot_018', 17, 45)
++    assert fresh['unresolved_targets'] == [JOURNAL, 'storyboard/shot_020_open.jpg.flow-request.json']
++    assert fresh['stale'] is False
++
++
++# ----------------------------------------------------------------- the recovery_state wiring
++
++def _job_dir(tmp_path, unresolved=True):
++    job = tmp_path / JOB
++    (job / 'flow' / 'shots' / 'shot_014').mkdir(parents=True)
++    (job / 'storyboard').mkdir()
++    (job / 'production_manifest.json').write_text('{"job_id": "%s"}' % JOB)
++    (job / 'pause_state.json').write_text(json.dumps(
++        {'kind': 'flow_download_or_ui', 'shot_id': 'shot_014', 'reason': OLD_REASON,
++         'actions': [{'label': 'Resume', 'command': f'python3 cli.py v3 resume {JOB}'}]}))
++    if unresolved:
++        (job / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4.flow-request.json').write_text(json.dumps(
++            {'kind': 'video', 'scope': 'video_flow_v1', 'phase': 'submitted', 'status': 'pending'}))
++    return job
++
++
++def _factory(job, monkeypatch, shots):
++    from engine.factory import Factory
++    manifest = SimpleNamespace(shots=shots, status='paused',
++                               accepted_count=lambda: sum(1 for s in shots if s.accepted_take))
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda job_id: str(job), log=lambda *a, **k: None,
++                                 load_manifest=lambda job_id: manifest)
++    factory.db = SimpleNamespace(get=lambda job_id: {})
++    factory.pause_state = lambda job_id: json.loads((job / 'pause_state.json').read_text())
++    factory._settings = lambda job_id: {}
++    factory._flow_project_url = lambda job_id: ''
++    return factory
++
++
++def test_recovery_state_replaces_a_stale_reason_and_keeps_the_old_one(tmp_path, monkeypatch):
++    job = _job_dir(tmp_path, unresolved=False)
++    shots = [SimpleNamespace(shot_id='shot_017', accepted_take='take_01.mp4'),
++             SimpleNamespace(shot_id='shot_018', accepted_take=None)]
++    state = _factory(job, monkeypatch, shots).recovery_state(JOB)
++    assert state['shot_id'] == 'shot_018'
++    assert state['pause_notice_stale'] is True
++    assert 'Superseded notice' in state['reason']
++    assert state['pause_notice_superseded'].startswith('Flow video request is saved at')
++
++
++def test_recovery_state_keeps_a_current_notice(tmp_path, monkeypatch):
++    job = _job_dir(tmp_path, unresolved=True)
++    shots = [SimpleNamespace(shot_id='shot_014', accepted_take=None)]
++    state = _factory(job, monkeypatch, shots).recovery_state(JOB)
++    assert state.get('pause_notice_stale') is False
++    assert 'Superseded' not in state['reason']
++
++
++# ----------------------------------------------------------------- "Project not found"
++
++class FakePage:
++    def __init__(self, url, body=''):
++        self.url = url
++        self._body = body
++        self.waits = 0
++
++    def inner_text(self, selector):
++        if selector != 'body':
++            raise AssertionError(selector)
++        return self._body
++
++    def wait_for_timeout(self, ms):
++        self.waits += 1
++
++
++def _browser(page):
++    from engine.providers.flow_browser import FlowBrowser
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = page
++    return browser
++
++
++def test_the_404_page_is_recognised_by_url():
++    assert _browser(FakePage('https://flow.google.com/404?reason=project')).project_missing() is True
++
++
++def test_the_404_page_is_recognised_by_its_text():
++    page = FakePage('https://flow.google.com/', '<div>Project not found.</div>')
++    assert _browser(page).project_missing() is True
++
++
++def test_a_normal_project_page_is_not_missing():
++    page = FakePage('https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781',
++                    'What do you want to create? Agent')
++    assert _browser(page).project_missing() is False
++
++
++def test_the_exception_names_the_url_and_the_repairs():
++    from engine.providers.flow_browser import FlowProjectMissing
++    error = FlowProjectMissing('https://flow.google.com/project/4e5a9b1c-fd8c-445d-b994-6533a15fd38c')
++    message = str(error)
++    assert '4e5a9b1c-fd8c-445d-b994-6533a15fd38c' in message
++    assert "'Project not found'" in message
++    assert 'Nothing was submitted or charged' in message
++    assert 'flow-projects <job-id>' in message
++    assert '--clear-video' in message and '--set-stills' in message
++
++
++def test_the_factory_records_and_explains_a_missing_video_project(tmp_path):
++    from engine.factory import Factory
++    job = tmp_path / JOB
++    job.mkdir()
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda job_id: str(job), log=lambda *a, **k: None)
++    factory.db = SimpleNamespace(get=lambda job_id: {})
++    (job / 'settings.json').write_text('{}')
++    url = 'https://flow.google.com/project/4e5a9b1c-fd8c-445d-b994-6533a15fd38c'
++    record = factory._record_flow_project_missing(JOB, url, 'video')
++    assert record['project_url'] == url and record['role'] == 'video'
++    assert factory.flow_project_missing_record(JOB)['project_url'] == url
++    message = factory.flow_project_missing_message(JOB, url, 'video')
++    assert url in message
++    assert 'settings.json' in message or 'flow_video_project.json' in message
++    assert f'flow-projects {JOB} --clear-video --confirm' in message
++    assert 'The stills project is untouched' in message
++    assert 'needs a replacement request' in message and 'nothing does that automatically' in message
++
++
++def test_the_record_is_empty_when_nothing_was_detected(tmp_path):
++    from engine.factory import Factory
++    job = tmp_path / JOB
++    job.mkdir()
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda job_id: str(job), log=lambda *a, **k: None)
++    assert factory.flow_project_missing_record(JOB) == {}
++
++
++def test_a_missing_project_is_a_stop_reason_in_the_status_view():
++    from engine.job_activity import STOP_EVENTS
++    assert 'flow_project_missing' in STOP_EVENTS
++    assert 'flow_project_conflict' in STOP_EVENTS          # v7.0.103 entry is unchanged
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7102_to_v7103.py b/tools/update_v7102_to_v7103.py
+--- a/tools/update_v7102_to_v7103.py	2026-10-26 23:35:22.000000000 +0000
++++ b/tools/update_v7102_to_v7103.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,164 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.103 update to a v7.0.102 installation.
+-
+-Field case: a production stopped with
+-
+-    Video Flow project must differ from storyboard image project
+-
+-and the job stayed ``status=planned``, so it was impossible to tell whether it was still running. Root cause:
+-v7.0.99's video recovery wrote the *video* project into the job's **stills** binding, so the next run found both
+-roles on one project and refused to start.
+-
+-v7.0.103:
+-
+-- ``flow_project_bindings()`` / ``flow_project_conflict_message()`` name both roles, the file each value comes
+-  from, whether they collide and the exact repair commands;
+-- the guard pauses the job (never leaves it "planned"), logs ``flow_project_conflict`` and raises the full
+-  explanation - nothing is generated or charged;
+-- ``recover_flow_video`` binds the video role only, so recovery can no longer overwrite the stills binding;
+-- ``cli.py v3 flow-projects <job>`` reports both bindings and repairs them explicitly
+-  (``--set-stills``, ``--set-video``, ``--clear-stills``, ``--clear-video``, each needing ``--confirm``);
+-- ``cli.py v3 status <job>`` says whether a live process holds the job, and if not, what stopped it and why;
+-- the Job panel shows both bindings, the explanation and the copy-ready repairs.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.103 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.103/tools/update_v7102_to_v7103.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.103/tools/update_v7102_to_v7103.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['FLOW_PROJECT_CONFLICT_V7_0_103.md', 'VERSION', 'app.py', 'cli.py', 'engine/factory.py',
+-           'engine/flow_projects_cli.py', 'engine/job_activity.py',
+-           'tests/test_v7103_project_conflict.py', 'tools/update_v7102_to_v7103.py']
+-# Files as they exist in 7.0.102: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['17f2d0e934c795eaa2a9235cfd235c863775ba5813a51abe2cc520c1ee8652a4'],
+-    'app.py': ['165370aaa52a8b1a86c5e1a8f75cf3d5259f35de4c8fe8c7c675a66e92d5df43'],
+-    'cli.py': ['f5dffa264ead90d9bf984d42d5989640bad2dc8a88523c5256d792576829718a'],
+-    'engine/factory.py': ['08732c159629b6b3b7e9673994d2aba88050a72462823f96a644d1f0dc191edf'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.102', '7.0.103')  # 7.0.103 allows a safe re-run after success
+-
+-# The 7.0.102 zip carries the 7.0.101 to 7.0.102 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.101', '7.0.102', 'tools/update_v7101_to_v7102.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.102 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.102 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.102 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.103 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.103 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.103 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.102-to-v7.0.103-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.103. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7103_to_v7104.py b/tools/update_v7103_to_v7104.py
+--- a/tools/update_v7103_to_v7104.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7103_to_v7104.py	2026-10-27 04:41:28.000000000 +0000
+@@ -0,0 +1,167 @@
++"""Apply the v7.0.104 update to a v7.0.103 installation.
++
++Field case (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27 10:07 IST): the Queue panel said
++
++    Job needs recovery at shot_018 · 17/45 accepted shots are saved.
++    Flow video request is saved at …/flow/shots/shot_014/take_01.mp4.flow-request.json …
++    Cause: FlowRequestPending: Existing request still has no single identifiable asset …
++
++Two different shots in one notice. shot_014 had been downloaded and QC-accepted long before; the saved pause
++snapshot was simply never rewritten, so the panel described a request that no longer existed. In the same run a
++browser tab showed ``https://flow.google.com/404?reason=project`` ("Project not found") for a stored project URL,
++and the run reported it as the generic "composer was not found".
++
++v7.0.104:
++
++- ``engine/pause_freshness.py`` rewrites a saved pause before it is shown: if the reason quotes a journal that is
++  no longer unresolved, or the production has moved past the saved shot, the notice says it was superseded, names
++  the requests that *are* still open and where Resume continues; the old text is kept, not hidden;
++- ``FlowProjectMissing`` is raised when a stored project URL answers "Project not found" (three short retries
++  first, because a project created seconds ago can 404 while Flow provisions it);
++- the job pauses with ``flow_project_missing`` and a message that names the dead URL, the local file that stores
++  it, and the exact ``flow-projects --clear-video`` / ``--set-stills`` repair - no silent fallback;
++- the Job panel and ``python3 cli.py v3 status <job>`` show that message and both bindings.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.104 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.104/tools/update_v7103_to_v7104.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.104/tools/update_v7103_to_v7104.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['FLOW_PROJECT_404_V7_0_104.md', 'VERSION', 'app.py', 'cli.py', 'engine/factory.py',
++           'engine/job_activity.py', 'engine/pause_freshness.py', 'engine/providers/flow_browser.py',
++           'tests/test_v7104_stale_pause_and_404.py', 'tools/update_v7103_to_v7104.py']
++# Files as they exist in 7.0.103: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['7ac5202f82dbff715a969cea1929f6a1701481ce3267e5fbd4eef5bf2a8abccd'],
++    'app.py': ['80a69a657aad67ab8ed6d9bf2fecb4f9318b984cbd4164c88229e2962682081b'],
++    'cli.py': ['67488a09529c2885c26bacea319b232c8595b71a8ae2c88bd092323dc152b041'],
++    'engine/factory.py': ['0cb4a7436659519596b10e7235e897c003682e40b70f613d5280c5b961fb629a'],
++    'engine/job_activity.py': ['0e050e48adb835559b8f0941e2eeebc5870943622a08ba7e6181dbad1563bf2c'],
++    'engine/providers/flow_browser.py': ['8a9fc18d6486c62ac702d3f6417359f50b05b9f52eb1ae9088e01805acca5cad'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.103', '7.0.104')  # 7.0.104 allows a safe re-run after success
++
++# The 7.0.103 zip carries the 7.0.102 to 7.0.103 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.102', '7.0.103', 'tools/update_v7102_to_v7103.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.103 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.103 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.103 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.104 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.104 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.104 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.103-to-v7.0.104-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.104. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

@@ -1,0 +1,1848 @@
+diff --git a/TRANSCRIPTS_BRANDING_AND_CHOICES_V7_0_109.md b/TRANSCRIPTS_BRANDING_AND_CHOICES_V7_0_109.md
+new file mode 100644
+index 0000000..ff9bcb0
+--- /dev/null
++++ b/TRANSCRIPTS_BRANDING_AND_CHOICES_V7_0_109.md
+@@ -0,0 +1,193 @@
++# AutoVideoAI v7.0.109 — transcripts you can switch off, a brand that stays, and the shots you choose
++
++Five things you asked for, from the two screenshots and the questions around them.
++
++---
++
++## 1. The Odia transcript: switch it off, and fix what it says
++
++**What you saw:** the Odia video burned their own transcript, and the words were right but the spellings
++were not.
++
++**Why:** the burned text came from whichever word file the narration produced. A speech recognizer writes its
++own guess at a word, and a machine-translated script carries its own spelling, so either could disagree with
++the script you approved. Odia speech recognition is the least reliable of the three, which is why it showed up
++there first.
++
++**What v7.0.109 does**
++
++* **Odia transcripts are off by default.** Hindi and English keep theirs; Odia renders with its narration,
++  cards, hooks, channel badge and logo, and no burned text. Nothing else about the edition changes.
++* **Choose per language, after the render.** The three-language panel now has a *Transcript* switch per
++  language, and the CLI can set the same thing:
++
++  ```bash
++  python3 cli.py v3 language-outputs <job> --transcript-off or      # no Odia transcript
++  python3 cli.py v3 language-outputs <job> --transcript-on or       # put it back
++  python3 cli.py v3 language-outputs <job> --no-transcript          # none of the editions
++  python3 cli.py v3 language-outputs <job> --explain                # what each language currently does
++  ```
++
++  Only the languages whose switch changed are re-rendered, from the narration already saved in the job: no new
++  voice, no new video, no Flow credits. Every render is a new file, so the version you had stays in its
++  `language_editions/<stamp>/exports/` folder — switch back and forth as often as you like.
++* **When a transcript is on, its text is the reviewed script.** Caption timing still comes from the measured
++  word timings, but every caption word is checked against the script and replaced with the script's spelling;
++  unmatched words are interpolated inside the real audio, never invented. The export's provenance records
++  `captions_from_reviewed_script` and how many words it corrected.
++* **Future jobs store script-accurate words.** Card drafting reads the same word file, so cards stop inheriting
++  a recognizer's spelling either.
++* **Primary video:** the English master keeps whatever Create chose. To rebuild it locally without captions
++  (accepted takes only, no credits): `python3 cli.py v3 render <job> --caption-display none`, and
++  `--caption-display auto` to bring it back.
++
++---
++
++## 2. The channel badge from the English video, now in every language
++
++Your first screenshot showed plain white text in the corner; the English video had the panel with the mark and
++the play glyph that opens and closes.
++
++* **Language editions draw the same animated badge** as the English master — rounded panel, accent rail, mark,
++  and the open/close cycle — with the language's own channel name from its profile.
++* **The badge no longer disappears between cycles.** The old plan restarted the mark every 35 seconds but each
++  run lasted 30, so there was a five-second hole every time, and with it the only copy of the logo. The mark is
++  now contiguous: closed for 0.8 s, open for the rest of each 30 s cycle, covering the whole video.
++* **The logo stays for the whole video.** The logo is a separate overlay, bottom-right, with a soft fade-in, in
++  both the primary master and every edition — the name may come and go, the logo does not.
++* Turning text cards off no longer removes the mark or the logo.
++
++---
++
++## 3. Deleting a job now keeps *every* language video
++
++You asked whether deleting a job keeps a copy of each language video. Until now: **no.** The primary finished
++video was moved to `outputs/_render-backups/<job>/`, but the Hindi and Odia editions went with the folder —
++the space was freed, and the videos you wanted to publish disappeared with it.
++
++v7.0.109 backs up **all** of them before anything is removed:
++
++```
++outputs/_render-backups/<job>/
++    <job>-final.mp4
++    <job>-branded.mp4
++    <job>-hi-edition.mp4
++    <job>-or-edition.mp4
++    hi-20261027-151159-74e26b32.mp4      (the language_editions/ export)
++    or-20261027-173643-f046a5a0.mp4
++```
++
++The deletion preview lists them (file, size, destination) before you type the job ID, and if any copy cannot
++be verified the deletion is refused and nothing is removed. Restore any of them with
++`python3 cli.py v3 backups`.
++
++---
++
++## 4. You choose which shots Gemini generates
++
++The old setting was only a number: *"use Gemini for up to N shots"*, and the first N eligible Flow shots were
++silently taken. Now the choice is explicit.
++
++* **In the app:** Storyboard → *Gemini Web video shots · choose which ones*. Every shot is listed with its
++  verdict — eligible, already has an accepted take, has a pending Flow request, not a Flow shot — and you pick
++  up to four. Saving writes the choice; nothing is submitted or charged.
++* **In the CLI:**
++
++  ```bash
++  python3 cli.py v3 gemini-shots <job>                     # who is eligible and what is chosen
++  python3 cli.py v3 gemini-shots <job> --choose shot_003,shot_007
++  python3 cli.py v3 gemini-shots <job> --clear             # back to the first N eligible
++  python3 cli.py v3 gemini-shots <job> --json
++  ```
++
++* A shot with an accepted take or a Flow request journal is **refused**, with the reason in the message — the
++  rule "never resubmit a shot whose request journal exists" still holds. A saved choice that goes stale (its
++  take arrived, or a request appeared) is dropped silently at run time rather than re-requested.
++
++---
++
++## 5. Music: start-here links for each video type
++
++Full table, licences and obligations in `docs/MUSIC_LIBRARY.md` (new section 3b). Print it with:
++
++```bash
++python3 cli.py v3 music-suggest --playbook
++python3 cli.py v3 music-suggest --content-type education --playbook
++```
++
++| Type | Start here | Credit? |
++|---|---|---|
++| Education / explainer | [Mixkit · Inspirational](https://mixkit.co/free-stock-music/tag/inspirational/) · [YouTube Audio Library](https://studio.youtube.com/channel/UC/video_manager/music) · [Buckley · Amberlight](https://www.scottbuckley.com.au/library/amberlight/) | Mixkit no · YT filter · Buckley yes |
++| Motivation | [Scott Buckley library](https://www.scottbuckley.com.au/library/) · [Pixabay · inspiring](https://pixabay.com/music/search/inspiring/) | Buckley yes · Pixabay no |
++| Documentary | [Buckley · Discovery](https://www.scottbuckley.com.au/library/discovery/) · [Mixkit · Cinematic](https://mixkit.co/free-stock-music/tag/cinematic/) | Buckley yes · Mixkit no |
++| Technology / AI | [Mixkit · Technology](https://mixkit.co/free-stock-music/tag/technology/) · [Uppbeat · Electronic](https://uppbeat.io/music/genre/electronic) | Mixkit no · Uppbeat credit code |
++| Kids | [Pixabay · kids](https://pixabay.com/music/search/kids/) · [YouTube Audio Library](https://studio.youtube.com/channel/UC/video_manager/music) | No |
++| Travel | [Mixkit · Travel](https://mixkit.co/free-stock-music/tag/travel/) · [Pixabay · travel](https://pixabay.com/music/search/travel/) | No |
++| Business / finance | [Mixkit · Corporate](https://mixkit.co/free-stock-music/tag/corporate/) · [Bensound · Corporate](https://www.bensound.com/royalty-free-music/tag/corporate) | Mixkit no · Bensound 3-line credit + code |
++
++The short version: **Mixkit** is the least friction (no account, no credit, no cap, not Content ID registered),
++**YouTube Audio Library** is the only library YouTube itself guarantees, **Pixabay** needs no credit but some
++tracks carry a Content ID shield, and **Scott Buckley** sounds the most expensive but requires the exact credit
++line. **Uppbeat** and **Bensound** free tiers give you a per-video code — one video each, every time.
++
++---
++
++## What changed in the code
++
++| File | Change |
++|---|---|
++| `engine/language_editions.py` | `transcript_settings` / `transcript_for` / `set_transcript` / `transcript_plan`; the render record stores what each edition burned, so a changed switch re-renders only that language; Odia defaults to no transcript |
++| `engine/finishing_studio.py` | captions come from the reviewed script; caption correction recorded in provenance; the edition draws the animated channel badge from contiguous segments and keeps the logo for the whole video; plan records `branding_badge` |
++| `engine/captions.py` | `script_accurate_words()` — reviewed script for text, measured timings for cues |
++| `engine/speech_cards.py` | saved narration words are aligned to the reviewed script when a batch is prepared |
++| `engine/render/graphics.py` | `watermark_segments()` (no gaps), persistent `logo` overlay kind, logo kept when cards are off |
++| `engine/providers/gemini_video.py` | `gemini_shot_plan()` / `choose_shots()`, eligibility with reasons, stale choices dropped |
++| `engine/job_delete.py` | every language video and the branded master are backed up before a job is deleted |
++| `engine/graphics_audit.py` | the persistent logo is not counted as a text card |
++| `cli.py` | `--transcript / --no-transcript / --transcript-off / --transcript-on`, new `v3 gemini-shots`, `v3 music-suggest --playbook` |
++| `app.py` | per-language transcript switches in the three-language panel; Gemini shot picker in Storyboard |
++
++## Tests
++
++`tests/test_v7109_transcript_branding_gemini.py` — **21 tests**, including two real FFmpeg renders:
++
++* a Hindi edition renders with its transcript, renders again without one, then again with it: three separate
++  files, the earlier ones still on disk, provenance matching each;
++* the badge spans its window with no gaps and the logo is visibly present at 6.5 s, inside what used to be the
++  five-second hole;
++* caption words are corrected to the reviewed script while measured word times are kept;
++* a transcript switch saved alone touches no media and renders nothing;
++* Gemini choices are saved, refused with reasons, dropped when stale, and never submit anything;
++* deleting a job keeps all four kinds of video.
++
++Card, hook, branding, fit, edition and backup suites re-run clean (**105 + 24 + 54 passing** across the
++targeted files).
++
++> Sandbox note: the edition render tests need FFmpeg with libass, plus `uharfbuzz` and `freetype-py` for the
++> Devanagari/Odia shaping. Without them the render step fails on the missing module — an environment problem,
++> not a card problem.
++
++## Install
++
++1. Extract `AutoVideoAI-v7.0.109-Transcripts-Branding-And-Choices.zip` beside your installation.
++2. Stop the dashboard.
++3. From your installation folder:
++
++```bash
++python3 ../AutoVideoAI-v7.0.109/tools/update_v7108_to_v7109.py .            # dry run
++python3 ../AutoVideoAI-v7.0.109/tools/update_v7108_to_v7109.py . --apply    # install
++```
++
++Only code, docs and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++`music_library/` are untouched; previous code files are kept under `code-update-backups/`.
++
++## Do this next, for your job
++
++```bash
++python3 cli.py v3 language-outputs outputs/20261022-143856-7-small-daily-habits-tha-9729 --explain
++python3 cli.py v3 language-outputs outputs/20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++```
++
++Odia will render without its transcript (its default now), with the animated badge and the logo for the whole
++video. If you want the Odia transcript back later, render again with `--transcript-on or` — that version is
++built from the reviewed script, and the version you already had stays on disk.
+diff --git a/VERSION b/VERSION
+index 97171f0..a5c7dbc 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.108
+\ No newline at end of file
++7.0.109
+\ No newline at end of file
+diff --git a/app.py b/app.py
+index 84f77d1..82a1779 100644
+--- a/app.py
++++ b/app.py
+@@ -584,7 +584,7 @@ def language_edition_panel(job_id):
+     all, so an English-only result looked like the language choice was ignored.
+     """
+     from engine.language_editions import (edition_diagnosis, ensure_visual_master,
+-                                          render_language_outputs)
++                                          render_language_outputs, transcript_plan)
+     from engine.production_lock import production_slot
+     from engine.languages import LANGUAGES as LANGUAGE_PACKS
+     job_dir = Path(F.pm.job_dir(job_id))
+@@ -602,7 +602,8 @@ def language_edition_panel(job_id):
+             continue
+         row = (diagnosis.get('editions') or {}).get(code) or {}
+         status = row.get('status', 'not rendered')
+-        st.write(f"**{LANGUAGE_PACKS[code].label}** · {status}")
++        transcript_note = (' · with transcript' if row.get('transcript') else ' · no transcript')
++        st.write(f"**{LANGUAGE_PACKS[code].label}** · {status}{transcript_note}")
+         if status == 'exported' and Path(str(row.get('render_copy') or row.get('path') or '')).is_file():
+             st.video(str(row.get('render_copy') or row.get('path')), width=420)
+             if row.get('render_copy'):
+@@ -623,6 +624,29 @@ def language_edition_panel(job_id):
+     picture_ready = bool((diagnosis.get('visual_master') or {}).get('ready'))
+     if not picture_ready:
+         st.warning((diagnosis.get('visual_master') or {}).get('reason', ''))
++    # 7.0.109: the burned transcript is a per-language choice, and it can be changed after the first render.
++    prefs = transcript_plan(job_dir)
++    extra_languages = [code for code in selected if code != diagnosis.get('source_language')]
++    transcript_choices = {}
++    if extra_languages:
++        st.markdown('**Transcript (burned captions)**')
++        st.caption('Changing a switch re-renders only that language, from its saved narration - no new voice, no '
++                   'Flow credits. The version you already have stays in its language_editions/ folder.')
++        columns = st.columns(len(extra_languages))
++        for column, code in zip(columns, extra_languages):
++            with column:
++                transcript_choices[code] = st.checkbox(
++                    LANGUAGE_PACKS[code].label + ' transcript',
++                    value=bool(prefs['editions'].get(code, True)),
++                    key=f'transcript-{job_id}-{code}',
++                    help=('Odia captions are off by default: Odia speech recognition mis-spells words that are '
++                          'otherwise correct, and a wrong transcript is worse than none. Turn it on to burn the '
++                          'reviewed script instead.' if code == 'or' else
++                          'Burn the reviewed script into this edition, word-timed from its own narration.'))
++    st.caption('The primary ' + LANGUAGE_PACKS[diagnosis.get('source_language') or selected[0]].label +
++               ' video keeps the captions Create chose. To rebuild it locally without a transcript (accepted '
++               'takes only, no Flow credits): `python3 cli.py v3 render <job> --caption-display none`; with the '
++               'transcript again: `--caption-display auto`.')
+     allow_recovered = st.checkbox(
+         'Build a picture-only master from the finished video if the clean picture is missing '
+         '(it may include that video\'s burned captions and watermark)',
+@@ -633,6 +657,14 @@ def language_edition_panel(job_id):
+     if st.button('Add primary intro/outro and render pending language editions',
+                  key=f'render-language-editions-{job_id}'):
+         try:
++            from engine.language_editions import set_transcript
++            changed = {code: value for code, value in transcript_choices.items()
++                       if value != bool(prefs['editions'].get(code, True))}
++            if changed:
++                set_transcript(job_dir, languages=changed)
++                st.caption('Transcript choice saved: ' + ', '.join(
++                    LANGUAGE_PACKS[code].label + (' with' if value else ' without') + ' transcript'
++                    for code, value in sorted(changed.items())))
+             with production_slot(job_dir):
+                 report = render_language_outputs(job_dir, allow_recovered_picture=allow_recovered)
+             editions = report.get('editions') or {}
+@@ -1733,6 +1765,33 @@ elif page == "STORYBOARD":
+                 s.provider = MODEL2PROVIDER.get(s.model, "flow")
+                 F.pm.update_shot(m.job_id, s)
+             st.success("Saved. Resume from QUEUE to generate with these settings.")
++        # 7.0.109: which shots Gemini Web may generate instead of Flow is now a visible, editable choice.
++        with st.expander("Gemini Web video shots · choose which ones (no request is sent here)", expanded=False):
++            from engine.providers.gemini_video import choose_shots, gemini_shot_plan
++            from engine.production_lock import production_slot
++            cap = int((F._settings(m.job_id) or {}).get("gemini_video_count", 0) or 0)
++            plan = gemini_shot_plan(D["root"], m.shots, cap)
++            st.caption(f"This job sends up to **{cap}** shot(s) to Gemini Web instead of Flow. "
++                       f"Choice: {plan['source']}. A shot with an accepted take or an existing Flow request "
++                       "is never offered, so nothing can be generated twice.")
++            eligible = plan["eligible"]
++            if eligible:
++                picked = st.multiselect("Shots for Gemini (maximum 4)", options=eligible,
++                                        default=[x for x in plan["chosen"] if x in eligible],
++                                        key=f"gemini-shots-{m.job_id}")
++                if st.button("Save Gemini choice", key=f"gemini-save-{m.job_id}"):
++                    try:
++                        with production_slot(Path(D["root"])):
++                            saved = choose_shots(D["root"], m.shots, picked)
++                        st.success("Gemini will generate: " + (", ".join(saved["chosen"]) or "nothing") +
++                                   ". Saved in " + saved["selection_file"] + "; no request was submitted.")
++                    except ValueError as error:
++                        st.error(str(error))
++            else:
++                st.info("No shot is eligible for Gemini in this job: every Flow shot has an accepted take or a "
++                        "pending request of its own.")
++            st.dataframe([{"shot": row["shot_id"], "eligible": row["eligible"], "why": row["reason"]}
++                          for row in plan["shots"]], width="stretch", hide_index=True)
+         script_p = os.path.join(D["root"], "script.md")
+         if os.path.exists(script_p):
+             st.download_button("📜 Download full script (markdown)",
+diff --git a/cli.py b/cli.py
+index df568f5..4337a8f 100644
+--- a/cli.py
++++ b/cli.py
+@@ -362,6 +362,14 @@ def main_v3(argv):
+                           help="Fastest pitch-preserving narration speed accepted when fitting a longer script (default 1.12)")
+     lang_out.add_argument("--fit-hold", type=float, default=None,
+                           help="Seconds of cloned last frame allowed at the end to fit a long narration (default 0 = never)")
++    # 7.0.109: the burned transcript is a per-language choice, changeable after the first render.
++    lang_out.add_argument("--transcript", dest="transcript", action=argparse.BooleanOptionalAction, default=None,
++                          help="Burn the transcript into every extra edition (--no-transcript removes it). "
++                               "Odia is off by default; changing this re-renders only the languages that changed.")
++    lang_out.add_argument("--transcript-off", default="", metavar="LANG",
++                          help="Comma-separated extra languages to render WITHOUT a transcript, e.g. or,hi")
++    lang_out.add_argument("--transcript-on", default="", metavar="LANG",
++                          help="Comma-separated extra languages to render WITH a transcript, e.g. hi")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -397,6 +405,8 @@ def main_v3(argv):
+                     help="Theme tag; repeat for more than one")
+     ms.add_argument("--limit", type=int, default=6)
+     ms.add_argument("--sources", action="store_true", help="Explain where to download from and the licence terms")
++    ms.add_argument("--playbook", action="store_true",
++                    help="What to look for in this video type, and the exact pages to download from")
+     ms.add_argument("--json", action="store_true", help="Machine-readable output")
+ 
+     mc = sub.add_parser("music-check", help="Check a downloaded track and print the music_library entry to fill in")
+@@ -410,6 +420,16 @@ def main_v3(argv):
+                     help="Sample the finished video now and update production/graphics_audit.json")
+     ga.add_argument("--json", action="store_true", help="Print the stored audit JSON instead of a summary")
+ 
++    gs = sub.add_parser("gemini-shots",
++                        help="Choose which 0-4 AI video shots Gemini Web generates instead of Flow")
++    gs.add_argument("job_id")
++    gs.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    gs.add_argument("--choose", default="", metavar="SHOT_ID",
++                    help="Comma-separated shot ids to hand to Gemini, e.g. shot_003,shot_007 (max 4)")
++    gs.add_argument("--clear", action="store_true",
++                    help="Forget the saved choice and go back to the first N eligible shots")
++    gs.add_argument("--json", action="store_true", help="Print the full plan as JSON")
++
+     tn = sub.add_parser("tune", help="Adjust music ducking, fades and the edition narration fit of a saved job")
+     tn.add_argument("job_id")
+     tn.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
+@@ -639,6 +659,19 @@ def main_v3(argv):
+             # 7.0.95: read-only. Names the language and the one action that unblocks it.
+             print(_json.dumps(edition_diagnosis(job_dir), indent=2, ensure_ascii=False))
+             return
++        # 7.0.109: apply the transcript choice before rendering; only changed languages re-render.
++        choices = {}
++        for code in [x.strip() for x in str(getattr(args, "transcript_off", "") or "").split(",") if x.strip()]:
++            choices[code] = False
++        for code in [x.strip() for x in str(getattr(args, "transcript_on", "") or "").split(",") if x.strip()]:
++            choices[code] = True
++        if args.transcript is not None or choices:
++            from engine.language_editions import set_transcript, transcript_plan
++            try:
++                set_transcript(job_dir, default=args.transcript, languages=choices)
++            except ValueError as error:
++                raise SystemExit("Transcript choice not saved: " + str(error)) from error
++            print("Transcript: " + _json.dumps(transcript_plan(job_dir)["editions"]))
+         fit_policy = {}
+         if getattr(args, "fit_max_tempo", None) is not None:
+             fit_policy["max_tempo"] = float(args.fit_max_tempo)
+@@ -1116,14 +1149,26 @@ def main_v3(argv):
+         return
+     elif args.cmd == "music-suggest":
+         import json as _json
+-        from engine.audio.music_catalog import (SAFE_SOURCES, credit_block, recommend, theme_tags,
++        from engine.audio.music_catalog import (SAFE_SOURCES, credit_block, playbook, recommend, theme_tags,
+                                                 VIDEO_TYPES)
++        guide = playbook(args.content_type)
+         tracks = recommend(args.content_type, args.theme or None, args.limit)
+         if args.json:
+             print(_json.dumps({"schema": "music-catalogue-v1", "video_types": VIDEO_TYPES,
+                                "recommended": tracks, "credit_block": credit_block(tracks),
+                                "library_tags": theme_tags(args.content_type),
+-                               "sources": SAFE_SOURCES}, indent=2, ensure_ascii=False))
++                               "playbook": guide, "sources": SAFE_SOURCES}, indent=2, ensure_ascii=False))
++            return
++        if args.playbook:
++            for kind, row in guide.items():
++                print(f"{VIDEO_TYPES.get(kind, kind)}  ({kind})")
++                print(f"  Sound: {row['mood']}  ·  {row['bpm']}")
++                for platform, url, why in row["start"]:
++                    print(f"  - {platform}: {url}")
++                    print(f"      {why}")
++                print(f"  Avoid: {row['avoid']}")
++                print()
++            print("Download into music_library/, then run: python3 cli.py v3 music-check <file>")
+             return
+         heading = VIDEO_TYPES.get(args.content_type, "every video type") if args.content_type else "every video type"
+         print(f"Royalty-free music for {heading}")
+@@ -1201,6 +1246,40 @@ def main_v3(argv):
+                               indent=2))
+             return
+         print(explain(job_dir))
++    elif args.cmd == "gemini-shots":
++        from engine.providers.gemini_video import choose_shots, gemini_shot_plan
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        manifest = f.pm.load_manifest(args.job_id)
++        shots = list(getattr(manifest, "shots", []) or [])
++        cap = int((f._settings(args.job_id) or {}).get("gemini_video_count", 0) or 0)
++        try:
++            if args.clear:
++                plan = choose_shots(job_dir, shots, [])
++                print("Saved Gemini choice cleared; the job will use its first eligible shots.")
++            elif args.choose:
++                ids = [x.strip() for x in args.choose.split(",") if x.strip()]
++                plan = choose_shots(job_dir, shots, ids)
++                print("Gemini will generate: " + (", ".join(plan["chosen"]) or "nothing") +
++                      "  (saved to " + plan["selection_file"] + ", no request submitted)")
++            else:
++                plan = gemini_shot_plan(job_dir, shots, cap)
++        except ValueError as error:
++            raise SystemExit("Gemini shots not changed: " + str(error)) from error
++        if args.json:
++            print(json.dumps(plan, indent=2, ensure_ascii=False))
++            return
++        print(f"Job cap: {plan['cap'] or 0} shot(s) via Gemini · choice: {plan['source']}")
++        if plan["chosen"]:
++            print("Gemini now generates: " + ", ".join(plan["chosen"]))
++        for row in plan["shots"]:
++            mark = "*" if row["shot_id"] in plan["chosen"] else " "
++            print(f" {mark} {row['shot_id']:10s} {row['reason']:48s} {row['prompt'][:70]}")
++        if plan["dropped"]:
++            print("Left out because they are no longer eligible: " + ", ".join(plan["dropped"]))
++        print("Change it with: python3 cli.py v3 gemini-shots " + args.job_id +
++              " --choose shot_003,shot_007   (or --clear). Nothing is submitted until the job runs.")
++        return
+     elif args.cmd == "tune":
+         import json as _json
+         updates = {"music_duck_ratio": args.duck_ratio, "music_duck_threshold": args.duck_threshold,
+diff --git a/docs/MUSIC_LIBRARY.md b/docs/MUSIC_LIBRARY.md
+index 284b89d..ff2a62e 100644
+--- a/docs/MUSIC_LIBRARY.md
++++ b/docs/MUSIC_LIBRARY.md
+@@ -123,6 +123,52 @@ The credit block to paste into a description is printed with every suggestion, a
+ 
+ ---
+ 
++## 3b. Start-here links per video type (v7.0.109)
++
++These are real pages, checked when this version shipped: open the page, download the MP3, and drop it into
++`music_library/`. The credit obligation is stated on each line - nothing here needs a subscription.
++
++| Video type | Start here | Credit? | Why this one |
++|---|---|---|---|
++| **Education / explainer** | [Mixkit · Inspirational](https://mixkit.co/free-stock-music/tag/inspirational/) | No | Free, no account, no cap; clean beds that stay behind a voice. |
++| | [YouTube Audio Library](https://studio.youtube.com/channel/UC/video_manager/music) | Filter "Attribution not required" | The only library YouTube itself treats as copyright-safe. |
++| | [Scott Buckley · Amberlight](https://www.scottbuckley.com.au/library/amberlight/) | Yes - CC BY 4.0 | Warmer, more cinematic than stock; paste the exact credit. |
++| **Motivation** | [Scott Buckley library](https://www.scottbuckley.com.au/library/) | Yes - CC BY 4.0 | Built for slow builds and payoffs. |
++| | [Pixabay · inspiring](https://pixabay.com/music/search/inspiring/) | No | Huge, no credit; avoid tracks with the Content ID shield. |
++| **Documentary / story** | [Scott Buckley · Discovery](https://www.scottbuckley.com.au/library/discovery/) | Yes - CC BY 4.0 | The reference sound for narrated documentary. |
++| | [Mixkit · Cinematic](https://mixkit.co/free-stock-music/tag/cinematic/) | No | Fewer tracks, zero obligations. |
++| **Technology / AI** | [Mixkit · Technology](https://mixkit.co/free-stock-music/tag/technology/) | No | Quickest usable synth bed. |
++| | [Uppbeat · Electronic](https://uppbeat.io/music/genre/electronic) | Yes - Uppbeat Credit code per video | Modern, consistent; ~3 free downloads a month. |
++| **Kids** | [Pixabay · kids](https://pixabay.com/music/search/kids/) | No | Playful and simple; check the shield icon. |
++| | [YouTube Audio Library](https://studio.youtube.com/channel/UC/video_manager/music) | Usually no | Mood "Happy", filter attribution-free. |
++| **Travel / lifestyle** | [Mixkit · Travel](https://mixkit.co/free-stock-music/tag/travel/) | No | Open, rhythmic, no account. |
++| | [Pixabay · travel](https://pixabay.com/music/search/travel/) | No | Wider catalogue when Mixkit is too "stock". |
++| **Business / finance** | [Mixkit · Corporate](https://mixkit.co/free-stock-music/tag/corporate/) | No | The standard corporate bed. |
++| | [Bensound · Corporate](https://www.bensound.com/royalty-free-music/tag/corporate) | Yes - 3-line credit + code | Polished; free tier is per-video. |
++
++Print the same table in the terminal:
++
++```bash
++python3 cli.py v3 music-suggest --content-type education --playbook
++python3 cli.py v3 music-suggest --playbook          # all seven types
++```
++
++### What each licence actually obliges you to do
++
++| Library | Credit line | Content ID | Watch out for |
++|---|---|---|---|
++| **YouTube Audio Library** | Only for tracks marked "Attribution required" (CC BY) | Not claimed on YouTube | The guarantee is YouTube-only - no cover for TikTok/Instagram reuploads. |
++| **Mixkit** | None required | Not registered | The Free License excludes CDs/DVDs, video games and TV/radio broadcast; assets may not be resold as files. A few assets carry the Restricted (non-commercial) licence - check the track page. |
++| **Pixabay** | None required | Some tracks carry a Content ID shield | Do not resell tracks as files; keep the download page as proof. |
++| **Uppbeat** | Free tier: a unique Uppbeat Credit per download, **one video each**, in the description | Every track is registered | ~3 downloads a month on the free plan, part of the catalogue only, individual creators only. Paid plans safelist the channel and drop the per-video code. |
++| **Bensound** | Free tier: "Music by Bensound.com / License code: … / Artist: …" | The code is what clears a claim | A fresh code per video; the free tier does not cover podcasts, audiobooks, client work or paid ads. |
++| **Scott Buckley** | Required, exact text: `'Title' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au` | Registered, with claim release tied to the credit | Miss the credit and you get a claim; paid licences (AUD 40/75/300) remove the obligation. |
++| **Free Music Archive** | Per track: CC0 = none, CC BY = required | Varies | Never use NC or ND tracks on a monetised channel. |
++| **Incompetech** | Required (CC BY 4.0) | Some tracks claimed | Copy the credit format printed on each track page. |
++| **Chosic** | Follows the source track's licence | Unknown | It is a directory, not a library: download from the original platform. |
++
++---
++
+ ## 4. How the app mixes the music now (v7.0.107)
+ 
+ * The bed starts at the video's `music_volume` (default 0.10–0.12), **fades in** over 1 s and **fades out**
+diff --git a/engine/audio/music_catalog.py b/engine/audio/music_catalog.py
+index 657a501..d834c20 100644
+--- a/engine/audio/music_catalog.py
++++ b/engine/audio/music_catalog.py
+@@ -125,9 +125,133 @@ SAFE_SOURCES = [
+      "licence": "CC BY 4.0 (older tracks CC BY 3.0)",
+      "attribution": "Required", "content_id": "Some tracks are claimed; the site publishes the credit format",
+      "notes": "Huge, well-known catalogue at every mood; the credit format on each track page must be copied."},
++    # 7.0.109: the two libraries that ask least of a YouTube-first channel.
++    {"name": "Mixkit (Envato)", "url": "https://mixkit.co/free-stock-music/",
++     "licence": "Mixkit Free License - personal and commercial use, YouTube and monetised videos included",
++     "attribution": "Not required (appreciated, not required)",
++     "content_id": "Not registered with Content ID; claims are rare in practice",
++     "notes": "No account, no download cap, clean production tracks that sit well under narration. The Free "
++              "License excludes CDs/DVDs, video games and TV/radio broadcast, and assets may not be resold as "
++              "files - fine for a YouTube channel. Check each track page: a few assets carry the Restricted "
++              "License (personal/non-commercial only)."},
++    {"name": "Uppbeat", "url": "https://uppbeat.io/music",
++     "licence": "Uppbeat licence (free tier: individual creators, own YouTube channels, monetisation allowed)",
++     "attribution": "Free tier: a unique Uppbeat Credit per download, one video each, pasted in the description",
++     "content_id": "Every track is registered with Content ID; the Credit (or paid channel safelisting) clears it",
++     "notes": "Modern, pleasant tracks with a consistent house sound. The free tier allows about three "
++              "downloads a month and only part of the catalogue, and each download generates a fresh Credit "
++              "that is valid for one video - so keep the download page and paste the exact code. Paid plans "
++              "safelist the channel and remove the per-video credit."},
++    {"name": "Bensound", "url": "https://www.bensound.com/royalty-free-music",
++     "licence": "Free tier: CC BY-style, online video and non-revenue educational use; paid licence for more",
++     "attribution": "Required: 'Music by Bensound.com / License code: ... / Artist: ...' in the description",
++     "content_id": "The per-video licence code exists to clear claims",
++     "notes": "Polished corporate/upbeat tracks from one composer. Each download gives a code valid for one "
++              "video, and the free tier does not cover podcasts, audiobooks, client work or paid ads."},
++    {"name": "Chosic (search, not a library)", "url": "https://www.chosic.com/free-music/all/",
++     "licence": "Varies: it indexes tracks from several libraries and shows each licence",
++     "attribution": "Follow the licence it prints for the track",
++     "content_id": "Unknown - always confirm on the original platform page",
++     "notes": "Useful for finding a mood quickly (it groups by emotion and genre and links the source). Treat "
++              "it as a directory: download and credit from the original library, not from the aggregator."},
+ ]
+ 
+ 
++#: Per video type: what to listen for, and the one or two places to start a download (v7.0.109).
++#: Every "start" row is a real page, and the licence obligation is stated in the same line.
++TYPE_PLAYBOOK = {
++    "education": {
++        "mood": "Calm, unobtrusive, no strong melody in the first ten seconds - it plays under a voice.",
++        "bpm": "70-95, no vocals, no sudden drops",
++        "start": [
++            ("Mixkit", "https://mixkit.co/free-stock-music/tag/inspirational/",
++             "Free, no credit, no sign-up. 'Inspirational' and 'Corporate' tags are the closest fit."),
++            ("YouTube Audio Library", "https://studio.youtube.com/channel/UC/video_manager/music",
++             "Filter 'Attribution not required' + mood 'Inspirational'. Safest for YouTube monetisation."),
++            ("Scott Buckley", "https://www.scottbuckley.com.au/library/amberlight/",
++             "CC BY 4.0 - paste the exact credit line. Warmer and more cinematic than a stock bed."),
++        ],
++        "avoid": "Tracks with a strong four-on-the-floor kick or vocal chops; they fight the narration.",
++    },
++    "motivation": {
++        "mood": "Slow build, hopeful, restrained percussion - a payoff by the second half.",
++        "bpm": "90-110 with a build, or 70 for a reflective piece",
++        "start": [
++            ("Scott Buckley", "https://www.scottbuckley.com.au/library/",
++             "CC BY 4.0, credit required. 'Amberlight', 'Life In Motion', 'Echoes' are built for this."),
++            ("Pixabay Music", "https://pixabay.com/music/search/inspiring/",
++             "No credit needed; skip tracks with the Content ID shield icon for monetised videos."),
++        ],
++        "avoid": "Epic trailer drums over a calm script - the mismatch reads as generic.",
++    },
++    "documentary": {
++        "mood": "Cinematic, sparse, minor-key strings or piano. Room for the voice.",
++        "bpm": "60-90",
++        "start": [
++            ("Scott Buckley", "https://www.scottbuckley.com.au/library/discovery/",
++             "CC BY 4.0, credit required - his catalogue is the reference sound for this genre."),
++            ("Mixkit", "https://mixkit.co/free-stock-music/tag/cinematic/",
++             "No credit, no account. Fewer options than Buckley, zero obligations."),
++        ],
++        "avoid": "Loops under 60 seconds; a documentary bed needs to survive eight minutes without repeating audibly.",
++    },
++    "technology": {
++        "mood": "Clean synth pulses, light arpeggios, no aggressive drops.",
++        "bpm": "100-120, steady",
++        "start": [
++            ("Mixkit", "https://mixkit.co/free-stock-music/tag/technology/",
++             "Free, no credit, no sign-up - the quickest path to a usable tech bed."),
++            ("Uppbeat", "https://uppbeat.io/music/genre/electronic",
++             "Free tier: about three downloads a month, and a Uppbeat Credit code per video in the description."),
++            ("Scott Buckley", "https://www.scottbuckley.com.au/library/origami/",
++             "CC BY 4.0. Electro-jazz groove for listicles and demos."),
++        ],
++        "avoid": "Anything with a modem/robot sound effect; it dates a video instantly.",
++    },
++    "kids": {
++        "mood": "Playful, simple, acoustic - glockenspiel, ukulele, claps.",
++        "bpm": "100-130, bright but not shrill",
++        "start": [
++            ("Pixabay Music", "https://pixabay.com/music/search/kids/",
++             "No credit needed; check the Content ID shield on each track."),
++            ("YouTube Audio Library", "https://studio.youtube.com/channel/UC/video_manager/music",
++             "Mood 'Happy'/'Bright', filter 'Attribution not required'."),
++        ],
++        "avoid": "Minor-key or tense beds, and anything with a vocal hook a child will fixate on.",
++    },
++    "travel": {
++        "mood": "Open, rhythmic, acoustic guitar or light percussion.",
++        "bpm": "95-120",
++        "start": [
++            ("Mixkit", "https://mixkit.co/free-stock-music/tag/travel/",
++             "Free, no credit, no account."),
++            ("Pixabay Music", "https://pixabay.com/music/search/travel/",
++             "No credit required; avoid Content ID-shielded tracks for monetised uploads."),
++        ],
++        "avoid": "Overly 'stock corporate' beds - travel footage needs air, not a meeting room.",
++    },
++    "business": {
++        "mood": "Confident, minimal, unobtrusive; light piano or muted synth.",
++        "bpm": "90-110",
++        "start": [
++            ("Mixkit", "https://mixkit.co/free-stock-music/tag/corporate/",
++             "Free, no credit, no account - the standard corporate bed."),
++            ("Bensound", "https://www.bensound.com/royalty-free-music/tag/corporate",
++             "Free tier needs the three-line credit and a per-video licence code; paid removes both."),
++        ],
++        "avoid": "Uplifting 'sales' music with a big chorus; it makes a finance explainer feel like an advert.",
++    },
++}
++
++
++def playbook(content_type=""):
++    """The per-type buying guide, or the whole table."""
++    kind = str(content_type or "").strip().lower()
++    if kind and kind in TYPE_PLAYBOOK:
++        return {kind: TYPE_PLAYBOOK[kind]}
++    return dict(TYPE_PLAYBOOK)
++
++
+ def recommend(content_type="", themes=None, limit=8):
+     """Tracks suited to a video type and/or theme tags, best first."""
+     kind = str(content_type or "").strip().lower()
+diff --git a/engine/captions.py b/engine/captions.py
+index d2235e9..6794e36 100644
+--- a/engine/captions.py
++++ b/engine/captions.py
+@@ -241,6 +241,41 @@ def align_words_to_script(script_text: str, asr_words: list[dict],
+     return out
+ 
+ 
++def script_accurate_words(script_text: str, words, duration: float | None = None):
++    """Caption text from the reviewed script, timings from the saved words (v7.0.109).
++
++    Field report: a burned Odia transcript showed the right words with the wrong spellings. Speech recognition
++    returns its own guess at how a word is written, and a machine-translated script carries its own spelling, so
++    whichever of the two produced the caption could disagree with the script the user approved. Captions must
++    say exactly what was reviewed.
++
++    Returns ``(words, report)``. ``report`` is ``{'corrected': n, 'before': n, 'after': n, 'note': str}`` and
++    is empty when nothing changed. Timing is never invented here: ``align_words_to_script`` keeps every anchor it
++    can match and interpolates the rest inside the measured audio.
++    """
++    original = [dict(w) for w in (words or [])]
++    report = {'corrected': 0, 'before': len(original), 'after': len(original), 'note': ''}
++    script = str(script_text or '').strip()
++    if not original or not script:
++        return original, report
++    try:
++        duration = float(duration or max([float(w.get('end', 0) or 0) for w in original] + [0.0]))
++    except (TypeError, ValueError):
++        duration = 0.0
++    aligned = align_words_to_script(script, original, max(0.1, duration))
++    report['after'] = len(aligned or [])
++    if not aligned:
++        return original, report
++    corrected = sum(1 for before, after in zip(original, aligned)
++                    if str(before.get('word', '')).strip() != str(after.get('word', '')).strip())
++    report['corrected'] = corrected + abs(len(aligned) - len(original))
++    if not report['corrected']:
++        return original, report
++    report['note'] = (f"Caption text follows the reviewed script: {corrected} of {len(aligned)} caption words "
++                      f"were replaced and {abs(len(aligned) - len(original))} added or removed to match it.")
++    return aligned, report
++
++
+ def _compact_groq_prompt(script_text: str, max_words: int = 110) -> str:
+     """Return a short Groq Whisper hint safely below the provider prompt cap.
+ 
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index 2d66374..45cf3b6 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -276,7 +276,11 @@ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+             'fit_policy': dict(fit_policy or {}),
+             'captions': bool(captions),
+             'editions': editions, 'music_volume': 0.12,
+-            'branding_motion': True, 'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++            'branding_motion': True,
++            # 7.0.109: editions carry the same animated channel badge as the primary master; set False for the
++            # old plain text mark.
++            'branding_badge': True,
++            'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+     _atomic_json(folder / 'plan.json', plan)
+     return folder / 'plan.json'
+ 
+@@ -540,6 +544,8 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+             except OSError:
+                 pass
+     folder = plan_path.parent / 'exports'; folder.mkdir(exist_ok=True)
++    caption_note = ''
++    caption_corrected = 0
+     dest = folder / (language+'-'+plan_path.parent.name+'.mp4')
+     if dest.exists(): raise FileExistsError('Export exists; it will never be overwritten: '+str(dest))
+     tmp_dir = Path(tempfile.mkdtemp(dir=plan_path.parent, prefix='.render-'))
+@@ -613,19 +619,25 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+         # 7.0.95: a profile may carry logo-en / logo-hi / logo-or; the shared logo is the fallback.
+         logo_key = next((key for key in ('logo-' + language, 'logo') if key in assets), None)
+         if logo_key:
++            # v7.0.109: the logo is present for the whole edition, like a channel bug, with a soft fade-in.
+             cmd += ['-loop','1','-framerate','30','-i',str(assets[logo_key])]
+-            size=max(48,round(width*.13)); filters += [f'[{inp}:v]scale={size}:-1,format=rgba,colorchannelmixer=aa=0.85[logo]']
++            size=max(48,round(width*.11))
++            filters += [f'[{inp}:v]scale={size}:-1,format=rgba,colorchannelmixer=aa=0.9,'
++                        f'fade=t=in:st=0:d=0.6:alpha=1[logo]']
+             filters += [f'[{current}][logo]overlay=x=W-w-24:y=H-h-24:shortest=1[v{inp}]']; current=f'v{inp}';inp+=1
+         name=edition.get('channel',plan.get('channel',{})).get('display_name') or edition.get('channel',plan.get('channel',{})).get('name','')
+         if name:
+-            from engine.render.graphics import OverlayEvent, render_overlay_png
+-            art=tmp_dir/'channel-name.png'
+-            event=OverlayEvent('watermark',0,full_duration,name)
+-            render_overlay_png(event,str(art),width,height,style='clean')
+-            cmd += ['-loop','1','-framerate','30','-i',str(art)]
+-            movement='4*sin(2*PI*t/6)' if plan.get('branding_motion') else '0'
+-            filters += [f'[{current}][{inp}:v]overlay=x={movement}:y=0:shortest=1[v{inp}]']
+-            current=f'v{inp}';inp+=1
++            # v7.0.109: the same animated badge the English master uses - panel, mark and play glyph that opens
++            # and closes - rather than plain white text. Segments are contiguous, so the name never vanishes.
++            from engine.render.graphics import OverlayEvent, render_overlay_png, watermark_segments
++            badge_style = 'playful' if plan.get('branding_badge', True) else 'clean'
++            for index, event in enumerate(watermark_segments(name, 0.0, full_duration, style=badge_style)):
++                art = tmp_dir / f'channel-name-{index:02d}.png'
++                render_overlay_png(event, str(art), width, height, style=badge_style)
++                cmd += ['-loop','1', '-framerate', '30', '-i', str(art)]
++                filters += [f"[{current}][{inp}:v]overlay=x=0:y=0:"
++                            f"enable='between(t,{event.start:.3f},{event.end:.3f})':shortest=1[v{inp}]"]
++                current = f'v{inp}'; inp += 1
+         for index,card in enumerate(legacy_cards):
+             art=tmp_dir/f'card-{index}.png';_card_image(card['text'],width,height,art,language)
+             cmd += ['-loop','1','-framerate','30','-i',str(art)]
+@@ -640,6 +652,15 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+             if not has_subtitles_filter():
+                 raise RuntimeError('Captions need FFmpeg with libass subtitles. This edition was not exported without its captions.')
+             words=json.loads(words_path.read_text(encoding='utf8'))
++            # v7.0.109: burned captions must say exactly what was reviewed. Recognizer spellings (and a
++            # machine-translated script) can disagree with the approved script while the word itself is right,
++            # which is what the field screenshots showed. Timing comes from the saved word file; the text comes
++            # from the reviewed script.
++            if edition.get('script'):
++                from engine.captions import script_accurate_words
++                words, caption_report = script_accurate_words(edition['script'], words, picture_seconds)
++                caption_note = caption_report.get('note') or ''
++                caption_corrected = int(caption_report.get('corrected') or 0)
+             shifted=[{'word':w['word'],'start':float(w['start'])+offset,'end':float(w['end'])+offset} for w in words]
+             vertical=height>width
+             cap=build_captions(shifted,str(tmp_dir/'captions'),template='OPUS' if vertical else 'HORMOZI',
+@@ -710,6 +731,8 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                      'narration_sha256': voice['sha256'] if voice else None,
+                      'narration_fitted_picture': fit, 'narration_fit': fit_report,
+                      'captions_burned': bool(caption_ass),
++                     'captions_from_reviewed_script': bool(caption_ass) and bool(edition.get('script')),
++                     'captions_corrected': caption_corrected, 'captions_note': caption_note,
+                      'music_volume': float(plan.get('music_volume', .12)) if music else 0.0,
+                      'music_duck': sound if music else None,
+                      'loudness_target_lufs': -14 if music else None})
+diff --git a/engine/graphics_audit.py b/engine/graphics_audit.py
+index 6139388..e39b35b 100644
+--- a/engine/graphics_audit.py
++++ b/engine/graphics_audit.py
+@@ -74,7 +74,9 @@ def build_report(job_root, *, settings=None, overlays=None, errors=None, dropped
+     overlays = list(overlays or [])
+     prepared = dict(prepared if prepared is not None else _prepared(job_root))
+     kinds = _kinds(overlays)
+-    cards_on_timeline = sum(count for kind, count in kinds.items() if kind not in ("watermark", "hook"))
++    # 'logo' is the persistent channel logo, not a text card (v7.0.109).
++    cards_on_timeline = sum(count for kind, count in kinds.items()
++                            if kind not in ("watermark", "hook", "logo"))
+     hooks_on_timeline = _count(kinds, "hook")
+     text_cards = bool(settings.get("text_cards_enabled", settings.get("text_cards", False)))
+     speech_cards = bool(settings.get("speech_cards_enabled", False))
+diff --git a/engine/job_delete.py b/engine/job_delete.py
+index 901df64..ce8e49e 100644
+--- a/engine/job_delete.py
++++ b/engine/job_delete.py
+@@ -22,9 +22,21 @@ from .production_lock import acquire, release
+ 
+ 
+ def _backup_targets(job, final, candidates):
+-    """Finished videos worth keeping: the validated final plus any other complete final file."""
++    """Finished videos worth keeping: every language edition, then the validated final.
++
++    v7.0.109: deleting a job used to keep only the primary finished video, so a three-language production
++    lost its Hindi and Odia editions with the job folder - exactly the space the user was trying to free,
++    while the videos they wanted to publish disappeared. The branded master, the edition copies in
++    ``render/`` and every export under ``language_editions/`` and ``primary_branding/`` are backed up too.
++    """
++    from .post_job_cleanup import _deliverable_videos
+     found, seen = [], set()
+-    for path in [final] + [Path(row['path']) for row in candidates if row.get('valid')]:
++    extra = []
++    try:
++        extra = list(_deliverable_videos(job))
++    except OSError:
++        extra = []
++    for path in extra + [final] + [Path(row['path']) for row in candidates if row.get('valid')]:
+         if not path:
+             continue
+         try:
+@@ -69,7 +81,9 @@ def completed_job_delete(outputs, db_path, job_id, *, apply=False, confirmation=
+             'candidates':[{'name':Path(row['path']).name,'bytes':row.get('bytes',0),'valid':row['valid'],
+                            'reason':row.get('reason','')} for row in candidates],
+             'bytes':_size(job),'apply':apply,
+-            'includes':'job folder and SQLite index only; external browser profiles excluded'}
++            'includes':'job folder and SQLite index only; external browser profiles excluded',
++            'keeps':'the finished primary video, the branded master and every language edition '
++                    '(render/ copies and language_editions/ exports) are backed up before deletion'}
+     from .render_backup import backup_root, plan as plan_backup
+     keep_root = Path(backup_dir) if backup_dir else backup_root(outputs)
+     keep_list = _backup_targets(job, final, candidates) if keep_videos else []
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index 568787b..bea7271 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -70,6 +70,80 @@ def requested_languages(job_root):
+     return source, [code for code in editions if code != source], state
+ 
+ 
++#: Languages whose burned transcript is off by default (v7.0.109). Odia speech recognition is not reliable
++#: enough to spell the reviewed script correctly, so a wrong-looking transcript is worse than none - the
++#: edition still carries its cards, hooks, channel badge and narration.
++TRANSCRIPT_OFF_BY_DEFAULT = ('or',)
++
++
++def transcript_settings(state):
++    """What each extra edition should do about burned captions.
++
++    A job records this in ``production/language_editions.json`` under ``transcript``::
++
++        {"default": true, "languages": {"or": false}}
++
++    ``default`` applies to every extra language without its own entry. A job saved before 7.0.109 has no
++    ``transcript`` key and gets the built-in default: every language with a transcript except Odia.
++    """
++    raw = (state or {}).get('transcript')
++    if not isinstance(raw, dict):
++        raw = {'default': True, 'languages': {code: False for code in TRANSCRIPT_OFF_BY_DEFAULT}}
++    default = bool(raw.get('default', True))
++    per = {}
++    for code, value in (raw.get('languages') or {}).items():
++        per[str(code)] = bool(value)
++    return {'default': default, 'languages': per}
++
++
++def transcript_for(state, code):
++    """Whether this extra language burns a transcript, per the job's saved choice."""
++    prefs = transcript_settings(state)
++    return bool(prefs['languages'].get(str(code), prefs['default']))
++
++
++def set_transcript(job_root, *, default=None, languages=None, save=True):
++    """Record the transcript choice for a saved job and return the new preferences.
++
++    ``default`` applies to every extra language and clears per-language overrides; ``languages`` is a mapping of
++    ``code -> bool`` for the exceptions. Nothing is rendered here: the next edition render picks up the change,
++    and because each render record stores what it burned, only the languages that changed render again.
++    """
++    job_root = Path(job_root).resolve()
++    path = job_root / 'production' / STATE_NAME
++    state = _read(path)
++    if not state:
++        raise ValueError('This job has no saved language editions (' + str(path) + ' does not exist), so there '
++                         'is no transcript to change. Single-language jobs choose captions in Create '
++                         '(Speech captions) or with `python3 cli.py v3 render <job> --caption-display none`.')
++    source, extra, state = requested_languages(job_root)
++    prefs = transcript_settings(state)
++    if default is not None:
++        prefs = {'default': bool(default), 'languages': {}}
++    for code, value in dict(languages or {}).items():
++        code = str(code)
++        if code not in extra:
++            raise ValueError('No extra ' + _label(code) + ' edition is selected for this job, so it has no '
++                             'transcript of its own. Selected editions: ' + ', '.join(extra or ['none']))
++        prefs['languages'][code] = bool(value)
++    state['transcript'] = prefs
++    if save:
++        finish._atomic_json(path, state)
++    return prefs
++
++
++def transcript_plan(job_root):
++    """``{code: bool}`` for every extra edition, plus the source of the decision (v7.0.109)."""
++    source, extra, state = requested_languages(job_root)
++    if state is None:
++        return {'editions': {}, 'default': True, 'languages': {}, 'saved': False}
++    prefs = transcript_settings(state)
++    return {'editions': {code: transcript_for(state, code) for code in extra},
++            'default': prefs['default'], 'languages': prefs['languages'],
++            'saved': isinstance(state.get('transcript'), dict),
++            'worksheet': str(Path(job_root) / 'production' / STATE_NAME)}
++
++
+ def _publish_copy(export, destination):
+     """Copy a finished export into render/ atomically and verify the bytes."""
+     destination = Path(destination)
+@@ -188,14 +262,20 @@ def record_narration_error(job_root, message):
+     return path
+ 
+ 
+-def _bundle_is_current(job_root, code, bundle, entry, *, verify=True):
++def _bundle_is_current(job_root, code, bundle, entry, *, verify=True, transcript=None):
+     """A finished export that still matches the reviewed narration and its bytes.
+ 
+     ``verify=False`` only checks that the file exists. The dashboard passes it so a
+     panel rerun does not re-hash every exported video; the renderer always verifies.
++
++    7.0.109: ``transcript`` is what the job now asks for. A video burned with a transcript when the job no
++    longer wants one is out of date, and so is the reverse - which is what makes "re-render without the
++    transcript, and later again with it" work without re-recording anything.
+     """
+     if not bundle or entry.get('status') != 'exported' or entry.get('audio_sha256') != bundle.get('audio_sha256'):
+         return False
++    if transcript is not None and bool(entry.get('captions', True)) != bool(transcript):
++        return False
+     export = Path(entry.get('path') or '')
+     if not bool(entry.get('path')) or not export.is_file():
+         return False
+@@ -292,14 +372,19 @@ def edition_diagnosis(job_root, *, verify=True):
+     for code in extra:
+         entry = (record.get('editions') or {}).get(code, {})
+         bundle = bundles.get(code)
+-        if entry.get('status') == 'exported' and _bundle_is_current(job_root, code, bundle, entry, verify=verify):
++        want_transcript = transcript_for(state, code)
++        burned = bool(entry.get('captions', True))
++        if (entry.get('status') == 'exported'
++                and _bundle_is_current(job_root, code, bundle, entry, verify=verify, transcript=want_transcript)):
+             editions[code] = {'status': 'exported', 'path': entry.get('path'),
+                               'render_copy': entry.get('render_copy'),
+-                              'message': _label(code) + ' edition is exported.',
++                              'transcript': burned,
++                              'message': _label(code) + ' edition is exported '
++                                         + ('with its transcript.' if burned else 'without a transcript.'),
+                               'warning': entry.get('warning') or entry.get('cards_warning') or ''}
+             continue
+         if bundle is None:
+-            editions[code] = {'status': 'needs_narration',
++            editions[code] = {'status': 'needs_narration', 'transcript': want_transcript,
+                               'message': _label(code) + ' has no reviewed narration prepared for this job, so it '
+                                                          'cannot be rendered. The English voice is never reused.',
+                               'next_action': 'Create step 4: prepare the language scripts, generate all selected '
+@@ -308,6 +393,7 @@ def edition_diagnosis(job_root, *, verify=True):
+             continue
+         if visual is None:
+             editions[code] = {'status': 'needs_picture', 'message': visual_reason,
++                              'transcript': want_transcript,
+                               'next_action': 'Render the production again, or build the picture-only master in the '
+                                              "job panel (it may include the burned captions of the primary edition)."}
+             continue
+@@ -320,12 +406,15 @@ def edition_diagnosis(job_root, *, verify=True):
+                       if 'refresh-cards' in detail else
+                       'Fix the message above, then press "Add primary intro/outro and render pending '
+                       'language editions".')
+-            editions[code] = {'status': 'failed', 'error': detail,
++            editions[code] = {'status': 'failed', 'error': detail, 'transcript': want_transcript,
+                               'message': _label(code) + ' edition failed: ' + detail[:900],
+                               'next_action': repair}
+             continue
+         editions[code] = {'status': entry.get('status') or 'pending',
+-                          'message': _label(code) + ' narration is ready; the edition has not been rendered yet.',
++                          'transcript': want_transcript,
++                          'message': _label(code) + ' narration is ready; the edition has not been rendered yet '
++                                     + ('with its transcript.' if want_transcript else 'and a transcript is '
++                                        'switched off for it.'),
+                           'next_action': 'Press "Add English intro/outro and render pending language editions".'}
+     ready = sum(1 for row in editions.values() if row['status'] == 'exported')
+     if not extra:
+@@ -342,6 +431,7 @@ def edition_diagnosis(job_root, *, verify=True):
+                    'Create step 1 to produce the other editions.')
+     return {'status': status, 'source_language': source, 'editions': editions, 'message': message,
+             'selected': [source] + extra, 'bundles_prepared': sorted(bundles),
++            'transcript': transcript_plan(job_root),
+             'narration_error': state.get('narration_error', ''),
+             'visual_master': {'ready': visual is not None, 'reason': visual_reason},
+             'record': str(_record_path(job_root))}
+@@ -372,8 +462,10 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+     record.setdefault('editions', {})
+     record['schema_version'] = 1
+ 
++    wants = {code: transcript_for(state, code) for code in extra}
+     pending = [code for code in extra if not _bundle_is_current(job_root, code, bundles.get(code),
+-                                                                record['editions'].get(code, {}))]
++                                                                record['editions'].get(code, {}),
++                                                                transcript=wants[code])]
+     if not pending:
+         if _sync_render_copies(job_root, record):
+             _save_record(job_root, record)
+@@ -403,7 +495,9 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+             _save_record(job_root, record)
+             continue
+         emit('Rendering ' + label + ' edition', 100 * index / max(1, len(extra)), label)
+-        entry = {'status': 'rendering', 'audio_sha256': bundle.get('audio_sha256'),
++        # The previous export stays on disk in its own language_editions/<stamp>/exports/ folder, so switching
++        # the transcript back and forth never destroys the version the user already had.
++        entry = {'status': 'rendering', 'audio_sha256': bundle.get('audio_sha256'), 'captions': wants[code],
+                  'channel': {}, 'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+         record['editions'][code] = entry
+         _save_record(job_root, record)
+@@ -413,7 +507,7 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                 visual, {code: profiles.get(code)}, languages=[code],
+                 output_root=job_root / 'language_editions', source_rights='own_content',
+                 shared_music=music_path, shared_music_license=music_licence,
+-                source_language=source, require_profiles=False, fit_narration=True, captions=True,
++                source_language=source, require_profiles=False, fit_narration=True, captions=wants[code],
+                 fit_policy=fit_policy)
+             plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
+             finish.set_edition(plan_path, code, reviewed=True)
+diff --git a/engine/providers/gemini_video.py b/engine/providers/gemini_video.py
+index 16aa422..f5ec3ee 100644
+--- a/engine/providers/gemini_video.py
++++ b/engine/providers/gemini_video.py
+@@ -20,14 +20,105 @@ def chat_url(value):
+     return ''
+ 
+ 
++def _selection_path(root):
++    return Path(root) / 'gemini-videos/selection.json'
++
++
++def _why(shot, root):
++    """Why this shot can - or cannot - be handed to Gemini Web instead of Flow (v7.0.109)."""
++    journals = list(Path(root).glob(f'flow/shots/{shot.shot_id}/*.flow-request.json'))
++    if str(getattr(shot, 'provider', '')) != 'flow':
++        return 'not a Flow shot'
++    if getattr(shot, 'accepted_take', ''):
++        return 'already has an accepted take'
++    if journals:
++        return 'a Flow request journal exists (never resubmitted)'
++    return 'eligible'
++
++
++def gemini_shot_plan(root, shots, count):
++    """Every shot with its eligibility, so the app and the CLI can offer a real choice.
++
++    ``chosen`` lists the shots a user picked (saved in ``gemini-videos/selection.json``); when nothing is
++    saved, the first ``count`` eligible shots are used exactly as before.
++    """
++    if type(count) is not int or not 0 <= count <= 4:
++        raise ValueError('Gemini video cap must be zero to four')
++    rows = []
++    for shot in shots:
++        reason = _why(shot, root)
++        rows.append({'shot_id': str(getattr(shot, 'shot_id', '')),
++                     'prompt': str(getattr(shot, 'prompt', '') or '')[:160],
++                     'provider': str(getattr(shot, 'provider', '')),
++                     'accepted': bool(getattr(shot, 'accepted_take', '')),
++                     'eligible': reason == 'eligible', 'reason': reason})
++    target = _selection_path(root)
++    saved = []
++    if target.is_file():
++        try:
++            saved = list(json.loads(target.read_text(encoding='utf-8')).get('shots') or [])
++        except (OSError, ValueError):
++            saved = []
++    eligible = [row['shot_id'] for row in rows if row['eligible']]
++    if saved:
++        chosen = [shot_id for shot_id in saved if shot_id in eligible]
++        dropped = [shot_id for shot_id in saved if shot_id not in eligible]
++        source = 'chosen by you'
++    else:
++        chosen = eligible[:count] if count else []
++        dropped = []
++        source = 'first eligible shots (no choice saved)'
++    return {'shots': rows, 'eligible': eligible, 'chosen': chosen, 'dropped': dropped,
++            'cap': count, 'source': source, 'selection_file': str(target),
++            'selection_saved': target.is_file()}
++
++
++def choose_shots(root, shots, ids, *, save_choice=True):
++    """Save exactly which shots go to Gemini Web (0-4), and say why any choice is refused.
++
++    A shot with an accepted take is never chosen - it already has a video - and a shot with a Flow request
++    journal is never re-submitted, so neither can quietly spend credits. Choosing nothing clears the saved
++    choice and returns to the "first N eligible shots" behaviour.
++    """
++    ids = [str(x).strip() for x in (ids or []) if str(x).strip()]
++    if len(ids) != len(set(ids)):
++        raise ValueError('Each shot can be chosen only once: ' + ', '.join(ids))
++    if len(ids) > 4:
++        raise ValueError('At most four shots can be generated by Gemini for one job; ' + str(len(ids)) + ' were chosen')
++    plan = gemini_shot_plan(root, shots, len(ids))
++    by_id = {row['shot_id']: row for row in plan['shots']}
++    unknown = [shot_id for shot_id in ids if shot_id not in by_id]
++    if unknown:
++        raise ValueError('Unknown shot(s): ' + ', '.join(unknown) + '. This job has: '
++                         + ', '.join(sorted(by_id)) + '.')
++    refused = [(shot_id, by_id[shot_id]['reason']) for shot_id in ids if not by_id[shot_id]['eligible']]
++    if refused:
++        raise ValueError('Cannot hand these shots to Gemini: '
++                         + '; '.join(shot_id + ' - ' + reason for shot_id, reason in refused)
++                         + '. Ineligible shots keep their accepted video or their pending Flow request, which '
++                           'is never re-submitted.')
++    target = _selection_path(root)
++    if save_choice:
++        if ids:
++            save(target, {'shots': ids, 'requested_seconds': 10, 'cap': len(ids), 'chosen_by': 'user',
++                          'saved_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
++        else:
++            target.unlink(missing_ok=True)
++    return gemini_shot_plan(root, shots, len(ids))
++
++
+ def selected_shots(root,shots,count):
+     if type(count) is not int or not 0<=count<=4:raise ValueError('Gemini video cap must be zero to four')
+-    target=Path(root)/'gemini-videos/selection.json'
++    target=_selection_path(root)
+     if target.is_file():
+         ids=json.loads(target.read_text())['shots']
+         if not isinstance(ids,list) or len(ids)>4 or len(ids)!=len(set(ids)):
+             raise ValueError('Invalid saved Gemini video selection')
+-        return ids
++        # A saved choice can go stale (the shot was accepted in the meantime, or its Flow request now exists).
++        # Such a shot keeps its video and is silently left out rather than re-requested.
++        by_id = {str(getattr(shot, 'shot_id', '')): shot for shot in shots}
++        return [shot_id for shot_id in ids
++                if shot_id in by_id and _why(by_id[shot_id], root) == 'eligible']
+     if not count:return []
+     ids=[]
+     for shot in shots:
+diff --git a/engine/render/graphics.py b/engine/render/graphics.py
+index c023810..a23e479 100644
+--- a/engine/render/graphics.py
++++ b/engine/render/graphics.py
+@@ -289,6 +289,34 @@ def _draw_centered(draw, lines: Iterable[str], font, y: int, W: int, fill, spaci
+     return yy
+ 
+ 
++def watermark_segments(channel_name: str, start: float, end: float, style: str = "playful",
++                       cycle: float = 30.0, closed: float = 0.8) -> list:
++    """Channel-mark events that cover the whole window, opening every ``cycle`` seconds (v7.0.109).
++
++    The old playful plan restarted the mark every 35 s but each run ended after 30 s, so between runs the
++    channel name vanished for five seconds - and with it the only copy of the logo drawn into that badge.
++    These segments are contiguous: closed for ``closed`` seconds, open for the rest of the cycle.
++    """
++    if not str(channel_name or "").strip() or end - start <= 1.0:
++        return []
++    segments = []
++    at = float(start)
++    while at < end - 0.5:
++        chunk = min(float(cycle), end - at)
++        if chunk <= 1.2:
++            break
++        if style == "playful" and chunk > closed + 1.0:
++            segments.append(OverlayEvent("watermark", round(at, 3), round(at + closed, 3), channel_name, "closed",
++                                         fade_in=.2, fade_out=.15))
++            segments.append(OverlayEvent("watermark", round(at + closed, 3), round(at + chunk, 3), channel_name, "",
++                                         fade_in=.25, fade_out=.4))
++        else:
++            segments.append(OverlayEvent("watermark", round(at, 3), round(at + chunk, 3), channel_name, "",
++                                         fade_in=.25, fade_out=.4))
++        at += chunk
++    return segments
++
++
+ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
+                        logo_path: str = "", style: str = "bold", logo_size: str = "Small") -> str:
+     from .typography import resolve_style, PALETTES, fit, draw_text, font
+@@ -383,6 +411,22 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
+                  size=50*scale, minimum=40*scale, lines=3)
+             y += row_h
+ 
++    elif event.kind == 'logo':
++        # v7.0.109: the channel logo is drawn once and stays for the rest of the video, so the brand is
++        # present even while the channel-name badge is in one of its closed moments.
++        if not (logo_path and os.path.isfile(logo_path)):
++            raise ValueError('A logo overlay needs the channel logo image')
++        with Image.open(logo_path) as original:
++            mark = original.convert('RGBA')
++        target_w = int(W * {'Small': .085, 'Medium': .12, 'Large': .16}[logo_size])
++        mark.thumbnail((max(24, target_w), max(24, int(H * .12))), Image.Resampling.LANCZOS)
++        alpha = int(max(.15, min(1, event.opacity)) * 255)
++        if alpha < 255:
++            faded = mark.copy()
++            faded.putalpha(mark.getchannel('A').point(lambda v: int(v * alpha / 255)))
++            mark = faded
++        img.alpha_composite(mark, (W - mark.width - int(W * .035), H - mark.height - int(H * .045)))
++
+     elif event.kind == 'watermark':
+         scale *= {'Small':1.0,'Medium':1.4,'Large':1.8}[logo_size]
+         if style == 'playful':
+@@ -426,7 +470,9 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
+         with Image.open(logo_path) as original:
+             logo = original.convert('RGBA')
+         logo.thumbnail((int(W*{'Small':.09,'Medium':.12,'Large':.16}[logo_size]), int(H*.10)), Image.Resampling.LANCZOS)
+-        if event.kind == 'watermark':
++        if event.kind == 'logo':
++            pass          # already painted above, in the same bottom-right corner
++        elif event.kind == 'watermark':
+             img.alpha_composite(logo, (W-logo.width-int(W*.035), H-logo.height-int(H*.035)))
+         else:
+             img.alpha_composite(logo, (int(W*.07), int(H*.035)))
+@@ -448,22 +494,29 @@ def build_overlay_assets(manifest, script_data: dict, out_dir: str,
+     os.makedirs(out_dir, exist_ok=True)
+     events = plan_overlays(manifest, script_data, channel_name=channel_name,
+                            show_watermark=show_watermark, actual_duration=actual_duration)
+-    if style == 'playful':
+-        animated = []
+-        for event in events:
+-            if event.kind != 'watermark':
+-                animated.append(event)
+-                continue
+-            start = event.start
+-            while start < event.end:
+-                end = min(event.end, start+7.0)
+-                if end-start > 1.5:
+-                    animated.append(OverlayEvent('watermark', start, start+.8, event.title, 'closed', fade_in=.2, fade_out=.2))
+-                    animated.append(OverlayEvent('watermark', start+.8, end, event.title, fade_in=.25, fade_out=.4))
+-                start += 35.0
+-        events = animated
++    # 7.0.109: the channel mark covers its whole window (closed/open cycles, no silent gaps), and the logo
++    # itself is a separate overlay that stays for the video instead of blinking out with the badge.
++    refreshed = []
++    for event in events:
++        if event.kind != 'watermark':
++            refreshed.append(event)
++            continue
++        if style == 'playful':
++            refreshed.extend(watermark_segments(event.title, event.start, event.end, style='playful',
++                                                cycle=30.0, closed=.8))
++        else:
++            refreshed.append(event)
++    events = refreshed
++    if show_watermark and logo_path:
++        window = [e for e in events if e.kind == 'watermark']
++        if window:
++            start = min(e.start for e in window)
++            end = max(e.end for e in window)
++            if end - start > 2:
++                events.append(OverlayEvent('logo', start, end, '', '', anchor='bottom-right', opacity=.92))
+     if not text_cards_enabled:
+-        events = [e for e in events if e.kind == 'watermark']
++        # Turning cards off must not remove the brand: the channel mark and the logo stay.
++        events = [e for e in events if e.kind in ('watermark', 'logo')]
+     out = []
+     for i, e in enumerate(events):
+         path = os.path.join(out_dir, f"overlay_{i:02d}_{e.kind}.png")
+diff --git a/engine/speech_cards.py b/engine/speech_cards.py
+index c416f68..2e8dfe0 100644
+--- a/engine/speech_cards.py
++++ b/engine/speech_cards.py
+@@ -471,8 +471,18 @@ def prepare_edition(root, script, language, *, provider='auto', audio_path=None,
+     else:
+         words = get_word_timestamps_resilient(str(audio), script_text=script, language=language, audio_duration=duration) or []
+         save(word_path, words)
++    # v7.0.109: the saved word text must be the reviewed script, not a recognizer's spelling of it. Captions
++    # and card anchors both read this file, so the correction is made once, here, and recorded in the meta.
++    from .captions import script_accurate_words
++    words, caption_report = script_accurate_words(script, words, duration)
++    if caption_report['corrected']:
++        save(word_path, words)
+     meta_path = Path(str(audio)+'.words.meta.json')
+     meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
++    if caption_report['corrected']:
++        meta = dict(meta, script_aligned=True, caption_correction=caption_report['corrected'],
++                    caption_note=caption_report['note'])
++        save(meta_path, meta)
+     result = {'audio': str(audio), 'words': str(word_path), 'duration': duration, 'audio_sha256': digest(audio),
+               'script': script, 'language': language, 'cards': [],
+               'timing_source': meta.get('timing_source', meta.get('engine', 'unverified')), 'review_required': True,
+diff --git a/tests/test_v7109_transcript_branding_gemini.py b/tests/test_v7109_transcript_branding_gemini.py
+new file mode 100644
+index 0000000..e480367
+--- /dev/null
++++ b/tests/test_v7109_transcript_branding_gemini.py
+@@ -0,0 +1,425 @@
++"""v7.0.109: transcript on/off per language, script-accurate caption text, a channel badge that never blinks
++out, a logo that stays, and a real choice of which shots Gemini generates.
++
++Field reports behind these tests:
++
++* the burned Odia transcript showed the right words with the wrong spellings;
++* the English master carried a nice channel badge (logo + name), the Odia edition only plain white text, and
++  the logo vanished whenever the badge closed;
++* after the first render there was no way to re-render a language without its transcript - or to put it back;
++* the four Gemini video shots were picked automatically with no way to say which shots should be theirs.
++"""
++import array
++import json
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++
++
++# ---------------------------------------------------------------- caption text
++
++
++def test_caption_text_follows_the_reviewed_script_and_keeps_timing():
++    from engine.captions import script_accurate_words
++    script = 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ'
++    recognised = [
++        {'word': 'ନିଜର', 'start': 0.1, 'end': 0.5},
++        {'word': 'ସ୍ୱାସ୍ଥ୍ଯ', 'start': 0.5, 'end': 1.0},   # recognizer spelling of the same word
++        {'word': 'ପ୍ରତି', 'start': 1.0, 'end': 1.3},
++        {'word': 'ଧ୍ୟାନ୍', 'start': 1.3, 'end': 1.7},      # recognizer spelling again
++        {'word': 'ଦିଅ', 'start': 1.7, 'end': 2.0},
++    ]
++    words, report = script_accurate_words(script, recognised, 2.0)
++    assert [w['word'] for w in words] == script.split()
++    assert report['corrected'] == 2 and 'reviewed script' in report['note']
++    # Timing is never invented: the anchors that matched keep their measured times.
++    assert words[0]['start'] == pytest.approx(0.1) and words[-1]['end'] == pytest.approx(2.0)
++    assert all(a['end'] <= b['start'] + 1e-6 for a, b in zip(words, words[1:]))
++
++
++def test_a_correct_transcript_is_left_untouched():
++    from engine.captions import script_accurate_words
++    words = [{'word': 'A', 'start': 0.0, 'end': 0.4}, {'word': 'clean', 'start': 0.4, 'end': 0.9},
++             {'word': 'take.', 'start': 0.9, 'end': 1.4}]
++    same, report = script_accurate_words('A clean take.', words, 1.4)
++    assert same == words and report['corrected'] == 0 and report['note'] == ''
++
++
++# ---------------------------------------------------------------- transcript choice
++
++
++def _state_job(tmp_path, transcript=None):
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    (job / 'render').mkdir()
++    bundle = {'audio': str(job / 'voice.mp3'), 'audio_sha256': 'x', 'script': 'script', 'words': 'w',
++              'duration': 3.0, 'language': 'hi'}
++    (job / 'voice.mp3').write_bytes(b'not-really-audio')
++    visual = job / 'render' / 'visual-master.mp4'
++    visual.write_bytes(b'clean picture')
++    from engine import finishing_studio as finish
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(visual), 'sha256': finish._hash(visual), 'duration': 3.0,
++         'contains': 'picture only'}), encoding='utf-8')
++    state = {'source_language': 'en', 'editions': ['en', 'hi', 'or'], 'bundles': {'hi': bundle, 'or': bundle}}
++    if transcript is not None:
++        state['transcript'] = transcript
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state), encoding='utf-8')
++    return job
++
++
++def test_odia_has_no_transcript_by_default_and_hindi_does(tmp_path):
++    from engine.language_editions import transcript_plan, transcript_settings
++    job = _state_job(tmp_path)
++    state = json.loads((job / 'production' / 'language_editions.json').read_text())
++    assert transcript_settings(state) == {'default': True, 'languages': {'or': False}}
++    plan = transcript_plan(job)
++    assert plan['editions'] == {'hi': True, 'or': False}
++    assert plan['saved'] is False
++
++
++def test_a_saved_choice_wins_and_can_be_switched_back(tmp_path):
++    from engine.language_editions import set_transcript, transcript_plan
++    job = _state_job(tmp_path)
++    assert set_transcript(job, languages={'or': True}) == {'default': True, 'languages': {'or': True}}
++    assert transcript_plan(job)['editions'] == {'hi': True, 'or': True}
++    # Switching every language off, then turning Hindi back on, leaves Odia off.
++    set_transcript(job, default=False)
++    assert transcript_plan(job)['editions'] == {'hi': False, 'or': False}
++    set_transcript(job, languages={'hi': True})
++    assert transcript_plan(job)['editions'] == {'hi': True, 'or': False}
++
++
++def test_choosing_a_transcript_for_a_language_that_is_not_rendered_is_refused(tmp_path):
++    from engine.language_editions import set_transcript
++    job = _state_job(tmp_path)
++    with pytest.raises(ValueError) as error:
++        set_transcript(job, languages={'ta': True})
++    message = str(error.value)
++    assert 'ta' in message and 'Selected editions: hi, or' in message
++
++
++def test_saving_a_transcript_never_renders_or_copies_media(tmp_path):
++    from engine.language_editions import set_transcript
++    job = _state_job(tmp_path)
++    before = sorted(p.name for p in job.rglob('*'))
++    set_transcript(job, default=False)
++    assert sorted(p.name for p in job.rglob('*')) == before
++
++
++def _finished(job, code, captions):
++    """Make the render record claim a finished export, so the next render can be reasoned about."""
++    export = job / 'language_editions' / 'run' / 'exports' / (code + '-run.mp4')
++    export.parent.mkdir(parents=True, exist_ok=True)
++    export.write_bytes(b'video')
++    record = {'schema_version': 1, 'editions': {code: {
++        'status': 'exported', 'path': str(export), 'sha256': 'whatever', 'audio_sha256': 'x',
++        'captions': captions, 'render_copy': str(job / 'render' / (job.name + '-' + code + '-edition.mp4'))}}}
++    (job / 'production' / 'language_editions_render.json').write_text(json.dumps(record), encoding='utf-8')
++    return export
++
++
++def test_a_video_burned_with_the_wrong_transcript_counts_as_out_of_date(tmp_path):
++    from engine.language_editions import _bundle_is_current
++    job = _state_job(tmp_path)
++    bundle = json.loads((job / 'production' / 'language_editions.json').read_text())['bundles']['hi']
++    entry = {'status': 'exported', 'audio_sha256': 'x', 'path': str(job / 'v.mp4'), 'captions': True}
++    (job / 'v.mp4').write_bytes(b'v')
++    assert _bundle_is_current(job, 'hi', bundle, entry, verify=False, transcript=True) is True
++    assert _bundle_is_current(job, 'hi', bundle, entry, verify=False, transcript=False) is False
++    entry['captions'] = False
++    assert _bundle_is_current(job, 'hi', bundle, entry, verify=False, transcript=False) is True
++    assert _bundle_is_current(job, 'hi', bundle, entry, verify=False, transcript=True) is False
++
++
++def test_diagnosis_says_which_languages_have_a_transcript(tmp_path):
++    from engine.language_editions import edition_diagnosis
++    job = _state_job(tmp_path)
++    _finished(job, 'hi', True)
++    (job / 'render' / (job.name + '-hi-edition.mp4')).write_bytes(b'video')
++    diagnosis = edition_diagnosis(job, verify=False)
++    assert diagnosis['transcript']['editions'] == {'hi': True, 'or': False}
++    # Hindi was burned with a transcript and still wants one; Odia has not rendered yet and wants none.
++    assert diagnosis['editions']['hi'].get('transcript') is True
++    assert diagnosis['editions']['or'].get('transcript') is False
++    assert 'transcript is switched off' in diagnosis['editions']['or']['message']
++
++
++# ---------------------------------------------------------------- branding
++
++
++def test_channel_badge_covers_its_whole_window_without_gaps():
++    from engine.render.graphics import watermark_segments
++    events = watermark_segments('The Skill Shift Pro', 5.0, 125.0)
++    assert events, 'a channel mark must be produced'
++    assert events[0].start == pytest.approx(5.0) and events[-1].end == pytest.approx(125.0)
++    for before, after in zip(events, events[1:]):
++        assert after.start == pytest.approx(before.end)      # contiguous: the name never vanishes
++    assert any(e.body == 'closed' for e in events)           # ... but it still opens and closes
++
++
++def test_a_short_edition_still_gets_an_open_badge():
++    from engine.render.graphics import watermark_segments
++    events = watermark_segments('Odia Pragati', 0.0, 4.0)
++    # One open/close cycle that fills the whole window: a short edition still animates, but never goes blank.
++    assert len(events) == 2 and events[0].body == 'closed' and events[1].body == ''
++    assert events[0].start == 0.0 and events[1].end == pytest.approx(4.0)
++    assert events[0].end == pytest.approx(events[1].start)
++
++
++def test_the_logo_is_a_separate_overlay_that_spans_the_video(tmp_path):
++    from engine.render.graphics import OverlayEvent, render_overlay_png
++    from PIL import Image
++    logo = tmp_path / 'logo.png'
++    Image.new('RGBA', (160, 160), (255, 0, 0, 255)).save(logo)
++    badge = tmp_path / 'badge.png'
++    badge_logo = tmp_path / 'badge-logo.png'
++    render_overlay_png(OverlayEvent('watermark', 0, 10, 'Odia Pragati'), str(badge), 1280, 720, style='playful')
++    render_overlay_png(OverlayEvent('logo', 0, 10, '', ''), str(badge_logo), 1280, 720, logo_path=str(logo))
++    with Image.open(badge) as b, Image.open(badge_logo) as l:
++        assert b.getpixel((5, 5))[3] == 0                     # the badge PNG stays transparent outside the pill
++        assert l.getpixel((5, 5))[3] == 0                     # the logo PNG only paints the corner
++        assert l.getpixel((l.width - 60, l.height - 60))[:3] == (255, 0, 0)   # logo is bottom-right
++    assert badge.read_bytes() != badge_logo.read_bytes()
++
++
++@needs_ffmpeg
++def test_the_edition_carries_the_animated_badge_and_a_logo_for_the_whole_video(tmp_path):
++    """The Odia field video had plain white text and a logo only while it was drawn into the badge."""
++    from engine.render.graphics import OverlayEvent, render_overlay_png, watermark_segments
++    from PIL import Image
++    logo = tmp_path / 'logo.png'
++    Image.new('RGBA', (160, 160), (255, 0, 0, 255)).save(logo)
++    frames = []
++    for index, event in enumerate(watermark_segments('Odia Pragati', 0.0, 8.0)):
++        out = tmp_path / f'badge-{index}.png'
++        render_overlay_png(event, str(out), 640, 360, style='playful')
++        frames.append((out, event))
++    picture = tmp_path / 'clip.mp4'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'color=c=black:size=640x360:rate=30', '-t', '8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
++                    str(picture)], check=True)
++    command = ['ffmpeg', '-y', '-loglevel', 'error', '-i', str(picture), '-loop', '1', '-i', str(logo)]
++    for path, _ in frames:
++        command += ['-loop', '1', '-i', str(path)]
++    filters = ['[0:v][1:v]overlay=x=W-w-8:y=H-h-8[v0]']
++    for index, (_, event) in enumerate(frames, start=1):
++        filters.append(f"[v{index - 1}][{index + 1}:v]overlay=0:0:"
++                       f"enable='between(t,{event.start:.3f},{event.end:.3f})'[v{index}]")
++    command += ['-filter_complex', ';'.join(filters), '-map', f'[v{len(frames)}]', '-t', '8',
++                '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(tmp_path / 'out.mp4')]
++    subprocess.run(command, check=True)
++
++    def red_at(t):
++        raw = subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', str(t), '-i', str(tmp_path / 'out.mp4'),
++                              '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
++                             capture_output=True, check=True).stdout
++        width = 640
++        x, y = width - 20, 360 - 20
++        offset = (y * width + x) * 3
++        return raw[offset:offset + 3]
++
++    # 6.5 s is inside one of the old plan's five-second gaps; the logo must be there anyway.
++    red = red_at(6.5)
++    assert red[0] > 200 and red[1] < 40 and red[2] < 40, red
++
++
++# ---------------------------------------------------------------- Gemini shot choice
++
++
++class _Shot:
++    def __init__(self, shot_id, provider='flow', accepted='', prompt='scene'):
++        self.shot_id = shot_id
++        self.provider = provider
++        self.accepted_take = accepted
++        self.prompt = prompt
++
++
++def test_gemini_choice_lists_every_shot_and_why_it_can_or_cannot_be_used(tmp_path):
++    from engine.providers.gemini_video import gemini_shot_plan
++    journal = tmp_path / 'flow' / 'shots' / 'shot_002'
++    journal.mkdir(parents=True)
++    (journal / 'take_0.mp4.flow-request.json').write_text('{}')
++    shots = [_Shot('shot_001'), _Shot('shot_002'), _Shot('shot_003', accepted='take_0.mp4'),
++             _Shot('shot_004', provider='stock')]
++    plan = gemini_shot_plan(tmp_path, shots, 2)
++    reasons = {row['shot_id']: row['reason'] for row in plan['shots']}
++    assert reasons['shot_001'] == 'eligible'
++    assert 'journal' in reasons['shot_002'] and 'accepted' in reasons['shot_003']
++    assert reasons['shot_004'] == 'not a Flow shot'
++    assert plan['eligible'] == ['shot_001'] and plan['chosen'] == ['shot_001']
++
++
++def test_choosing_the_shots_by_hand_is_saved_and_read_back(tmp_path):
++    from engine.providers.gemini_video import choose_shots, selected_shots
++    shots = [_Shot('shot_001'), _Shot('shot_002'), _Shot('shot_003')]
++    plan = choose_shots(tmp_path, shots, ['shot_003', 'shot_001'])
++    assert plan['chosen'] == ['shot_003', 'shot_001'] and plan['source'] == 'chosen by you'
++    assert selected_shots(tmp_path, shots, 2) == ['shot_003', 'shot_001']
++    assert json.loads((tmp_path / 'gemini-videos' / 'selection.json').read_text())['chosen_by'] == 'user'
++
++
++def test_a_choice_that_would_respend_or_duplicate_is_refused(tmp_path):
++    from engine.providers.gemini_video import choose_shots
++    journal = tmp_path / 'flow' / 'shots' / 'shot_002'
++    journal.mkdir(parents=True)
++    (journal / 'take_0.mp4.flow-request.json').write_text('{}')
++    shots = [_Shot('shot_001'), _Shot('shot_002'), _Shot('shot_003', accepted='take_0.mp4')]
++    with pytest.raises(ValueError) as error:
++        choose_shots(tmp_path, shots, ['shot_002', 'shot_003'])
++    message = str(error.value)
++    assert 'shot_002' in message and 'never re-submitted' in message and 'accepted' in message
++    with pytest.raises(ValueError):
++        choose_shots(tmp_path, shots, ['shot_009'])
++    with pytest.raises(ValueError):
++        choose_shots(tmp_path, shots, ['shot_001'] * 2)
++
++
++def test_saving_a_choice_submits_nothing(tmp_path):
++    from engine.providers.gemini_video import choose_shots
++    plan = choose_shots(tmp_path, [_Shot('shot_001')], ['shot_001'])
++    assert plan['chosen'] == ['shot_001']
++    assert not (tmp_path / 'flow').exists()
++
++
++def test_clearing_the_choice_returns_to_the_first_eligible_shots(tmp_path):
++    from engine.providers.gemini_video import choose_shots, gemini_shot_plan
++    shots = [_Shot('shot_001'), _Shot('shot_002')]
++    choose_shots(tmp_path, shots, ['shot_002'])
++    choose_shots(tmp_path, shots, [])
++    assert not (tmp_path / 'gemini-videos' / 'selection.json').exists()
++    assert gemini_shot_plan(tmp_path, shots, 1)['chosen'] == ['shot_001']
++
++
++def test_a_saved_shot_that_got_its_video_meanwhile_is_dropped(tmp_path):
++    from engine.providers.gemini_video import choose_shots, selected_shots
++    shots = [_Shot('shot_001'), _Shot('shot_002')]
++    choose_shots(tmp_path, shots, ['shot_001', 'shot_002'])
++    shots[0].accepted_take = 'take_1.mp4'          # the Flow take arrived in the meantime
++    assert selected_shots(tmp_path, shots, 2) == ['shot_002']
++
++
++# ---------------------------------------------------------------- real render, both ways
++
++
++def _edition_job(tmp_path, code='hi'):
++    """A finished production with the clean picture and one reviewed language narration."""
++    from engine import finishing_studio as finish
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = job / 'render' / 'visual-master.mp4'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'testsrc2=size=640x360:rate=24', '-t', '3', '-an', '-c:v', 'libx264',
++                    '-pix_fmt', 'yuv420p', str(picture)], check=True)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': finish._hash(picture), 'duration': 3.0,
++         'contains': 'picture only'}), encoding='utf-8')
++    folder = job / 'speech-editions' / code / 'key'
++    folder.mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=660:sample_rate=44100', '-t', '3', '-c:a', 'pcm_s16le', str(voice)],
++                   check=True)
++    words = [{'word': w, 'start': i * 0.5, 'end': (i + 1) * 0.5}
++             for i, w in enumerate(['निजर', 'स्वास्थ्य', 'प्रति', 'ध्यान', 'दो', 'तीन'])]
++    words_path = folder / 'words.json'
++    words_path.write_text(json.dumps(words, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': 3.0, 'words': str(words_path),
++              'script': 'निजर स्वास्थ्य प्रति ध्यान दो तीन', 'language': code, 'timing_source': 'test',
++              'cards': [], 'text_cards': False}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en', code], 'profiles': {code: None},
++         'prepare_audio': True, 'bundles': {code: bundle}}), encoding='utf-8')
++    return job
++
++
++@needs_ffmpeg
++def test_hindi_renders_with_its_transcript_by_default(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _edition_job(tmp_path)
++    first = render_job_editions(job)
++    assert first['status'] == 'exported', first
++    burned = Path(first['editions']['hi']['path'])
++    provenance = json.loads(burned.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['captions_burned'] is True
++    assert provenance['captions_from_reviewed_script'] is True
++    assert first['editions']['hi']['captions'] is True
++
++@needs_ffmpeg
++def test_switching_the_transcript_re_renders_only_that_language(tmp_path):
++    from engine.language_editions import render_job_editions, set_transcript
++    job = _edition_job(tmp_path)
++    render_job_editions(job)
++    silent = render_job_editions(job)     # nothing changed: no new export
++    assert silent['status'] == 'exported'
++    exports = sorted((job / 'language_editions').glob('*/exports/*.mp4'))
++    assert len(exports) == 1
++
++    set_transcript(job, languages={'hi': False})
++    again = render_job_editions(job)
++    assert again['status'] == 'exported', again
++    exports = sorted((job / 'language_editions').glob('*/exports/*.mp4'))
++    assert len(exports) == 2, 'the no-transcript version must be a new export, never an overwrite'
++    newest = Path(again['editions']['hi']['path'])
++    assert newest != exports[0]
++    provenance = json.loads(newest.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['captions_burned'] is False
++
++    set_transcript(job, languages={'hi': True})
++    back = render_job_editions(job)
++    assert back['status'] == 'exported', back
++    exports = sorted((job / 'language_editions').glob('*/exports/*.mp4'))
++    assert len(exports) == 3, 'putting the transcript back renders a third file and keeps the other two'
++    with_captions = json.loads(Path(back['editions']['hi']['path']).with_suffix('.provenance.json')
++                               .read_text(encoding='utf-8'))
++    assert with_captions['captions_burned'] is True
++    assert with_captions['captions_from_reviewed_script'] is True
++
++
++# ---------------------------------------------------------------- deletion keeps every language
++
++
++def test_deleting_a_job_backs_up_every_language_video_not_only_the_primary(tmp_path, monkeypatch):
++    """The user asked: does deleting a job keep a copy of each language video? It did not - now it does."""
++    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
++    from engine import job_delete
++    outputs = tmp_path / 'outputs'
++    job = outputs / 'job'
++    final = job / 'render' / 'job-final.mp4'
++    final.parent.mkdir(parents=True)
++    final.write_bytes(b'\x00' * 2048)
++    hindi = job / 'render' / 'job-hi-edition.mp4'
++    hindi.write_bytes(b'h' * 1024)
++    branded = job / 'render' / 'job-branded.mp4'
++    branded.write_bytes(b'b' * 512)
++    odia = job / 'language_editions' / '20261027-173643-f046a5a0' / 'exports' / 'or-20261027.mp4'
++    odia.parent.mkdir(parents=True)
++    odia.write_bytes(b'o' * 4096)
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'done'}))
++    monkeypatch.setattr(job_delete, 'job_completion_state', lambda path: ('', 'completed'))
++    monkeypatch.setattr(job_delete, 'find_final_video', lambda path, *a, **k: (final, [
++        {'path': str(final), 'valid': True, 'bytes': final.stat().st_size, 'reason': ''}]))
++    import sqlite3
++    db = tmp_path / 'jobs.db'
++    with sqlite3.connect(db) as cx:
++        cx.execute('CREATE TABLE jobs (job_id TEXT)')
++        cx.execute('INSERT INTO jobs VALUES (?)', ('job',))
++
++    preview = job_delete.completed_job_delete(outputs, db, 'job')
++    assert len(preview['video_backups']) == 4, preview['video_backups']
++    assert 'every language edition' in preview['keeps']
++
++    result = job_delete.completed_job_delete(outputs, db, 'job', apply=True, confirmation='job')
++    assert result['deleted'] is True and not job.exists()
++    kept = {Path(row['target']).name: Path(row['target']) for row in result['video_backups']}
++    assert set(kept) == {'job-final.mp4', 'job-hi-edition.mp4', 'job-branded.mp4', 'or-20261027.mp4'}
++    assert kept['or-20261027.mp4'].read_bytes() == b'o' * 4096
++    assert kept['job-hi-edition.mp4'].read_bytes() == b'h' * 1024
+diff --git a/tools/update_v7107_to_v7108.py b/tools/update_v7108_to_v7109.py
+similarity index 58%
+rename from tools/update_v7107_to_v7108.py
+rename to tools/update_v7108_to_v7109.py
+index 6082eb6..7a0861c 100644
+--- a/tools/update_v7107_to_v7108.py
++++ b/tools/update_v7108_to_v7109.py
+@@ -1,32 +1,32 @@
+ #!/usr/bin/env python3
+-"""Apply the v7.0.108 update to a v7.0.107 installation.
+-
+-One field problem, and the two defects behind it:
+-
+-**The Odia edition of a three-language job died with "Narration or timings changed after card drafting".**
+-The narration itself was fine. When 7.0.107 fitted that longer narration, it rewrote the word timings into
+-``words-fitted.json`` and then handed *that rescaled copy* to the card renderer, whose fingerprint is built
+-from the narration plus its word timings. Its own retimed copy could never match the draft, so the guard fired -
+-after minutes of encoding - and blamed the review script.
+-
+-* Cards and hooks are now resolved **before** the picture is retimed, against the reviewed narration and its own
+-  word timings, and the placed overlays are retimed by the narration speed (``_retime_overlays``). A fitted
+-  narration can no longer invalidate its own cards, and a really stale card file fails in seconds.
+-* When a card or hook file really was drafted from a different narration, the message names the file, the part
+-  that changed, the saved-versus-current word and character counts, and two paste-ready commands:
+-  ``cli.py v3 refresh-cards <job> --language or`` and ``cli.py v3 language-outputs <job> --fit-hold 8``.
+-* New ``cli.py v3 refresh-cards`` re-drafts cards and hooks from the narrations already saved in the job: one
+-  Gemini Web request per language, no text-to-speech, no video request, no Flow credit. Edition failure text is
+-  no longer truncated to 300 characters, so the repair instructions arrive whole.
++"""Apply the v7.0.109 update to a v7.0.108 installation.
++
++Four field requests, from two screenshots and the questions around them:
++
++1. **The burned Odia transcript spelled words wrongly.** Its text is now taken from the reviewed script (timing
++   still comes from the measured word timings), Odia transcripts are off by default, and every language can be
++   re-rendered without its transcript - or with it again - from the narration already saved in the job. No new
++   voice, no new video, no Flow credits, and the version you already had stays on disk.
++2. **The channel badge from the English master now appears in every edition**, with the mark and the
++   open/close animation, and the logo stays for the whole video. The mark no longer vanishes for five seconds
++   every cycle.
++3. **Deleting a job kept only the primary video.** Every language edition, the branded master and the
++   language_editions/ exports are now backed up to ``outputs/_render-backups/<job>/`` before anything is
++   removed; if a copy cannot be verified, the deletion is refused.
++4. **The four Gemini video shots were chosen silently.** ``cli.py v3 gemini-shots <job>`` (and a picker in
++   Storyboard) lists every shot with its verdict and saves exactly which shots Gemini generates - refusing any
++   shot that already has a take or a Flow request.
++
++Plus per-video-type music start links (``docs/MUSIC_LIBRARY.md`` section 3b, ``v3 music-suggest --playbook``).
+ 
+ Nothing is generated, rendered or charged by this update itself.
+ 
+-Usage (run from the existing installation folder, after extracting the 7.0.108 zip beside it):
++Usage (run from the existing installation folder, after extracting the 7.0.109 zip beside it):
+ 
+-    python3 ../AutoVideoAI-v7.0.108/tools/update_v7107_to_v7108.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.108/tools/update_v7107_to_v7108.py . --apply    # installs the code
++    python3 ../AutoVideoAI-v7.0.109/tools/update_v7108_to_v7109.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.109/tools/update_v7108_to_v7109.py . --apply    # installs the code
+ 
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+ ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+ """
+ 
+@@ -41,41 +41,48 @@ import tempfile
+ from pathlib import Path
+ 
+ CHANGES = [
+-    'VERSION', 'cli.py',
+-    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/speech_cards.py', 'engine/video_hooks.py',
+-    'tests/test_v7108_stale_cards_and_fit.py', 'tests/test_v768_language_editions_render.py',
+-    'tests/test_v776_hooks.py',
+-    'STALE_CARDS_AND_FIT_TIMING_V7_0_108.md', 'tools/update_v7107_to_v7108.py',
++    'VERSION', 'app.py', 'cli.py',
++    'engine/language_editions.py', 'engine/finishing_studio.py', 'engine/captions.py',
++    'engine/speech_cards.py', 'engine/render/graphics.py', 'engine/providers/gemini_video.py',
++    'engine/job_delete.py', 'engine/graphics_audit.py', 'engine/audio/music_catalog.py',
++    'docs/MUSIC_LIBRARY.md',
++    'tests/test_v7109_transcript_branding_gemini.py',
++    'TRANSCRIPTS_BRANDING_AND_CHOICES_V7_0_109.md', 'tools/update_v7108_to_v7109.py',
+ ]
+-# Files as they exist in 7.0.107: the only hashes this updater will replace.
++# Files as they exist in 7.0.108: the only hashes this updater will replace.
+ # A hash outside this list means local edits; the file is preserved and nothing is applied.
+ ALLOWED = {
+-    'VERSION': ['dbe78b4d46b3369c3cc7f2faaef0a3e490b7cbac6ec1e0472ea599991658d1a1'],
+-    'cli.py': ['a948bfb6a4926ffcaa536c45b84a279b27394837c0cca0888ee87c267c8e98b9'],
+-    'engine/finishing_studio.py': ['be890e88d490152899a001df0b5265e93afc91da38552c23d9011d13e37ecff0'],
+-    'engine/language_editions.py': ['f97fa0cd4d040b9ed938faa7ae3dfc44d5c70e44cf9f0878b4f208a928f093ee'],
+-    'engine/speech_cards.py': ['bcd654dcf0e73a6e5e73a88feab20a5db84f3c37ea53ca40a815177bdf8c2d86'],
+-    'engine/video_hooks.py': ['54632fa60552f0fa65b0223977d5985e5cdc2dfb1e94617778da047d5ba40844'],
+-    'tests/test_v768_language_editions_render.py': ['da56ab034a8c74dbc142e9ccb36394e7f0400d61845294ac5fada64ac458463f'],
+-    'tests/test_v776_hooks.py': ['4e424c26dcb7410fa57df23b9d9fe9385cfc43b9f09be518496100849f572cb3'],
++    'VERSION': ['202de15d77f2952482581f0b648026bbc6e06f8f023f102ea43fbf94dede24ca'],
++    'cli.py': ['58829f7e119ea628f2edf46792dd01cd3252243b5dea80a6337033d47ec7c008'],
++    'app.py': ['0223bc84a7c136dfe3cbeb156105f1c97c0d6b801b69a382b90356f2ce8e468d'],
++    'engine/language_editions.py': ['910073cb71cb80dce33d51ff89b14540e5ce7816a9017dd6c5d1b6fa6fda3614'],
++    'engine/finishing_studio.py': ['e6506b4121538c61423a4f65589910074e48ce6366ba74ba694132cb45c2fd00'],
++    'engine/captions.py': ['271094d69e477e2a077f220d7fe0357fea7057ee0a5a1b7ab7f294ea6fdd70c8'],
++    'engine/speech_cards.py': ['b0ce33904ff477e5331006493fe75858627f92451de8b322db4aebd0285c8453'],
++    'engine/render/graphics.py': ['553a706173e1728678a7cab883bcacc5f45446ff9cd6e4b8ebec94ba7dc2b81f'],
++    'engine/providers/gemini_video.py': ['26a9b6bf736af4a78c108f9b22850a97309bb6ebb8f2fb98059fa80e77785cfd'],
++    'engine/job_delete.py': ['bae1b677cf5c73021d129af75550e73e03f600cf6e466533bed5e24b022dd8fe'],
++    'engine/graphics_audit.py': ['e4bb9241f9a0fd4aaadcaf90c90a1e9778be18204adeb2c03aa2f30a6a88c1bd'],
++    'engine/audio/music_catalog.py': ['2817886da533bcf3e1e703daeff70fa52c71b962427c0ff046b0f125b68c83e1'],
++    'docs/MUSIC_LIBRARY.md': ['c186a6d4038637e5a750dafc10c5e387c6dd8cb2bdce944ea8ed0503ce4e4653'],
++    'tools/update_v7107_to_v7108.py': ['62c5be88a153c2f771fcbe5ab770ece4a8ef917e8cc5900cd6161f1f89028517'],
+ }
+ 
+-ACCEPTED_INSTALLS = ('7.0.107', '7.0.108')  # 7.0.108 allows a safe re-run after success
++ACCEPTED_INSTALLS = ('7.0.108', '7.0.109')  # 7.0.109 allows a safe re-run after success
+ 
+-# The 7.0.107 zip carries the 7.0.106 to 7.0.107 update; apply that first on an older installation.
++# The 7.0.108 zip carries the 7.0.107 to 7.0.108 update; apply that first on an older installation.
+ EARLIER_STEPS = [
+-    ('7.0.106', '7.0.107', 'tools/update_v7106_to_v7107.py'),
++    ('7.0.107', '7.0.108', 'tools/update_v7107_to_v7108.py'),
+ ]
+ 
+-
+ def chain_message(current, version):
+     steps = [step for step in EARLIER_STEPS if step[0] == current]
+     if not steps:
+-        return ('This update requires an installed 7.0.107 (found ' + current + '). '
++        return ('This update requires an installed 7.0.108 (found ' + current + '). '
+                 'Earlier releases must be updated first, one zip at a time.')
+     start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.107 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.107 zip folder extracted beside this installation:\n'
++    return ('This update requires an installed 7.0.108 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.108 zip folder extracted beside this installation:\n'
+             '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+             'Then run this ' + version + ' update.')
+ 
+@@ -98,7 +105,7 @@ def main():
+         raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+     current = version_file.read_text(encoding='utf-8').strip()
+     if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.108'))
++        raise ValueError(chain_message(current, source.name or '7.0.109'))
+     new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+     manifest_path = source / 'RELEASE_MANIFEST.json'
+     if not manifest_path.is_file():

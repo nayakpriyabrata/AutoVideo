@@ -1,0 +1,1082 @@
+diff --git a/STALE_CARDS_AND_FIT_TIMING_V7_0_108.md b/STALE_CARDS_AND_FIT_TIMING_V7_0_108.md
+new file mode 100644
+index 0000000..2a48b32
+--- /dev/null
++++ b/STALE_CARDS_AND_FIT_TIMING_V7_0_108.md
+@@ -0,0 +1,107 @@
++# AutoVideoAI v7.0.108 — the Odia edition that died after its own retiming
++
++## What you hit
++
++Your three-language job `20261022-143856-7-small-daily-habits-tha-9729` produced the English export and the
++Hindi edition, then the Odia edition stopped with:
++
++```
++Narration or timings changed after card drafting. Press Resume to refresh speech cards.
++```
++
++The narration was fine. Nothing about the script had changed. The message was the app arguing with itself.
++
++## What was actually wrong
++
++1. **Cards were resolved from a file the app had just rewritten.** When a reviewed narration is longer than
++   the picture, 7.0.107 retimes it: the picture is slowed (up to 1.25x), the narration is sped up with pitch
++   preserved (up to 1.12x), and the word timings are rescaled into `words-fitted.json`. The card renderer was
++   handed that rescaled copy **after** the fit, and it fingerprints the narration plus the word timings. Its own
++   retimed copy could never match the draft, so it raised "narration or timings changed" — with the review
++   script untouched.
++2. **It failed late and unhelpfully.** The card step ran after the picture retiming and after minutes of
++   encoding, and the one-line message named neither the file, the numbers, nor a way out.
++
++## What 7.0.108 does
++
++**Cards and hooks are resolved before the picture is touched.** They are anchored to the reviewed narration and
++its own word timings — the exact inputs their draft fingerprint was made from — then the placed overlays are
++retimed by the narration speed. A fitted narration can no longer invalidate its own cards, and a genuinely
++stale card file now fails in seconds instead of after an encode.
++
++* `engine/finishing_studio.py` — new `_retime_overlays()` scales card/hook start and end times by `1 / tempo`.
++  The `speech_cards` / hooks / educational block moved **above** the picture retiming, and it is fed the
++  reviewed words plus the narration's original duration.
++  `graphics-<lang>.json` now records `narration_tempo` next to the card kinds, so a later audit can see the
++  cards were retimed, and by how much.
++
++**When a card file really is stale, the message is now a repair recipe.** Example from the same job (counts
++illustrative), naming the file and the part that changed (narration audio / word timings / reviewed script / video type), the saved draft's word and character
++counts against this edition's, and two paste-ready commands:
++
++```
++Speech cards in outputs/20261022-143856-.../speech-editions/or/.../production/speech_cards.json were drafted
++from a different narration: the reviewed script changed since the draft. Saved draft: 431 words, 2612 script
++characters; this edition: 512 words, 3005 script characters. Nothing was rendered with stale timings.
++Repair in one step - no new TTS, no new video, no Flow credits:
++`python3 cli.py v3 refresh-cards 20261022-143856-7-small-daily-habits-tha-9729 --language or`
++(one Gemini Web request per language), then run
++python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8.
++```
++
++**New command: `v3 refresh-cards`.** It re-drafts cards (and hooks, when the job uses them) from the narrations
++that are already saved in the job: one Gemini Web request per language, no text-to-speech, no video request, no
++Flow credit. It rewrites each language bundle, keeps the source-language cards in the job root, and prints the
++render command to run next.
++
++```bash
++python3 cli.py v3 refresh-cards <job>                       # every prepared language
++python3 cli.py v3 refresh-cards <job> --language or          # just the Odia edition
++python3 cli.py v3 refresh-cards <job> --language or --cleanup keep   # leave the chat open to read
++```
++
++**Failure text is no longer cut off.** Edition failures were truncated to 300 characters in the panel and 800
++in the record, which cut these instructions in half. They are kept whole now (900 in the panel, 1500 in
++`production/language_editions_render.json`), and the record on disk always has the full wording.
++
++## Proof, not promises
++
++`tests/test_v768_language_editions_render.py` renders real Hindi and Odia editions with FFmpeg, including the
++exact failure shape from your job: a 4.2 s Hindi narration on a 3.0 s picture.
++
++* the stretched picture (1.25x) and the sped narration (1.12x) meet at 3.75 s, and the export is 3.75 s;
++* the Hindi edition still carries the Hindi voice (660 Hz) and Odia the Odia voice (880 Hz);
++* the picture is slowed only inside the fit budget, and the other languages are untouched;
++* a genuine 4.9 s overrun is still refused — with `4.9s`, `3.0s`, `1.65x`, the words to cut and the flags.
++
++`tests/test_v7108_stale_cards_and_fit.py` covers the retiming arithmetic, the pre-encode ordering, the stale
++message, and that a stale file never reaches the encoder. The card/hook/fit suites total **129 passing tests**,
++with the edition render suite at **11 passing**.
++
++> The edition tests need `uharfbuzz` and `freetype-py` (Hindi/Odia shaping) plus FFmpeg. In a bare sandbox
++> without them the render step fails on the missing module, which is an environment problem, not a card
++> problem. `pip install uharfbuzz freetype-py` before judging those tests.
++
++## Install
++
++1. Extract `AutoVideoAI-v7.0.108-Stale-Cards-And-Fit-Timing.zip` **beside** your installation.
++2. Stop the dashboard.
++3. From your installation folder:
++
++```bash
++python3 ../AutoVideoAI-v7.0.108/tools/update_v7107_to_v7108.py .            # dry run
++python3 ../AutoVideoAI-v7.0.108/tools/update_v7107_to_v7108.py . --apply    # install
++```
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++`music_library/` are untouched, and the previous code files are backed up under `code-update-backups/`.
++
++## Do this next, for your job
++
++```bash
++python3 cli.py v3 language-outputs outputs/20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++```
++
++The Odia edition should now finish with the English and Hindi ones. If a card file turns out to be genuinely
++stale, the new message will name it and give you the `refresh-cards` command above — no re-recording, no
++re-rendering from scratch, no Flow credits.
+diff --git a/VERSION b/VERSION
+index 6e44312..97171f0 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.107
+\ No newline at end of file
++7.0.108
+\ No newline at end of file
+diff --git a/cli.py b/cli.py
+index b11a2bf..df568f5 100644
+--- a/cli.py
++++ b/cli.py
+@@ -379,6 +379,15 @@ def main_v3(argv):
+     au = sub.add_parser("audit", help="Audit shot density, provider fallbacks and observed credit use")
+     au.add_argument("job_id")
+ 
++    rc = sub.add_parser("refresh-cards",
++                        help="Re-draft a saved job's cards and hooks from its saved narration (no TTS, no Flow credits)")
++    rc.add_argument("job_id")
++    rc.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    rc.add_argument("--language", action="append", default=[], choices=["en", "hi", "or"],
++                    help="Only this language; repeat for more than one (default: every saved language)")
++    rc.add_argument("--cleanup", default="delete-after-read", choices=["keep", "delete-after-read"],
++                    help="Whether the Gemini Web chat stays in the browser (default: delete after reading)")
++
+     ms = sub.add_parser("music-suggest", help="Recommended royalty-free tracks per video type, with licences")
+     ms.add_argument("--content-type", default="", choices=["", "education", "motivation", "documentary",
+                                                             "technology", "kids", "travel", "business"],
+@@ -1091,6 +1100,20 @@ def main_v3(argv):
+                 guidance = {}
+             for line in pause_guidance_lines(pause, guidance):
+                 print(line)
++    elif args.cmd == "refresh-cards":
++        import json as _json
++        from engine.job_monitor import is_running
++        from engine.speech_cards import refresh_saved_cards
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(getattr(args, "outputs_root", None) or "outputs", args.job_id)
++        if not job_dir.is_dir():
++            raise SystemExit(f"No saved job at {job_dir}. Pass the job id exactly as it appears in outputs/.")
++        if is_running(job_dir):
++            raise SystemExit("This job is still running. Wait for it to finish, then refresh its cards.")
++        report = refresh_saved_cards(job_dir, languages=args.language or None, cleanup=args.cleanup,
++                                     progress=lambda label, pct, detail="": print(f"[{int(pct):3d}%] {label} {detail}".rstrip()))
++        print(_json.dumps(report, indent=2, ensure_ascii=False))
++        return
+     elif args.cmd == "music-suggest":
+         import json as _json
+         from engine.audio.music_catalog import (SAFE_SOURCES, credit_block, recommend, theme_tags,
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index d284d02..2d66374 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -415,7 +415,8 @@ def _edition_overlays(edition, language, voice, words_path, width, height, tmp_d
+     if edition.get('speech_cards'):
+         shutil.copyfile(_verified(edition['speech_cards']), root / 'production' / 'speech_cards.json')
+         overlays = render_cards(root, audio, words, edition['script'], duration, width, height, style,
+-                                educational=educational, topic=edition.get('topic', '')) or []
++                                educational=educational, topic=edition.get('topic', ''),
++                                language=language) or []
+     stats['cards'] = len(overlays)
+     if edition.get('hooks'):
+         shutil.copyfile(_verified(edition['hooks']), root / 'production' / 'hooks.json')
+@@ -429,6 +430,27 @@ def _edition_overlays(edition, language, voice, words_path, width, height, tmp_d
+     return overlays
+ 
+ 
++def _retime_overlays(overlays, tempo):
++    """Move cards and hooks with a sped-up narration (v7.0.108).
++
++    Cards are drafted and anchored against the reviewed narration's own word timings. When that narration is
++    sped up to fit the picture, its word times shrink by the same factor - so the placed overlays must shrink
++    too. Retiming here (instead of feeding rescaled words to the card renderer) keeps the drafted fingerprint
++    valid, which is what broke the Odia edition in 7.0.107.
++    """
++    tempo = float(tempo or 1.0)
++    if abs(tempo - 1.0) < 1e-6:
++        return [dict(event) for event in overlays or []]
++    retimed = []
++    for event in overlays or []:
++        row = dict(event)
++        for key in ('start', 'end'):
++            if isinstance(row.get(key), (int, float)):
++                row[key] = round(float(row[key]) / tempo, 3)
++        retimed.append(row)
++    return retimed
++
++
+ def _add_overlays(cmd, filters, current, inp, overlays, width, height, offset):
+     """Add picture-timed PNG overlays with the main renderer's pop/open/close animation and fades."""
+     from engine.render.ffmpeg_renderer import _pop_chain
+@@ -524,8 +546,30 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+     try:
+         picture = src
+         voice_seconds = float(voice['duration']) / tempo if voice else None
+-        # Bookends (intro/outro) are matched to the fitted narration; a hold clones the last frame.
+         words_for_render = words_src
++        # Cards and hooks are resolved BEFORE the expensive picture retiming, against the reviewed narration
++        # and its own word timings - the inputs their drafted fingerprint was made from. A stale card file now
++        # fails in seconds instead of after minutes of encoding, and a fitted narration never invalidates it.
++        legacy_cards = [] if edition.get('educational') else edition['cards']
++        graphics_stats = {}
++        overlay_specs = _edition_overlays(edition, language, voice, words_src, width, height, tmp_dir,
++                                          legacy_cards, duration=float(voice['duration']) if voice else None,
++                                          stats=graphics_stats)
++        overlay_specs = _retime_overlays(overlay_specs, tempo)
++        if overlay_specs or edition.get('speech_cards') or edition.get('hooks'):
++            # 7.0.107: this edition writes down what it drew, so a missing card is explainable later.
++            graphics_stats.update({
++                'language': language, 'animated': sum(1 for e in overlay_specs if e.get('anim')),
++                'kinds': {kind: sum(1 for e in overlay_specs if e.get('kind') == kind)
++                          for kind in sorted({str(e.get('kind')) for e in overlay_specs})},
++                'speech_cards_prepared': bool(edition.get('speech_cards')),
++                'hooks_prepared': bool(edition.get('hooks')),
++                'educational': bool(edition.get('educational')),
++                'narration_tempo': tempo})
++            try:
++                _atomic_json(Path(plan_path).parent / ('graphics-' + language + '.json'), graphics_stats)
++            except OSError:
++                pass
+         if fit:
+             picture = tmp_dir/'picture-fit.mp4'
+             chain = f'setpts={picture_scale:.6f}*PTS'
+@@ -582,23 +626,6 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+             movement='4*sin(2*PI*t/6)' if plan.get('branding_motion') else '0'
+             filters += [f'[{current}][{inp}:v]overlay=x={movement}:y=0:shortest=1[v{inp}]']
+             current=f'v{inp}';inp+=1
+-        legacy_cards = [] if edition.get('educational') else edition['cards']
+-        graphics_stats = {}
+-        overlay_specs = _edition_overlays(edition, language, voice, words_for_render, width, height, tmp_dir,
+-                                          legacy_cards, duration=voice_seconds, stats=graphics_stats)
+-        if overlay_specs or edition.get('speech_cards') or edition.get('hooks'):
+-            # v7.0.107: this edition writes down what it drew, so a missing card is explainable later.
+-            graphics_stats.update({
+-                'language': language, 'animated': sum(1 for e in overlay_specs if e.get('anim')),
+-                'kinds': {kind: sum(1 for e in overlay_specs if e.get('kind') == kind)
+-                          for kind in sorted({str(e.get('kind')) for e in overlay_specs})},
+-                'speech_cards_prepared': bool(edition.get('speech_cards')),
+-                'hooks_prepared': bool(edition.get('hooks')),
+-                'educational': bool(edition.get('educational'))})
+-            try:
+-                _atomic_json(Path(plan_path).parent / ('graphics-' + language + '.json'), graphics_stats)
+-            except OSError:
+-                pass
+         for index,card in enumerate(legacy_cards):
+             art=tmp_dir/f'card-{index}.png';_card_image(card['text'],width,height,art,language)
+             cmd += ['-loop','1','-framerate','30','-i',str(art)]
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index e012690..568787b 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -313,10 +313,16 @@ def edition_diagnosis(job_root, *, verify=True):
+             continue
+         if entry.get('status') == 'failed' or entry.get('error'):
+             # Narration and picture are both present; the render itself failed.
+-            editions[code] = {'status': 'failed', 'error': entry.get('error', ''),
+-                              'message': _label(code) + ' edition failed: ' + str(entry.get('error', ''))[:300],
+-                              'next_action': 'Fix the message above, then press "Add primary intro/outro and '
+-                                             'render pending language editions".'}
++            detail = str(entry.get('error', ''))
++            repair = ("Run the `refresh-cards` command quoted in the message above, then press "
++                      '"Add primary intro/outro and render pending language editions" again. It re-drafts '
++                      "the cards only: no narration, no video, no Flow credits."
++                      if 'refresh-cards' in detail else
++                      'Fix the message above, then press "Add primary intro/outro and render pending '
++                      'language editions".')
++            editions[code] = {'status': 'failed', 'error': detail,
++                              'message': _label(code) + ' edition failed: ' + detail[:900],
++                              'next_action': repair}
+             continue
+         editions[code] = {'status': entry.get('status') or 'pending',
+                           'message': _label(code) + ' narration is ready; the edition has not been rendered yet.',
+@@ -422,8 +428,10 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+             entry.pop('error', None)
+             _sync_render_copies(job_root, {'editions': {code: entry}})
+         except Exception as error:  # keep the primary edition and every finished edition
+-            entry.update(status='failed', error=str(error)[:800])
+-            failures.append(label + ': ' + str(error)[:300])
++            # 7.0.108: these messages now carry the numbers and the exact repair command, so they are kept
++            # whole instead of being cut in the middle of the instructions.
++            entry.update(status='failed', error=str(error)[:1500])
++            failures.append(label + ': ' + str(error)[:900])
+         entry['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+         _save_record(job_root, record)
+     emit('Language editions finished', 100)
+diff --git a/engine/speech_cards.py b/engine/speech_cards.py
+index 1d363f3..c416f68 100644
+--- a/engine/speech_cards.py
++++ b/engine/speech_cards.py
+@@ -67,6 +67,68 @@ def fingerprint(audio, words, script, variant=''):
+     return h.hexdigest()
+ 
+ 
++def fingerprint_parts(audio, words, script, variant=''):
++    """What the draft fingerprint is made of, kept so a mismatch can name the part that changed (7.0.108)."""
++    h = hashlib.sha256()
++    with Path(audio).open('rb') as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
++            h.update(chunk)
++    return {'audio': h.hexdigest(),
++            'words': hashlib.sha256(json.dumps(words, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
++            'script': hashlib.sha256(str(script).encode()).hexdigest(),
++            'variant': hashlib.sha256(str(variant).encode()).hexdigest(),
++            'word_count': len(words or []), 'script_chars': len(str(script or '').strip())}
++
++
++PARTS_LABELS = {'audio': 'the narration audio', 'words': 'the narration word timings',
++                'script': 'the reviewed script', 'variant': 'the video type or topic'}
++
++
++def job_reference(path):
++    """The job id a card/hook file belongs to, so a repair message can be pasted verbatim (v7.0.108)."""
++    path = Path(path).resolve()
++    for parent in list(path.parents)[:6]:
++        production = parent / 'production'
++        if not production.is_dir():
++            continue
++        # A real output job keeps its renders beside production/, or names its editions there. A bare
++        # ``production/speech_cards.json`` can also be a review bundle, which has no job to re-render.
++        if (parent / 'render').is_dir() or (production / 'language_editions.json').is_file():
++            return parent.name
++    return ''
++
++
++def stale_draft_error(kind, path, data, audio, words, script, variant='', language='', job=''):
++    """A precise, repairable message for a card/hook file drafted from different narration (7.0.108).
++
++    Field rule: never a bare "resume to refresh". Name the file, the part that changed, the numbers, and the
++    one command that fixes it without new TTS or new video generation.
++    """
++    now = fingerprint_parts(audio, words, script, variant)
++    stored = data.get('parts') if isinstance(data, dict) else None
++    changed = [PARTS_LABELS[key] for key in ('audio', 'words', 'script', 'variant')
++               if isinstance(stored, dict) and key in stored and stored.get(key) != now.get(key)]
++    if not stored:
++        detail = 'the saved file predates part-by-part checking, so the change is in the narration audio, its word timings or the script'
++    elif changed:
++        detail = ', '.join(changed) + ' changed since the draft'
++    else:
++        detail = 'the saved fingerprint does not match this narration'
++    where = str(path)
++    job = str(job or '') or job_reference(path)
++    target = job or '<job>'
++    language_flag = (' --language ' + language) if language else ''
++    repair = f"python3 cli.py v3 refresh-cards {target}{language_flag}"
++    rerun = (f"python3 cli.py v3 language-outputs {target} --fit-hold 8" if language
++             else "the same render again (python3 cli.py v3 resume " + target + ")")
++    return (f"{kind} in {where} were drafted from a different narration: {detail}. "
++            f"Saved draft: {stored.get('word_count') if isinstance(stored, dict) else '?'} words, "
++            f"{stored.get('script_chars') if isinstance(stored, dict) else '?'} script characters; "
++            f"this edition: {now['word_count']} words, {now['script_chars']} script characters. "
++            f"Nothing was rendered with stale timings. Repair in one step - no new TTS, no new video, "
++            f"no Flow credits: `{repair}` (one Gemini Web request per language), then run {rerun}.")
++
++
+ def validate_words(words, duration):
+     if not isinstance(words, list) or not words:
+         raise ValueError('Speech cards require saved narration word timestamps')
+@@ -320,6 +382,7 @@ def prepare(root, audio, words, script, duration, language, cleanup='delete-afte
+         kept = [c for c in cards if not _overlaps(c, series)]
+         dropped, cards = len(cards) - len(kept), kept
+     result = {'schema_version': 3 if educational else 1, 'source': 'gemini-web-speech-anchors', 'fingerprint': key,
++              'parts': fingerprint_parts(audio, words, script, variant),
+               'duration': duration, 'language': language, 'timing_source': timing_source,
+               'review_required': True, 'educational': bool(educational), 'draft_provider': provider if educational else 'gemini-web',
+               'series': _series_record(series) if series else None, 'dropped_overlapping_cards': dropped,
+@@ -330,14 +393,15 @@ def prepare(root, audio, words, script, duration, language, cleanup='delete-afte
+     return result
+ 
+ 
+-def render(root, audio, words, script, duration, width, height, style, educational=False, topic=''):
++def render(root, audio, words, script, duration, width, height, style, educational=False, topic='', language=''):
+     path = Path(root) / 'production' / 'speech_cards.json'
+     if not path.is_file():
+         return None
+     data = json.loads(path.read_text(encoding='utf-8'))
+     variant = _variant(educational, topic)
+     if data.get('fingerprint') != fingerprint(audio, words, script, variant):
+-        raise ValueError('Narration or timings changed after card drafting. Resume to refresh speech cards before rendering.')
++        raise ValueError(stale_draft_error('Speech cards', path, data, audio, words, script, variant,
++                                           language=language))
+     from .render.educational_cards import render_card_png, render_series
+     overlays = []
+     cards = anchor_cards(data, words, duration, educational)
+@@ -464,6 +528,62 @@ def complete_edition_cards(bundle,cleanup='delete-after-read'):
+     return result
+ 
+ 
++def refresh_saved_cards(job_root, languages=None, cleanup='delete-after-read', progress=None):
++    """Re-draft a saved job's cards and hooks from its saved narrations (7.0.108).
++
++    The documented repair when a card or hook file was drafted from a different narration. It calls no TTS, opens
++    no video request, spends no Flow credit, and makes one Gemini Web card request per selected language. The
++    cards are anchored to each language's own saved word timings, so the edition renders with correct timings
++    straight afterwards.
++    """
++    from .production import save
++    root = Path(job_root)
++    state_path = root / 'production' / 'language_editions.json'
++    if not state_path.is_file():
++        raise ValueError('This job has no prepared language editions, so there is nothing to re-draft here. '
++                         'Its cards live in ' + str(root / 'production' / 'speech_cards.json') +
++                         '; press Resume in the app to draft them again for the saved narration.')
++    state = json.loads(state_path.read_text(encoding='utf-8'))
++    bundles = state.get('bundles') or {}
++    if not bundles:
++        raise ValueError('No prepared narration is saved for this job yet. Prepare the language narrations first '
++                         '(Create step 4, or Jobs & Recovery > Speech batches).')
++    wanted = list(dict.fromkeys(languages or list(bundles)))
++    unknown = [code for code in wanted if code not in bundles]
++    if unknown:
++        raise ValueError('No saved narration for ' + ', '.join(unknown) + '. Saved languages: ' + ', '.join(bundles))
++    emit = progress or (lambda *args: None)
++    summary = {}
++    for index, code in enumerate(wanted):
++        bundle = dict(bundles[code])
++        if bundle.get('hooks') is None:
++            bundle['hooks'] = bool(state.get('hooks_enabled', False))
++        if bundle.get('text_cards') is None:
++            bundle['text_cards'] = bool(state.get('text_cards', True))
++        emit('Re-drafting saved cards', int(100 * index / max(1, len(wanted))), code.upper())
++        refreshed = complete_edition_cards(bundle, cleanup)
++        bundles[code] = refreshed
++        folder = Path(refreshed['audio']).parent
++        hooks_file = folder / 'production' / 'hooks.json'
++        summary[code] = {'cards': len(refreshed.get('cards') or []),
++                         'hooks': len((json.loads(hooks_file.read_text(encoding='utf-8')).get('hooks') or []))
++                         if hooks_file.is_file() else 0,
++                         'hooks_error': refreshed.get('hooks_error') or '',
++                         'cards_file': str(folder / 'production' / 'speech_cards.json')}
++    state['bundles'] = bundles
++    state['status'] = 'cards re-drafted for the saved narration'
++    save(state_path, state)
++    primary = bundles.get(state.get('source_language') or '')
++    if primary:
++        cards = Path(primary['audio']).parent / 'production' / 'speech_cards.json'
++        if cards.is_file():
++            save(root / 'production' / 'speech_cards.json', json.loads(cards.read_text(encoding='utf-8')))
++    emit('Cards re-drafted', 100, ', '.join(wanted))
++    return {'languages': summary, 'record': str(state_path),
++            'next': 'Run the edition render again: python3 cli.py v3 language-outputs <job> '
++                    '(add --fit-hold 8 only if the message asks for it). No TTS and no Flow credits are used.'}
++
++
+ def batch_key(script,source_language,languages,provider,audio_path=''):
+     from .production import digest
+     payload=[script.strip(),source_language,sorted(set(languages)),provider,digest(audio_path) if audio_path else '']
+diff --git a/engine/video_hooks.py b/engine/video_hooks.py
+index 1f36f7a..994eea1 100644
+--- a/engine/video_hooks.py
++++ b/engine/video_hooks.py
+@@ -42,6 +42,15 @@ def hook_prompt(topic, language) -> str:
+         "An empty list is allowed if no hook is needed.")
+ 
+ 
++def _variant(topic, language) -> str:
++    return f"{VARIANT}|{' '.join(str(topic or '').split())}|{language}"
++
++
++def _parts(audio, words, script, topic, language) -> dict:
++    from .speech_cards import fingerprint_parts
++    return fingerprint_parts(audio, words, script, _variant(topic, language))
++
++
+ def _fingerprint(audio, words, script, topic, language) -> str:
+     h = hashlib.sha256()
+     with Path(audio).open("rb") as stream:
+@@ -105,7 +114,8 @@ def draft_hooks(root, audio, words, script, duration, language, *, topic="", cle
+     save(target.with_name("hooks-draft.json"), {"response": raw, "fingerprint": key})
+     hooks = anchor_hooks(_extract_json(raw), words, duration)
+     result = {"schema_version": 1, "source": "gemini-web-hooks", "fingerprint": key, "duration": float(duration),
+-              "language": language, "topic": str(topic or ""), "hooks": hooks}
++              "language": language, "topic": str(topic or ""), "hooks": hooks,
++              "parts": _parts(audio, words, script, topic, language)}
+     save(target, result)
+     return result
+ 
+@@ -117,7 +127,11 @@ def load_hooks(root, audio, words, script, duration, language, *, topic=""):
+         return None
+     data = json.loads(path.read_text(encoding="utf-8"))
+     if data.get("fingerprint") != _fingerprint(audio, words, script, topic, language):
+-        raise ValueError("Narration, timings or topic changed after hook drafting. Resume the job to refresh hooks.")
++        # 7.0.108: name the file, the part that changed and the one command that repairs it.
++        from .speech_cards import job_reference, stale_draft_error
++        raise ValueError(stale_draft_error("Hooks", path, data, audio, words, script,
++                                           _variant(topic, language), language=language,
++                                           job=job_reference(path)))
+     return anchor_hooks(data, words, duration)
+ 
+ 
+diff --git a/tests/test_v7108_stale_cards_and_fit.py b/tests/test_v7108_stale_cards_and_fit.py
+new file mode 100644
+index 0000000..5edf4bc
+--- /dev/null
++++ b/tests/test_v7108_stale_cards_and_fit.py
+@@ -0,0 +1,170 @@
++"""v7.0.108: a fitted narration keeps its drafted cards, and a stale card file is repairable in one command.
++
++Field case: the Odia edition in job 20261022-143856-... started rendering after 7.0.107 fitted its longer
++narration, then failed with "Narration or timings changed after card drafting" - because 7.0.107 rescaled the
++word timings *before* the card renderer, invalidating the fingerprint that proves the cards belong to that
++narration. Cards are now anchored to the reviewed narration and the placed overlays are retimed instead.
++"""
++import json
++from pathlib import Path
++
++import pytest
++
++import engine.finishing_studio as finish
++import engine.speech_cards as SC
++
++WORDS = [{'word': f'w{i}', 'start': i * 0.5, 'end': i * 0.5 + 0.4} for i in range(10)]
++DURATION = 5.0
++SCRIPT = 'स्वीकृत वर्णन • reviewed narration'
++
++
++def _narration(tmp_path):
++    audio = tmp_path / 'voice.mp3'
++    audio.write_bytes(b'voice-bytes-for-hashing')
++    words = tmp_path / 'words.json'
++    words.write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    return audio, words
++
++
++def _drafted_cards(tmp_path, audio, words, cards):
++    """A speech_cards.json exactly as the drafting stage writes it for this narration."""
++    folder = tmp_path / 'bundle' / 'production'
++    folder.mkdir(parents=True)
++    data = {'schema_version': 1, 'source': 'test', 'cards': cards,
++            'fingerprint': SC.fingerprint(audio, WORDS, SCRIPT, ''),
++            'parts': SC.fingerprint_parts(audio, WORDS, SCRIPT, '')}
++    path = folder / 'speech_cards.json'
++    path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
++    return path
++
++
++def test_a_fitted_narration_keeps_its_drafted_cards(tmp_path, monkeypatch):
++    audio, words_path = _narration(tmp_path)
++    cards_file = _drafted_cards(tmp_path, audio, words_path,
++                               [{'text': 'Small daily habit', 'start': 0.5, 'end': 2.5,
++                                 'start_word': 1, 'end_word': 4, 'kind': 'keypoint'}])
++    edition = {'speech_cards': {'path': str(cards_file)}, 'hooks': None, 'script': SCRIPT,
++               'educational': False, 'topic': '', 'cards': []}
++    monkeypatch.setattr(finish, '_verified', lambda entry: Path(entry['path']))
++    overlay_root = tmp_path / 'render'
++
++    overlays = finish._edition_overlays(edition, 'or', {'path': str(audio), 'duration': DURATION},
++                                        words_path, 540, 960, overlay_root, [], duration=DURATION)
++
++    assert overlays, 'the drafted cards must render against their own narration'
++    assert overlays[0]['start'] == pytest.approx(0.5) and overlays[0]['end'] == pytest.approx(2.5)
++    assert overlays[0]['anim'] == 'pop' and overlays[0]['box']
++
++    # 1.04x narration speed: the card moves with the words instead of invalidating the draft.
++    retimed = finish._retime_overlays(overlays, 1.04)
++    assert retimed[0]['start'] == pytest.approx(0.481)
++    assert retimed[0]['end'] == pytest.approx(2.404)
++    assert overlays[0]['start'] == pytest.approx(0.5)          # the input list is untouched
++    unchanged = finish._retime_overlays(overlays, 1.0)
++    assert unchanged[0]['start'] == pytest.approx(0.5) and unchanged is not overlays
++
++
++def test_rescaled_words_are_what_broke_the_odias_cards(tmp_path, monkeypatch):
++    """Documents the 7.0.107 defect: feeding rescaled word timings to the card renderer refuses the draft."""
++    audio, words_path = _narration(tmp_path)
++    cards_file = _drafted_cards(tmp_path, audio, words_path,
++                               [{'text': 'Small daily habit', 'start': 0.5, 'end': 2.5,
++                                 'start_word': 1, 'end_word': 4, 'kind': 'keypoint'}])
++    edition = {'speech_cards': {'path': str(cards_file)}, 'hooks': None, 'script': SCRIPT,
++               'educational': False, 'topic': '', 'cards': []}
++    monkeypatch.setattr(finish, '_verified', lambda entry: Path(entry['path']))
++    from engine.narration_fit import scale_words
++    scaled = tmp_path / 'words-fitted.json'
++    scaled.write_text(json.dumps(scale_words(WORDS, 1.04), ensure_ascii=False), encoding='utf-8')
++
++    with pytest.raises(ValueError) as error:
++        finish._edition_overlays(edition, 'or', {'path': str(audio), 'duration': DURATION},
++                                 scaled, 540, 960, tmp_path / 'render2', [], duration=DURATION)
++    message = str(error.value)
++    assert 'drafted from a different narration' in message
++    assert 'word timings changed since the draft' in message
++    assert 'cli.py v3 refresh-cards' in message
++
++
++def test_stale_card_message_is_precise_and_repairable(tmp_path):
++    audio, words_path = _narration(tmp_path)
++    cards_file = _drafted_cards(tmp_path, audio, words_path, [])
++    data = json.loads(cards_file.read_text(encoding='utf-8'))
++    edited_script = SCRIPT + ' (edited)'
++    message = SC.stale_draft_error('Speech cards', cards_file, data, audio, WORDS, edited_script, '',
++                                   language='or')
++    assert 'production/speech_cards.json' in message
++    assert 'the reviewed script changed since the draft' in message
++    assert '10 words' in message and str(len(edited_script.strip())) + ' script characters' in message
++    assert 'python3 cli.py v3 refresh-cards <job> --language or' in message
++    assert 'python3 cli.py v3 language-outputs <job> --fit-hold 8' in message
++    assert 'no new TTS' in message and 'Flow credits' in message
++
++    changed_audio = tmp_path / 'other.mp3'
++    changed_audio.write_bytes(b'different narration bytes')
++    audio_message = SC.stale_draft_error('Speech cards', cards_file, data, changed_audio, WORDS, SCRIPT, '')
++    assert 'the narration audio changed since the draft' in audio_message
++
++
++def test_actions_repair_a_stale_card_file_in_one_command(tmp_path, monkeypatch):
++    """refresh_saved_cards re-drafts from the saved narration: no TTS, one Gemini Web request per language."""
++    import engine.providers.gemini_web as gemini
++    job = tmp_path / 'job'
++    folder = job / 'speech-editions' / 'en' / 'key'
++    folder.mkdir(parents=True)
++    audio = folder / 'voice.mp3'
++    audio.write_bytes(b'odia-voice-bytes')
++    words_path = folder / 'words.json'
++    words_path.write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    # A stale draft from an earlier script.
++    (folder / 'production').mkdir()
++    (folder / 'production' / 'speech_cards.json').write_text(json.dumps({
++        'fingerprint': 'stale', 'parts': {'audio': 'x', 'words': 'y', 'script': 'z', 'variant': 'v',
++                                          'word_count': 3, 'script_chars': 9},
++        'cards': [{'text': 'Old card', 'start': 0, 'end': 1}]}, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(audio), 'audio_sha256': SC.fingerprint_parts(audio, WORDS, SCRIPT)['audio'],
++              'duration': DURATION, 'words': str(words_path), 'script': SCRIPT, 'language': 'en',
++              'timing_source': 'test', 'cards': [], 'text_cards': True, 'educational': False, 'hooks': False}
++    (job / 'production').mkdir(exist_ok=True)
++    (job / 'production' / 'language_editions.json').write_text(json.dumps({
++        'source_language': 'en', 'editions': ['en'], 'text_cards': True, 'hooks_enabled': False,
++        'bundles': {'en': bundle}}), encoding='utf-8')
++    calls = []
++
++    def fake_generate(system, user, cleanup='keep'):
++        calls.append(system)
++        return json.dumps({'cards': [{'text': 'Small daily habit', 'start_word': 1, 'end_word': 4}]})
++
++    monkeypatch.setattr(gemini, 'gemini_web_generate', fake_generate)
++
++    report = SC.refresh_saved_cards(job, languages=['en'])
++    assert report['languages']['en']['cards'] == 1
++    assert len(calls) == 1                                   # one request, no repeated drafting
++    saved = json.loads((folder / 'production' / 'speech_cards.json').read_text(encoding='utf-8'))
++    assert saved['cards'] and saved['fingerprint'] == SC.fingerprint(audio, WORDS, SCRIPT, '')
++    assert saved['parts']['word_count'] == len(WORDS)
++    assert json.loads((job / 'production' / 'speech_cards.json').read_text(encoding='utf-8'))['cards']
++    # The refreshed cards now render for this narration without a stale-file refusal.
++    monkeypatch.setattr(finish, '_verified', lambda entry: Path(entry['path']))
++    edition = {'speech_cards': {'path': str(folder / 'production' / 'speech_cards.json')}, 'hooks': None,
++               'script': SCRIPT, 'educational': False, 'topic': '', 'cards': []}
++    overlays = finish._edition_overlays(edition, 'en', {'path': str(audio), 'duration': DURATION},
++                                        words_path, 540, 960, tmp_path / 'render', [], duration=DURATION)
++    assert overlays and overlays[0]['kind'] == 'keypoint'
++
++
++def test_refresh_refuses_a_job_without_saved_narrations(tmp_path):
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    with pytest.raises(ValueError) as error:
++        SC.refresh_saved_cards(job)
++    assert 'no prepared language editions' in str(error.value)
++    (job / 'production' / 'language_editions.json').write_text(json.dumps({'bundles': {}}), encoding='utf-8')
++    with pytest.raises(ValueError) as empty:
++        SC.refresh_saved_cards(job)
++    assert 'No prepared narration' in str(empty.value)
++    (job / 'production' / 'language_editions.json').write_text(
++        json.dumps({'bundles': {'hi': {'audio': 'x'}}}), encoding='utf-8')
++    with pytest.raises(ValueError) as unknown:
++        SC.refresh_saved_cards(job, languages=['or'])
++    assert 'Saved languages: hi' in str(unknown.value)
+diff --git a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
+index 9f5dcf5..0ab9c8e 100644
+--- a/tests/test_v768_language_editions_render.py
++++ b/tests/test_v768_language_editions_render.py
+@@ -28,7 +28,7 @@ def _probe_reports_audio(job):
+     Some CI sandboxes ship an ffprobe stand-in that reports a single 3 s video stream; the edition render
+     then refuses the narration before any fit decision, which says nothing about the code under test.
+     """
+-    for audio in Path(job).glob('speech-editions/*/voice.mp3'):
++    for audio in Path(job).glob('speech-editions/*/*/voice.*'):
+         try:
+             info, duration = finish._probe(audio)
+         except Exception:
+@@ -39,8 +39,13 @@ def _probe_reports_audio(job):
+ 
+ 
+ def _tone(path, frequency, seconds):
++    """A WAV tone of exactly `seconds`: MP3 would add ~120 ms of encoder padding.
++
++    The fit arithmetic probes the real file duration, so padded fixtures would test a different overrun than the
++    one the test describes.
++    """
+     cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', f'sine=frequency={frequency}:sample_rate=44100',
+-           '-t', str(seconds), '-c:a', 'libmp3lame', '-b:a', '128k', str(path)]
++           '-t', str(seconds), '-c:a', 'pcm_s16le', str(path)]
+     subprocess.run(cmd, check=True)
+     return path
+ 
+@@ -55,7 +60,10 @@ def _sha(path):
+     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+ 
+ 
+-def _zero_crossings_per_second(path, seconds=1.0, start=0.0):
++def _zero_crossings_per_second(path, seconds=1.0, start=0.3):
++    # Start after the AAC encoder priming: the first ~60 ms of a fresh encode decode to silence, and counting
++    # that silence would report a lower pitch than the tone actually heard.
++
+     raw = subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', str(start), '-i', str(path), '-vn', '-ac', '1', '-ar', '8000',
+                           '-f', 's16le', '-t', str(seconds), '-'], capture_output=True, check=True).stdout
+     samples = array.array('h', raw)
+@@ -83,7 +91,7 @@ def _job(tmp_path, *, picture_seconds=3.0, hindi_seconds=3.0, odia_seconds=3.0,
+     for code, freq, seconds in (('hi', 660, hindi_seconds), ('or', 880, odia_seconds)):
+         folder = job / 'speech-editions' / code / ('key-' + code)
+         folder.mkdir(parents=True)
+-        audio = _tone(folder / 'voice.mp3', freq, seconds)
++        audio = _tone(folder / 'voice.wav', freq, seconds)
+         words = [{'word': 'शब्द', 'start': 0.1, 'end': 0.9}, {'word': 'दो', 'start': 1.0, 'end': 1.8},
+                  {'word': 'तीन', 'start': 2.0, 'end': 2.8}]
+         words_path = folder / 'words.json'
+@@ -160,7 +168,9 @@ def test_narration_more_than_a_quarter_longer_is_fitted_instead_of_refused(tmp_p
+     report = render_job_editions(job)
+     assert report['status'] == 'exported', report
+     export = Path(report['editions']['hi']['path'])
+-    assert abs(_duration(export) - 4.2) < 0.25
++    # 3.0 s picture slowed 1.25x = 3.75 s, and 4.2 s of narration at 1.12x = 3.75 s: the whole script is heard
++    # inside the stretched picture, so the edition is as long as the stretched picture, not as long as the raw take.
++    assert abs(_duration(export) - 3.75) < 0.25
+     assert 1250 < _zero_crossings_per_second(export, seconds=1.0, start=0.5) < 1400   # Hindi voice, same pitch
+     provenance = json.loads(export.with_suffix('.provenance.json').read_text(encoding='utf-8'))
+     assert provenance['narration_fitted_picture'] is True
+diff --git a/tests/test_v776_hooks.py b/tests/test_v776_hooks.py
+index 3b05dbf..d1c19c1 100644
+--- a/tests/test_v776_hooks.py
++++ b/tests/test_v776_hooks.py
+@@ -109,10 +109,16 @@ def test_changed_narration_refuses_stale_hooks(tmp_path, monkeypatch):
+     audio = audio_file(tmp_path)
+     VH.draft_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep')
+     assert VH.load_hooks(tmp_path, audio, words(), 'script', DURATION, 'en', topic='Sleep')
+-    with pytest.raises(ValueError, match='changed after hook drafting'):
++    # 7.0.108: the refusal names the file, the part that changed and the one-command repair.
++    with pytest.raises(ValueError) as script_error:
+         VH.load_hooks(tmp_path, audio, words(), 'edited script', DURATION, 'en', topic='Sleep')
+-    with pytest.raises(ValueError, match='changed after hook drafting'):
++    message = str(script_error.value)
++    assert 'the reviewed script changed since the draft' in message
++    assert 'production/hooks.json' in message or 'hooks.json' in message
++    assert 'cli.py v3 refresh-cards' in message and '--language en' in message
++    with pytest.raises(ValueError) as audio_error:
+         VH.load_hooks(tmp_path, audio_file(tmp_path, b'other'), words(), 'script', DURATION, 'en', topic='Sleep')
++    assert 'the narration audio changed since the draft' in str(audio_error.value)
+ 
+ 
+ def test_load_hooks_without_draft_returns_none(tmp_path):
+diff --git a/tools/update_v7105_to_v7106.py b/tools/update_v7105_to_v7106.py
+deleted file mode 100644
+index d69f1f8..0000000
+--- a/tools/update_v7105_to_v7106.py
++++ /dev/null
+@@ -1,164 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.106 update to a v7.0.105 installation.
+-
+-Two field requests:
+-
+-1. **Approve every Flow video request once, not just the first.** A job needing eight Flow videos needed seven
+-   manual clicks, and after a pause a manual ``approve-request`` before Resume could do anything - because a
+-   submitted request whose card was never clicked has no video to download, so every scan "honestly" found
+-   nothing. Now each saved request is approved exactly once (visible card, readable cost, within the per-take
+-   cap), never twice, never with "Always approve", and never when ``flow_approval = manual``.
+-2. **Keep the rendered video when a job is cleaned up.** Permanent deletion used to remove the folder that held
+-   the finished video. It is now moved to ``<outputs>/_render-backups/<job>/`` first, and Clip Studio cleanup
+-   moves its clips to ``_render-backups/clips`` - with a verification step that refuses the deletion if the
+-   backup cannot be made.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.106 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.106/tools/update_v7105_to_v7106.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.106/tools/update_v7105_to_v7106.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['APPROVE_ONCE_AND_RENDER_BACKUPS_V7_0_106.md', 'VERSION', 'app.py', 'cli.py',
+-           'engine/automatic_recovery.py', 'engine/clip_cleanup.py', 'engine/factory.py',
+-           'engine/flow_approval_once.py', 'engine/flow_resume_recovery.py', 'engine/job_delete.py',
+-           'engine/providers/flow_browser.py', 'engine/render_backup.py', 'engine/studio_config.py',
+-           'tests/test_v7106_approval_and_backups.py', 'tools/update_v7105_to_v7106.py']
+-# Files as they exist in 7.0.105: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['e419a0b909b90b8f47baa4f77239b41800bdf4e5ad16462e8cd8b700156e1fed'],
+-    'app.py': ['db9144975ecfad553cf7e4cb398a6b34412a426a3394f8953e0058ef4c1ba13e'],
+-    'cli.py': ['12d3f84e7f6ad2c6ccbc4c9c2382afcd0a3a4d81c5693b9393f7b06c86a8b597'],
+-    'engine/automatic_recovery.py': ['cef8a0ca826eee4bd61331a61919b6901bb495a7ba3a15f950572c2c129b222b'],
+-    'engine/clip_cleanup.py': ['2bcc4727301a5ff430dd3532f7786ad4b12a7d268904bd9e83a5cdbe6c47ed01'],
+-    'engine/factory.py': ['273fd0904fb660f6b91c9e6ede5165c18754386ba5db3caa8eb72bb547ab93e9'],
+-    'engine/flow_resume_recovery.py': ['f566687aa97cac15b7195d014dfa4758991796c8aeaa8b8be18d9d98323ff847'],
+-    'engine/job_delete.py': ['66925467fa070bde4fdf45f2766829b855a3b29fb295e6b7b592785e1aad5cc6'],
+-    'engine/providers/flow_browser.py': ['c1c5a014394c24df7125b1b22acf83573390c3bb9b90c590a590543c2214a1ee'],
+-    'engine/studio_config.py': ['136f71af15372264c2f0a9fd2a77e41536dace8a19663dafa1a1efb04e984894'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.105', '7.0.106')  # 7.0.106 allows a safe re-run after success
+-
+-# The 7.0.105 zip carries the 7.0.104 to 7.0.105 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.104', '7.0.105', 'tools/update_v7104_to_v7105.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.105 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.105 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.105 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.106 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.106 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.106 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.105-to-v7.0.106-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.106. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7106_to_v7107.py b/tools/update_v7107_to_v7108.py
+similarity index 57%
+rename from tools/update_v7106_to_v7107.py
+rename to tools/update_v7107_to_v7108.py
+index 6a1394f..6082eb6 100644
+--- a/tools/update_v7106_to_v7107.py
++++ b/tools/update_v7107_to_v7108.py
+@@ -1,37 +1,35 @@
+ #!/usr/bin/env python3
+-"""Apply the v7.0.107 update to a v7.0.106 installation.
+-
+-Three field problems from one three-language job:
+-
+-1. **A 30% longer Odia narration produced no video.** The edition render only allowed the picture to be slowed
+-   by 25% and then refused with one line that stated neither the overrun nor any way out. A narration is now
+-   fitted by bounded retiming (picture up to 1.25x, pitch-preserving narration speed up to 1.12x, optional
+-   cloned last frame), word timings follow the narration speed, and anything beyond the budget is refused with
+-   the seconds, the ratio, the number of words to cut and the exact flags that would accept it.
+-2. **Cards and hooks were missing or unconvincing.** Hooks and speech cards default to on; reviewed speech cards
+-   are used for every language edition (not only educational videos); plain cards are drawn as real animated
+-   pop-ups instead of static lower-third strips; editions keep their own card kind and palette; a failed card
+-   draft no longer kills the render. Every render writes ``production/graphics_audit.json`` explaining what was
+-   requested, prepared and placed, and ``graphics-audit --check`` proves from the finished file whether each
+-   card is visible.
+-3. **The music did not drop under speech.** The bed is ducked ~13 dB (12:1) with a 15 ms attack and 550 ms
+-   release, fades in and out with the video length, effects sit at 0.65x, and editions are normalised to
+-   -14 LUFS. ``cli.py v3 tune`` adjusts all of it without spending credits.
+-
+-Plus a curated royalty-free music guide (``docs/MUSIC_LIBRARY.md``) with ``music-suggest`` and ``music-check``.
++"""Apply the v7.0.108 update to a v7.0.107 installation.
++
++One field problem, and the two defects behind it:
++
++**The Odia edition of a three-language job died with "Narration or timings changed after card drafting".**
++The narration itself was fine. When 7.0.107 fitted that longer narration, it rewrote the word timings into
++``words-fitted.json`` and then handed *that rescaled copy* to the card renderer, whose fingerprint is built
++from the narration plus its word timings. Its own retimed copy could never match the draft, so the guard fired -
++after minutes of encoding - and blamed the review script.
++
++* Cards and hooks are now resolved **before** the picture is retimed, against the reviewed narration and its own
++  word timings, and the placed overlays are retimed by the narration speed (``_retime_overlays``). A fitted
++  narration can no longer invalidate its own cards, and a really stale card file fails in seconds.
++* When a card or hook file really was drafted from a different narration, the message names the file, the part
++  that changed, the saved-versus-current word and character counts, and two paste-ready commands:
++  ``cli.py v3 refresh-cards <job> --language or`` and ``cli.py v3 language-outputs <job> --fit-hold 8``.
++* New ``cli.py v3 refresh-cards`` re-drafts cards and hooks from the narrations already saved in the job: one
++  Gemini Web request per language, no text-to-speech, no video request, no Flow credit. Edition failure text is
++  no longer truncated to 300 characters, so the repair instructions arrive whole.
+ 
+ Nothing is generated, rendered or charged by this update itself.
+ 
+-Usage (run from the existing installation folder, after extracting the 7.0.107 zip beside it):
++Usage (run from the existing installation folder, after extracting the 7.0.108 zip beside it):
+ 
+-    python3 ../AutoVideoAI-v7.0.107/tools/update_v7106_to_v7107.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.107/tools/update_v7106_to_v7107.py . --apply    # installs the code
++    python3 ../AutoVideoAI-v7.0.108/tools/update_v7107_to_v7108.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.108/tools/update_v7107_to_v7108.py . --apply    # installs the code
+ 
+ Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+ ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+ """
+ 
+-
+ import argparse
+ import datetime
+ import fcntl
+@@ -43,52 +41,41 @@ import tempfile
+ from pathlib import Path
+ 
+ CHANGES = [
+-    'VERSION', 'app.py', 'cli.py',
+-    'engine/factory.py', 'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/speech_cards.py',
+-    'engine/render/ffmpeg_renderer.py', 'engine/render/educational_cards.py', 'engine/studio_config.py',
+-    'tools/build_release.py',
+-    # new in 7.0.107
+-    'engine/narration_fit.py', 'engine/graphics_audit.py', 'engine/render/graphic_visibility.py',
+-    'engine/audio/music_catalog.py', 'docs/MUSIC_LIBRARY.md',
+-    'tests/test_v7107_fit_cards_music.py', 'tests/test_v768_language_editions_render.py',
+-    'tests/test_v774_educational_cards.py', 'tests/test_v776_hooks.py',
+-    'NARRATION_FIT_CARDS_AND_MUSIC_V7_0_107.md', 'tools/update_v7106_to_v7107.py',
++    'VERSION', 'cli.py',
++    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/speech_cards.py', 'engine/video_hooks.py',
++    'tests/test_v7108_stale_cards_and_fit.py', 'tests/test_v768_language_editions_render.py',
++    'tests/test_v776_hooks.py',
++    'STALE_CARDS_AND_FIT_TIMING_V7_0_108.md', 'tools/update_v7107_to_v7108.py',
+ ]
+-# Files as they exist in 7.0.106: the only hashes this updater will replace.
++# Files as they exist in 7.0.107: the only hashes this updater will replace.
+ # A hash outside this list means local edits; the file is preserved and nothing is applied.
+ ALLOWED = {
+-    'VERSION': ['67e44222f8fd091c4c50137e42e63fb8eb8352a62191439773a2c98bcd2e4c6f'],
+-    'app.py': ['f0205cdbafdbe17c2a703ecb876beb44866479e34c94df66549cd1795db0c738'],
+-    'cli.py': ['270a986484693bc88ce223eb3b3708cc9b6a092c6690e9c0b68793c58df38c3a'],
+-    'engine/factory.py': ['b290d6121cfbc5d34c8aecfd59c353a56ee36b1f0fb6763ffd9879ac28077fde'],
+-    'engine/finishing_studio.py': ['de583f869e2419c3ad583bc245145be9ef22c7ec78b413768f1c998180682032'],
+-    'engine/language_editions.py': ['2c75676748358f1e43830d3c2907c7c9f15392606d109668ed034811fe10ad4b'],
+-    'engine/render/educational_cards.py': ['061d5400abf011aac692126d6446046d4cbd5e9b52dc8b5984cff27cef38194d'],
+-    'engine/render/ffmpeg_renderer.py': ['0c1ab0c0bc784d707c276e0d72cebf82e682a52cc0f21b396a62507bfd7816fa'],
+-    'engine/speech_cards.py': ['8bc73052097fcd4086f11c974daefc4d1d4663de7ef3720fc5a997cb9d23492e'],
+-    'engine/studio_config.py': ['8058025a234f1654798dcd225bedf7c1e46e1c480a305b414b8db273c87440eb'],
+-    'tools/build_release.py': ['92923e9433f401a9e36c655fbab0a993b6b747fe76c8f187cfd7d85da4b22f41'],
+-    'tests/test_v768_language_editions_render.py': ['30b8da8eb7f87975b1c7277934a0cc6b0086993c4435a6eae16bdb8d39bcd9ae'],
+-    'tests/test_v774_educational_cards.py': ['22f46d0fb9beafbd3b9146aefa91cb1385f2a17999525d04c7ce055faf739be4'],
+-    'tests/test_v776_hooks.py': ['de7973e2772a58aff068d12fefc257d60278f50523bdede4667c3c9f87b45719'],
++    'VERSION': ['dbe78b4d46b3369c3cc7f2faaef0a3e490b7cbac6ec1e0472ea599991658d1a1'],
++    'cli.py': ['a948bfb6a4926ffcaa536c45b84a279b27394837c0cca0888ee87c267c8e98b9'],
++    'engine/finishing_studio.py': ['be890e88d490152899a001df0b5265e93afc91da38552c23d9011d13e37ecff0'],
++    'engine/language_editions.py': ['f97fa0cd4d040b9ed938faa7ae3dfc44d5c70e44cf9f0878b4f208a928f093ee'],
++    'engine/speech_cards.py': ['bcd654dcf0e73a6e5e73a88feab20a5db84f3c37ea53ca40a815177bdf8c2d86'],
++    'engine/video_hooks.py': ['54632fa60552f0fa65b0223977d5985e5cdc2dfb1e94617778da047d5ba40844'],
++    'tests/test_v768_language_editions_render.py': ['da56ab034a8c74dbc142e9ccb36394e7f0400d61845294ac5fada64ac458463f'],
++    'tests/test_v776_hooks.py': ['4e424c26dcb7410fa57df23b9d9fe9385cfc43b9f09be518496100849f572cb3'],
+ }
+ 
+-ACCEPTED_INSTALLS = ('7.0.106', '7.0.107')  # 7.0.107 allows a safe re-run after success
++ACCEPTED_INSTALLS = ('7.0.107', '7.0.108')  # 7.0.108 allows a safe re-run after success
+ 
+-# The 7.0.106 zip carries the 7.0.105 to 7.0.106 update; apply that first on an older installation.
++# The 7.0.107 zip carries the 7.0.106 to 7.0.107 update; apply that first on an older installation.
+ EARLIER_STEPS = [
+-    ('7.0.105', '7.0.106', 'tools/update_v7105_to_v7106.py'),
++    ('7.0.106', '7.0.107', 'tools/update_v7106_to_v7107.py'),
+ ]
+ 
+ 
+ def chain_message(current, version):
+     steps = [step for step in EARLIER_STEPS if step[0] == current]
+     if not steps:
+-        return ('This update requires an installed 7.0.106 (found ' + current + '). '
++        return ('This update requires an installed 7.0.107 (found ' + current + '). '
+                 'Earlier releases must be updated first, one zip at a time.')
+     start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.106 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.106 zip folder extracted beside this installation:\n'
++    return ('This update requires an installed 7.0.107 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.107 zip folder extracted beside this installation:\n'
+             '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+             'Then run this ' + version + ' update.')
+ 
+@@ -111,7 +98,7 @@ def main():
+         raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+     current = version_file.read_text(encoding='utf-8').strip()
+     if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.107'))
++        raise ValueError(chain_message(current, source.name or '7.0.108'))
+     new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+     manifest_path = source / 'RELEASE_MANIFEST.json'
+     if not manifest_path.is_file():

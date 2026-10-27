@@ -1,0 +1,2575 @@
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.106
+\ No newline at end of file
++7.0.107
+\ No newline at end of file
+--- a/app.py
++++ b/app.py
+@@ -646,6 +646,46 @@
+             st.error(str(error))
+ 
+ 
++def graphics_audit_panel(job_id):
++    """Why on-screen cards and hooks did or did not appear (v7.0.107).
++
++    The job used to look broken from the outside: the plan listed graphics, the video seemed to have none. The
++    audit says what was requested, what was prepared, what reached the timeline, and - on demand - whether each
++    card can be seen in the finished file.
++    """
++    from engine.graphics_audit import (build_report, explain, plan_path, _read,
++                                       write as write_graphics_audit)
++    job_dir = Path(F.pm.job_dir(job_id))
++    audit_file = job_dir / 'production' / 'graphics_audit.json'
++    if not audit_file.is_file() and not plan_path(job_dir).is_file():
++        return
++    label = 'Text cards and hooks · what appeared, and why'
++    with st.expander(label, expanded=False):
++        st.code(explain(job_dir), language='text')
++        masters = sorted((job_dir / 'render').glob('*-final*.mp4'),
++                         key=lambda path: path.stat().st_mtime, reverse=True)
++        if not masters:
++            st.caption('No finished video yet. Render the job, then check the cards here.')
++            return
++        st.caption('The check samples the finished video where each card should be and compares it with a '
++                   'frame of the same region a moment earlier. A card that never rendered cannot pass.')
++        if st.button('Check these cards in the finished video', key=f'check-graphics-{job_id}'):
++            try:
++                overlays = _read(plan_path(job_dir), []) or []
++                from engine.render.graphic_visibility import verify
++                verified = verify(masters[0], overlays)
++                stored = _read(audit_file) or build_report(job_dir, overlays=overlays)
++                stored['verified_in_video'] = verified
++                write_graphics_audit(job_dir, stored)
++                if verified.get('missing'):
++                    st.warning('Not found in the video: ' + ', '.join(verified['missing'][:6]))
++                else:
++                    st.success(f"All {verified.get('checked', 0)} sampled cards are visible in the video.")
++                st.rerun()
++            except Exception as error:
++                st.error('The graphics check failed: ' + str(error))
++
++
+ # ================= STUDIO =================
+ queued_resume = st.session_state.pop("pending_resume_job", None)
+ if queued_resume:
+@@ -893,9 +933,14 @@
+                 if route_choices[chosen]:
+                     language_routes[lang] = route_choices[chosen]
+         tts_provider_value = {'default': tts_provider, **language_routes} if language_routes else tts_provider
+-        speech_cards_enabled = st.checkbox('Use speech-timed Gemini cards in this production', value=False, key='studio-speech-cards', disabled=not studio_voice_on)
+-        hooks_enabled = st.checkbox('Add Gemini Web hooks where the narration needs them', value=False, key='studio-hooks-enabled', disabled=not studio_voice_on,
+-            help='Gemini Web drafts up to 6 short hook lines after the narration words and text cards are ready. Each is a pop pill near the top and never covers a text card. Needs a voiceover.')
++        # 7.0.107: cards and hooks are on by default. Off by default, a job produced a clean picture with
++        # almost no pop-up cards and no hooks at all, which looked like a missing feature.
++        speech_cards_enabled = st.checkbox('Use speech-timed Gemini cards in this production', value=True, key='studio-speech-cards', disabled=not studio_voice_on,
++            help='Gemini Web drafts up to 18 short pop-up cards anchored to the spoken words. Each card is a '
++                 'panel with a badge that opens and closes, and never repeats a whole subtitle. This is one '
++                 'Gemini Web request. Untick it to use the automatic cards only.')
++        hooks_enabled = st.checkbox('Add Gemini Web hooks where the narration needs them', value=True, key='studio-hooks-enabled', disabled=not studio_voice_on,
++            help='Gemini Web drafts up to 6 short hook lines after the narration words and text cards are ready. Each is a pop pill near the top and never covers a text card. Needs a voiceover. This is one Gemini Web request per language.')
+         # 7.0.95: with more than one edition selected, preparing the extra narrations is the
+         # default. Left off, the job rendered the English master and nothing else.
+         prepare_language_audio = st.checkbox('Also prepare every selected language automatically during production',
+@@ -1202,6 +1247,7 @@
+         st.divider()
+         pipeline_view(st.session_state.job_id)
+         language_edition_panel(st.session_state.job_id)
++        graphics_audit_panel(st.session_state.job_id)
+ 
+ # ================= MUSIC VIDEO =================
+ elif page == 'MUSIC VIDEO':
+@@ -1858,6 +1904,7 @@
+     if st.session_state.job_id:
+         monitor_job(st.session_state.job_id)
+         language_edition_panel(st.session_state.job_id)
++        graphics_audit_panel(st.session_state.job_id)
+         from engine.job_monitor import snapshot
+         job_active = snapshot(F.pm.job_dir(st.session_state.job_id))["running"]
+         selected_row = DB.get(st.session_state.job_id) or {}
+--- a/cli.py
++++ b/cli.py
+@@ -357,6 +357,11 @@
+                           help="Only report, per language, whether its video exists and what is missing (no render)")
+     lang_out.add_argument("--recover-picture", action="store_true",
+                           help="If the clean picture is missing, copy it from the finished video (may include its burned captions)")
++    # 7.0.107: a longer reviewed narration no longer dead-ends at the old 25% limit.
++    lang_out.add_argument("--fit-max-tempo", type=float, default=None,
++                          help="Fastest pitch-preserving narration speed accepted when fitting a longer script (default 1.12)")
++    lang_out.add_argument("--fit-hold", type=float, default=None,
++                          help="Seconds of cloned last frame allowed at the end to fit a long narration (default 0 = never)")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -374,6 +379,43 @@
+     au = sub.add_parser("audit", help="Audit shot density, provider fallbacks and observed credit use")
+     au.add_argument("job_id")
+ 
++    ms = sub.add_parser("music-suggest", help="Recommended royalty-free tracks per video type, with licences")
++    ms.add_argument("--content-type", default="", choices=["", "education", "motivation", "documentary",
++                                                            "technology", "kids", "travel", "business"],
++                    help="Video type to recommend for (default: the whole catalogue)")
++    ms.add_argument("--theme", action="append", default=[], choices=["calm", "motivation", "upbeat",
++                                                                    "cinematic", "technology"],
++                    help="Theme tag; repeat for more than one")
++    ms.add_argument("--limit", type=int, default=6)
++    ms.add_argument("--sources", action="store_true", help="Explain where to download from and the licence terms")
++    ms.add_argument("--json", action="store_true", help="Machine-readable output")
++
++    mc = sub.add_parser("music-check", help="Check a downloaded track and print the music_library entry to fill in")
++    mc.add_argument("file")
++
++    ga = sub.add_parser("graphics-audit",
++                        help="Explain why text cards or hooks did (or did not) appear, and check the finished video")
++    ga.add_argument("job_id")
++    ga.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    ga.add_argument("--check", action="store_true",
++                    help="Sample the finished video now and update production/graphics_audit.json")
++    ga.add_argument("--json", action="store_true", help="Print the stored audit JSON instead of a summary")
++
++    tn = sub.add_parser("tune", help="Adjust music ducking, fades and the edition narration fit of a saved job")
++    tn.add_argument("job_id")
++    tn.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    tn.add_argument("--duck-ratio", type=float, default=None, help="Music compression ratio under speech, 1-20 (default 12 = about 13 dB)")
++    tn.add_argument("--duck-threshold", type=float, default=None, help="Sidechain threshold 0-0.5 (default 0.02)")
++    tn.add_argument("--duck-release-ms", type=int, default=None, help="How fast the music returns (default 550)")
++    tn.add_argument("--music-fade-in", type=float, default=None, help="Seconds of music fade-in (default 1.0)")
++    tn.add_argument("--music-fade-out", type=float, default=None, help="Seconds of music fade-out (default 2.5)")
++    tn.add_argument("--sfx-gain", type=float, default=None, help="Sound-effect level 0-1 (default 0.65)")
++    tn.add_argument("--fit-max-tempo", type=float, default=None,
++                    help="Fastest narration speed for a longer language script (default 1.12)")
++    tn.add_argument("--fit-hold", type=float, default=None,
++                    help="Seconds of cloned last frame allowed to fit a long language script (default 0)")
++    tn.add_argument("--show", action="store_true", help="Only print the values this job uses")
++
+     a = sub.add_parser("associate", help="Assisted mode: map a downloaded clip to a shot")
+     a.add_argument("job_id")
+     a.add_argument("shot_id")
+@@ -588,10 +630,17 @@
+             # 7.0.95: read-only. Names the language and the one action that unblocks it.
+             print(_json.dumps(edition_diagnosis(job_dir), indent=2, ensure_ascii=False))
+             return
++        fit_policy = {}
++        if getattr(args, "fit_max_tempo", None) is not None:
++            fit_policy["max_tempo"] = float(args.fit_max_tempo)
++        if getattr(args, "fit_hold", None) is not None:
++            fit_policy["allow_hold"] = float(args.fit_hold) > 0
++            fit_policy["hold_cap"] = float(args.fit_hold) if float(args.fit_hold) > 0 else 20.0
+         with production_slot(job_dir):
+             report = render_language_outputs(job_dir,
+                 progress=lambda label, pct, detail="": print(f"[{int(pct):3d}%] {label} {detail}".rstrip()),
+-                allow_recovered_picture=bool(getattr(args, "recover_picture", False)))
++                allow_recovered_picture=bool(getattr(args, "recover_picture", False)),
++                fit_policy=fit_policy or None)
+         print(_json.dumps(report, indent=2, ensure_ascii=False))
+         return
+ 
+@@ -1042,6 +1091,106 @@
+                 guidance = {}
+             for line in pause_guidance_lines(pause, guidance):
+                 print(line)
++    elif args.cmd == "music-suggest":
++        import json as _json
++        from engine.audio.music_catalog import (SAFE_SOURCES, credit_block, recommend, theme_tags,
++                                                VIDEO_TYPES)
++        tracks = recommend(args.content_type, args.theme or None, args.limit)
++        if args.json:
++            print(_json.dumps({"schema": "music-catalogue-v1", "video_types": VIDEO_TYPES,
++                               "recommended": tracks, "credit_block": credit_block(tracks),
++                               "library_tags": theme_tags(args.content_type),
++                               "sources": SAFE_SOURCES}, indent=2, ensure_ascii=False))
++            return
++        heading = VIDEO_TYPES.get(args.content_type, "every video type") if args.content_type else "every video type"
++        print(f"Royalty-free music for {heading}")
++        if not tracks:
++            print("  No catalogue entry matches that combination; run with --sources to browse the libraries.")
++        for track in tracks:
++            need = "credit required" if track["attribution"] == "required" else "no credit needed"
++            print(f"  {track['title']} - {track['artist']}  [{track['licence']}, {need}]")
++            print(f"      {track['platform']} · {track['url']}")
++            print(f"      search: {track['search']} · themes: {', '.join(track['themes'])}")
++            print(f"      {track['notes']}")
++        block = credit_block(tracks)
++        if block:
++            print("\nPaste this in the video description when you use these tracks:")
++            print(block)
++        print("\nImport them into the library with tags: " + ", ".join(theme_tags(args.content_type))
++              + "  (Create > Music library, or set AUTOVIDEO_MUSIC_LIBRARY)")
++        if args.sources:
++            print("\nWhere to download, and the terms:")
++            for source in SAFE_SOURCES:
++                print(f"  {source['name']} - {source['url']}")
++                print(f"      licence: {source['licence']}")
++                print(f"      attribution: {source['attribution']}")
++                print(f"      Content ID: {source['content_id']}")
++                print(f"      {source['notes']}")
++        print("\nRe-check the licence page before publishing; terms change. Full guide: docs/MUSIC_LIBRARY.md")
++        return
++    elif args.cmd == "music-check":
++        import json as _json
++        from pathlib import Path as _Path
++        import hashlib as _hashlib
++        path = _Path(args.file).expanduser().resolve()
++        if not path.is_file():
++            raise SystemExit(f"No file at {path}. Pass the path of the downloaded track.")
++        from engine.flow_music import validate_audio
++        try:
++            validate_audio(str(path))
++        except Exception as error:
++            raise SystemExit(f"{path.name} is not a usable audio track: {error}")
++        digest = _hashlib.sha256(path.read_bytes()).hexdigest()
++        print(_json.dumps({"file": path.name, "size": path.stat().st_size, "sha256": digest,
++                           "import": {"title": "<track title>", "tags": "<calm|motivation|upbeat|cinematic|technology>",
++                                      "source_url": "<https:// page you downloaded from>",
++                                      "license": "<exact licence, e.g. CC BY 4.0 or Pixabay Content License>"},
++                           "next": "Upload it in Create > Music library (it writes manifest.json), or copy it into "
++                                   "music_library/ and add this entry to music_library/manifest.json."},
++                          indent=2, ensure_ascii=False, default=str))
++        return
++    elif args.cmd == "graphics-audit":
++        import json as _json
++        from engine.graphics_audit import _read, explain, write as write_graphics_audit
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(getattr(args, "outputs_root", None) or "outputs", args.job_id)
++        if not job_dir.is_dir():
++            raise SystemExit(f"No saved job at {job_dir}. Pass the job id exactly as it appears in outputs/.")
++        if args.check:
++            from engine.graphics_audit import plan_path
++            overlays = _read(plan_path(job_dir), []) or []
++            masters = sorted((job_dir / "render").glob("*-final*.mp4"), key=lambda p: p.stat().st_mtime,
++                             reverse=True)
++            if not masters:
++                raise SystemExit(f"No finished video in {job_dir / 'render'}. Render the job first, then run this again.")
++            from engine.render.graphic_visibility import verify
++            verified = verify(masters[0], overlays)
++            report = _read(job_dir / "production" / "graphics_audit.json")
++            if report:
++                report["verified_in_video"] = verified
++                write_graphics_audit(job_dir, report)
++            print(f"Checked {verified.get('checked', 0)} card(s) in {masters[0].name}; "
++                  f"{len(verified.get('missing') or [])} not visible.")
++        if args.json:
++            stored = _read(job_dir / "production" / "graphics_audit.json")
++            print(_json.dumps(stored, indent=2, ensure_ascii=False) if stored else
++                  _json.dumps({"error": "no production/graphics_audit.json yet; render the job or run with --check"},
++                              indent=2))
++            return
++        print(explain(job_dir))
++    elif args.cmd == "tune":
++        import json as _json
++        updates = {"music_duck_ratio": args.duck_ratio, "music_duck_threshold": args.duck_threshold,
++                   "music_duck_release_ms": args.duck_release_ms, "music_fade_in": args.music_fade_in,
++                   "music_fade_out": args.music_fade_out, "sfx_gain": args.sfx_gain,
++                   "edition_fit_max_tempo": args.fit_max_tempo,
++                   "edition_fit_hold_seconds": args.fit_hold}
++        updates = {key: value for key, value in updates.items() if value is not None}
++        if args.show or not updates:
++            print(_json.dumps(f.tuning_report(args.job_id), indent=2, ensure_ascii=False))
++        else:
++            print(_json.dumps(f.set_tuning_options(args.job_id, **updates), indent=2, ensure_ascii=False))
++        return
+     elif args.cmd == "audit":
+         m = f.pm.load_manifest(args.job_id)
+         ds = [float(x.duration_target or 0) for x in m.shots]
+--- a/engine/factory.py
++++ b/engine/factory.py
+@@ -41,6 +41,60 @@
+ _ECONOMY_FRAME_HEARTBEAT_SECONDS = 15
+ 
+ 
++def _sound_policy(settings) -> dict:
++    """How the music sits under the voice (v7.0.107).
++
++    Field report: the music never seemed to drop while the narrator talked. The bed is now ducked by
++    ``music_duck_ratio`` (12:1 ≈ 13 dB) whenever the voice passes ``music_duck_threshold``, released in
++    ``music_duck_release_ms`` so it comes back in the pauses, and fades in/out at the ends of the video.
++    Every value can be set per job; bad values fall back to the default instead of failing the render.
++    """
++    settings = settings or {}
++
++    def number(key, default, low, high):
++        try:
++            value = float(settings.get(key, default))
++        except (TypeError, ValueError):
++            return float(default)
++        if not (low <= value <= high):
++            return float(default)
++        return value
++
++    return {
++        'duck_ratio': number('music_duck_ratio', 12.0, 1.0, 20.0),
++        'duck_threshold': number('music_duck_threshold', 0.02, 0.0005, 0.5),
++        'duck_attack_ms': int(number('music_duck_attack_ms', 15.0, 1.0, 2000.0)),
++        'duck_release_ms': int(number('music_duck_release_ms', 550.0, 50.0, 5000.0)),
++        'music_fade_in': number('music_fade_in', 1.0, 0.0, 30.0),
++        'music_fade_out': number('music_fade_out', 2.5, 0.0, 30.0),
++        'sfx_gain': number('sfx_gain', 0.65, 0.0, 1.0),
++    }
++
++
++def _edition_fit_policy(settings) -> dict:
++    """Bounded retiming budget for a longer edition narration (v7.0.107).
++
++    ``edition_fit_max_tempo`` (default 1.12), ``edition_fit_hold_seconds`` (default 0 = never hold the last
++    frame) and ``edition_fit_max_picture_stretch`` (default 1.25) can be set per job. Together they decide how
++    much longer a narration may be before the edition is refused with exact numbers.
++    """
++    settings = settings or {}
++    def number(key, default):
++        try:
++            value = float(settings.get(key, default))
++        except (TypeError, ValueError):
++            return float(default)
++        return value if value > 0 else float(default)
++    hold = settings.get('edition_fit_hold_seconds', 0)
++    try:
++        hold = max(0.0, float(hold))
++    except (TypeError, ValueError):
++        hold = 0.0
++    return {'max_picture_stretch': number('edition_fit_max_picture_stretch', 1.25),
++            'max_tempo': number('edition_fit_max_tempo', 1.12),
++            'allow_hold': hold > 0, 'hold_cap': hold or 20.0}
++
++
+ def _setting_int(settings, key, default):
+     value = (settings or {}).get(key)
+     return int(default if value is None else value)
+@@ -470,6 +524,10 @@
+                             "approved_plan_path", "narration_input_path", "character_id", "narration_runtime_policy", "external_video_shots", "external_video_mode", "speech_cards_enabled", "gemini_video_count", "flow_auto_cleanup_images"):
+                 if key in j and not (key in PRESENTATION_KEYS and j[key] is None):
+                     merged[key] = j[key]
++            # 7.0.107: the mix/narration-fit overrides written by `cli.py v3 tune`.
++            for key in self.TUNING_KEYS:
++                if key in j and j[key] is not None:
++                    merged[key] = j[key]
+         except Exception:
+             pass
+         from .broll import BROLL_KEYS,validate_broll_options
+@@ -950,6 +1008,39 @@
+         self.pm.log(job_id, 'narration_runtime_policy', {'policy': 'measured', 'script_rewritten': False})
+         return {'job_id': job_id, 'policy': 'measured', 'new_visual_generations': 0}
+ 
++    # 7.0.107: tunable mix and narration-fit settings. Each one has a sane default; these only exist so a
++    # finished mix can be adjusted without editing JSON by hand.
++    TUNING_KEYS = ("music_duck_ratio", "music_duck_threshold", "music_duck_attack_ms",
++                   "music_duck_release_ms", "music_fade_in", "music_fade_out", "sfx_gain",
++                   "edition_fit_max_tempo", "edition_fit_hold_seconds", "edition_fit_max_picture_stretch")
++
++    def tuning_report(self, job_id: str) -> dict:
++        """The mix/fit values this job will use, and the defaults they came from."""
++        saved = self._settings(job_id)
++        return {"job_id": job_id,
++                "sound": _sound_policy(saved),
++                "edition_fit": _edition_fit_policy(saved),
++                "saved_overrides": {key: saved[key] for key in self.TUNING_KEYS if key in saved}}
++
++    def set_tuning_options(self, job_id: str, **updates) -> dict:
++        """Persist mix/fit overrides; refuse unknown keys instead of writing them silently."""
++        from .job_monitor import is_running
++        unknown = set(updates) - set(self.TUNING_KEYS)
++        if unknown:
++            raise ValueError("Unknown tuning option(s): " + ", ".join(sorted(unknown))
++                             + ". Known: " + ", ".join(self.TUNING_KEYS))
++        if is_running(self.pm.job_dir(job_id)):
++            raise ValueError("This job is running. Wait for it to finish before changing its mix settings.")
++        path = os.path.join(self.pm.job_dir(job_id), "settings.json")
++        saved = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
++        saved.update({key: value for key, value in updates.items() if value is not None})
++        from .production import save
++        save(path, saved)
++        self.pm.log(job_id, "tuning_changed", {"options": updates})
++        return {"job_id": job_id, "saved_overrides": {k: saved[k] for k in self.TUNING_KEYS if k in saved},
++                "sound": _sound_policy(saved), "edition_fit": _edition_fit_policy(saved),
++                "next": "Render the same accepted takes to hear the change; no Flow credits are spent."}
++
+     def set_presentation_options(self, job_id: str, **updates) -> dict:
+         """Local editing only: keep takes, scene timings, project bindings and journals."""
+         from .job_monitor import is_running
+@@ -1541,10 +1632,17 @@
+                 metadata = json.load(open(metadata_path, encoding='utf-8'))
+                 timing = metadata.get('timing_source', metadata.get('engine', 'unverified'))
+             from .render.educational_cards import is_educational
+-            prepare(D['root'], voice_path, words, plan.get('narration', ''), narration_dur,
+-                    m.language, cleanup=settings.get('gemini_chat_cleanup', 'keep'), timing_source=timing,
+-                    educational=is_educational(m.content_type, getattr(m, "preset", "")),
+-                    topic=m.topic, provider=settings.get("card_draft_provider") or "gemini-web")
++            try:
++                prepare(D['root'], voice_path, words, plan.get('narration', ''), narration_dur,
++                        m.language, cleanup=settings.get('gemini_chat_cleanup', 'keep'), timing_source=timing,
++                        educational=is_educational(m.content_type, getattr(m, "preset", "")),
++                        topic=m.topic, provider=settings.get("card_draft_provider") or "gemini-web")
++            except Exception as cards_error:
++                # v7.0.107: a failed card draft no longer stops a production that asked for cards by
++                # default; the render falls back to its automatic cards and the audit says why.
++                self.pm.log(job_id, 'speech_cards_skipped', {'error': str(cards_error)[:300]})
++                prog('Speech cards not drafted: ' + ' '.join(str(cards_error).split())[:200], 16,
++                     'The video still renders with automatic text cards; production/graphics_audit.json names the cause.')
+ 
+         if settings.get('hooks_enabled') and presentation.voiceover and not dry and words:
+             # 7.0.76: Gemini Web hooks after narration words and text cards exist. A failed draft
+@@ -4546,6 +4644,8 @@
+         # v5.6 graphics replace the dead-end permanent transcript in YouTube
+         # production mode. Full SRT/ASS files are still generated for YouTube CC.
+         overlays = []
++        graphics_errors = []
++        dropped_hooks = 0
+         graphics_enabled = presentation.text_cards
+         if graphics_enabled or bool(settings.get("watermark", False)):
+             try:
+@@ -4562,6 +4662,7 @@
+                 _save_json(os.path.join(D["root"], "graphics_plan.json"), overlays)
+             except Exception as ge:
+                 overlays = []
++                graphics_errors.append({"stage": "graphics_overlay_failed", "error": str(ge)[:300]})
+                 self.pm.log(job_id, "graphics_overlay_failed", {"error": str(ge)[:300]})
+ 
+         from .render.structured_graphics import build_structured_overlays
+@@ -4582,10 +4683,20 @@
+             if settings.get('speech_cards_enabled') and voice:
+                 from .speech_cards import render as render_speech_cards
+                 saved_words = json.load(open(words_p, encoding='utf-8'))
+-                reviewed = render_speech_cards(D['root'], voice, saved_words, script_text, ndur,
+-                                               m.width, m.height, card_style, educational=educational, topic=m.topic)
++                try:
++                    reviewed = render_speech_cards(D['root'], voice, saved_words, script_text, ndur,
++                                                   m.width, m.height, card_style, educational=educational, topic=m.topic)
++                except Exception as cards_error:
++                    # v7.0.107: never stop a finished production over its cards; explain it instead.
++                    graphics_errors.append({"stage": "speech_cards_render_failed", "error": str(cards_error)[:300]})
++                    reviewed = None
+                 if reviewed is None:
+-                    raise ValueError('Speech cards are enabled but not prepared. Resume this job first.')
++                    reviewed = render_reviewed_cards(D['root'], ndur, m.width, m.height, card_style)
++                    if reviewed is None and not any(e.get("stage") == "speech_cards_render_failed"
++                                                    for e in graphics_errors):
++                        graphics_errors.append({
++                            "stage": "speech_cards_not_prepared",
++                            "error": "Speech cards are enabled but production/speech_cards.json is missing or empty."})
+             else:
+                 reviewed = render_reviewed_cards(D['root'], ndur, m.width, m.height, card_style)
+             if reviewed is not None:
+@@ -4602,6 +4713,7 @@
+                     self.pm.log(job_id, 'hooks_dropped_overlap', {'dropped': dropped_hooks})
+                 overlays = [e for e in overlays if e.get('kind') != 'hook'] + hook_overlays
+             except Exception as hook_error:
++                graphics_errors.append({"stage": "hooks_render_failed", "error": str(hook_error)[:300]})
+                 self.pm.log(job_id, 'hooks_render_skipped', {'error': str(hook_error)[:300]})
+ 
+         # Always update the plan, so a disabled overlay is not resurrected by
+@@ -4651,6 +4763,7 @@
+                               stereo_master=True, quality=quality,
+                               safe_concat=True, loop_short_segments=True,
+                               video_overlays=video_cutaways, clean_master_path=clean_master,
++                              **_sound_policy(settings),
+                               progress_cb=lambda p, detail="": prog("🎬 Rendering", 92 + (float(p) * 0.06), detail))
+             renderer = "ffmpeg"
+             # Some WSL/libass builds advertise the subtitles filter but fail at
+@@ -4835,10 +4948,38 @@
+         try:
+             from .language_editions import render_job_editions
+             edition_report = render_job_editions(
+-                D["root"], progress=lambda label, pct, detail="": prog(label, 96 + 3 * float(pct) / 100, detail))
++                D["root"], progress=lambda label, pct, detail="": prog(label, 96 + 3 * float(pct) / 100, detail),
++                fit_policy=_edition_fit_policy(settings))
+         except Exception as edition_error:
+             edition_report = {"status": "failed", "editions": {}, "error": str(edition_error)[:800]}
+-        final_warnings = list(tl["warnings"])
++        # v7.0.107: record why on-screen cards and hooks did - or did not - appear, and prove with the
++        # finished file whether each card can actually be seen.
++        try:
++            from .graphics_audit import (build_report as _graphics_report,
++                                         warnings as _graphics_warnings,
++                                         write as _write_graphics_audit)
++            verified_graphics = {"checked": 0,
++                                 "reason": "three-language job: the clean visual master carries no overlays"}
++            if not clean_master and os.path.isfile(out):
++                from .render.graphic_visibility import verify as _verify_graphics
++                verified_graphics = _verify_graphics(out, overlays)
++            # The audit reports the *resolved* choice, not the raw setting: text_cards_enabled is often
++            # None and the real answer comes from presentation (pro mode / graphics_overlays).
++            audit_settings = {**settings, "text_cards_enabled": bool(presentation.text_cards)}
++            audit = _graphics_report(D["root"], settings=audit_settings, overlays=overlays,
++                                     errors=graphics_errors, dropped_hooks=dropped_hooks,
++                                     verified=verified_graphics)
++            _write_graphics_audit(D["root"], audit)
++            graphics_warnings = _graphics_warnings(audit)
++            self.pm.log(job_id, "graphics_audit",
++                        {"verdict": audit["verdict"],
++                         "problems": [item["code"] for item in audit["problems"]],
++                         "cards": audit["on_timeline"]["cards"], "hooks": audit["on_timeline"]["hooks"],
++                         "verified": (audit["verified_in_video"] or {}).get("checked", 0)})
++        except Exception as audit_error:
++            graphics_warnings = []
++            self.pm.log(job_id, "graphics_audit_failed", {"error": str(audit_error)[:300]})
++        final_warnings = list(tl["warnings"]) + graphics_warnings
+         if caption_timing_estimated and caption_display == "full":
+             final_warnings.append("Captions are estimated from the script (" + caption_timing_engine + "), not measured from speech. Words can drift 2-3 s during pauses; check sync before publishing.")
+         if primary_report.get("status") == "failed":
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -16,6 +16,11 @@
+ import uuid
+ 
+ LANGUAGES = {'en': 'English', 'hi': 'Hindi', 'or': 'Odia'}
++
++# v7.0.107: edition sound defaults. A music bed fades in, dips hard under speech and returns in the pauses,
++# then fades out; the finished mix is normalised to the same -14 LUFS target as the English master.
++EDITION_SOUND_DEFAULTS = {'fade_in': 1.0, 'fade_out': 2.5, 'threshold': 0.02, 'ratio': 12.0,
++                          'attack_ms': 15, 'release_ms': 550}
+ MEDIA_EXT = {'.mp4', '.mov', '.mkv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.png', '.jpg', '.jpeg', '.webp'}
+ 
+ 
+@@ -159,7 +164,7 @@
+ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+                 source_rights='own_content', shared_music=None, shared_music_license='',
+                 source_language=None, require_profiles=True, fit_narration=False, captions=False,
+-                use_clean_master=True, editorial=True):
++                use_clean_master=True, editorial=True, fit_policy=None):
+     """A profile may be a single path or a language->profile path mapping.
+ 
+     ``source_language`` names the language spoken in the source picture's own
+@@ -238,16 +243,17 @@
+                 edition['educational'] = bool(bundle.get('educational', False)) and want_cards
+                 edition['topic'] = str(bundle.get('topic', '') or '')
+                 edition['speech_cards'] = None
+-                if edition['educational']:
+-                    cards_file = bundle_folder / 'production' / 'speech_cards.json'
+-                    if not cards_file.is_file():
+-                        # Missing points file: keep the plain cards, drop the points series.
+-                        edition['educational'] = False
+-                        edition['cards_warning'] = (edition['cards_warning'] + ' ' if edition['cards_warning'] else '') + \
+-                            (LANGUAGES[lang] + ' educational points were not saved, so this edition uses its '
+-                             'plain text cards. Prepare that language batch again to restore the points series.')
+-                    else:
+-                        edition['speech_cards'] = _json_snapshot(cards_file, asset_dir, 'speech-cards-' + lang)
++                # v7.0.107: any prepared language gets its reviewed speech cards, not only educational
++                # videos - the pop-up cards are the whole point of drafting them.
++                cards_file = bundle_folder / 'production' / 'speech_cards.json'
++                if want_cards and cards_file.is_file():
++                    edition['speech_cards'] = _json_snapshot(cards_file, asset_dir, 'speech-cards-' + lang)
++                elif edition['educational']:
++                    # Missing points file: keep the plain cards, drop the points series.
++                    edition['educational'] = False
++                    edition['cards_warning'] = (edition['cards_warning'] + ' ' if edition['cards_warning'] else '') + \
++                        (LANGUAGES[lang] + ' educational points were not saved, so this edition uses its '
++                         'plain text cards. Prepare that language batch again to restore the points series.')
+                 edition['hooks'] = None
+                 edition['hook_warning'] = ''
+                 if language_state.get('hooks_enabled', False):
+@@ -266,6 +272,8 @@
+             'source': source_asset, 'shared_music': shared,
+             'shared_music_license': str(shared_music_license).strip()[:500],
+             'source_language': source_language, 'fit_narration': bool(fit_narration),
++            # 7.0.107: bounded retiming budget for a longer narration (see engine/narration_fit.py).
++            'fit_policy': dict(fit_policy or {}),
+             'captions': bool(captions),
+             'editions': editions, 'music_volume': 0.12,
+             'branding_motion': True, 'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+@@ -376,12 +384,18 @@
+     image.save(path)
+ 
+ 
+-def _edition_overlays(edition, language, voice, words_path, width, height, tmp_dir, legacy_cards):
++def _edition_overlays(edition, language, voice, words_path, width, height, tmp_dir, legacy_cards,
++                      duration=None, stats=None):
+     """Points series, single cards and hook pills for one edition, drawn from its saved reviewed data (7.0.77).
+ 
+     Uses the same renderers as the main video, into a scratch root inside the export's temporary folder.
+-    Narration timings are returned; _add_overlays shifts them past any intro.
++    Narration timings are returned; _add_overlays shifts them past any intro. ``stats`` (a dict, when given)
++    is filled with what was placed and what was dropped, so the export can explain its own graphics.
+     """
++    stats = stats if stats is not None else {}
++    stats.setdefault('cards', 0)
++    stats.setdefault('hooks', 0)
++    stats.setdefault('dropped_hooks', 0)
+     if not (edition.get('speech_cards') or edition.get('hooks')):
+         return []
+     if voice is None or words_path is None:
+@@ -392,19 +406,25 @@
+     (root / 'production').mkdir(parents=True, exist_ok=True)
+     words = json.loads(Path(words_path).read_text(encoding='utf8'))
+     audio = _verified(voice)
+-    duration = float(voice['duration'])
++    duration = float(duration if duration is not None else voice['duration'])
++    # v7.0.107: the edition keeps its own card kinds and palette; a plain video is not turned educational
++    # just because it is being exported in another language.
+     educational = bool(edition.get('educational'))
+-    style = 'playful' if educational else 'bold'
++    style = 'playful' if educational else str(edition.get('card_style') or 'bold')
+     overlays = []
+     if edition.get('speech_cards'):
+         shutil.copyfile(_verified(edition['speech_cards']), root / 'production' / 'speech_cards.json')
+         overlays = render_cards(root, audio, words, edition['script'], duration, width, height, style,
+-                                educational=True, topic=edition.get('topic', '')) or []
++                                educational=educational, topic=edition.get('topic', '')) or []
++    stats['cards'] = len(overlays)
+     if edition.get('hooks'):
+         shutil.copyfile(_verified(edition['hooks']), root / 'production' / 'hooks.json')
+         existing = overlays + [{'kind': 'keypoint', 'start': c['start'], 'end': c['end']} for c in legacy_cards]
+-        hook_overlays, _dropped = build_hook_overlays(root, audio, words, edition['script'], duration, width, height,
+-                                                      style, existing, topic=edition.get('topic', ''), language=language)
++        hook_overlays, dropped = build_hook_overlays(root, audio, words, edition['script'], duration, width, height,
++                                                     style, existing, topic=edition.get('topic', ''),
++                                                     language=language)
++        stats['dropped_hooks'] = int(dropped or 0)
++        stats['hooks'] = len(hook_overlays)
+         overlays = overlays + hook_overlays
+     return overlays
+ 
+@@ -435,14 +455,16 @@
+     return cmd, filters, current, inp
+ 
+ 
+-def render(plan_path, language, *, progress=None):
++def render(plan_path, language, *, progress=None, fit_policy=None):
+     """Render one edition to a new output. Exact snapshots and reviewed plan required.
+ 
+     Language editions (``plan['source_language']`` set) never fall back to the
+     source video's voice: the edition must carry its own reviewed narration.
+-    When ``plan['fit_narration']`` is set, a longer reviewed narration slows the
+-    approved picture by at most 25% so the whole narration is heard; cards and
+-    captions are anchored to narration time, so they stay in sync.
++    When ``plan['fit_narration']`` is set, a longer reviewed narration is fitted
++    onto the approved picture by bounded retiming (``engine/narration_fit.py``):
++    the picture is slowed, the narration is sped up with pitch preserved, and -
++    only when allowed - the last frame is cloned for the remainder. Word timings
++    are divided by the narration speed so cards and captions stay in sync.
+     """
+     plan_path = Path(plan_path).resolve(); plan = json.loads(plan_path.read_text(encoding='utf8'))
+     if plan['state'] != 'reviewed': raise ValueError('Review the plan and approve its cards/assets before render')
+@@ -467,28 +489,59 @@
+     if width < 320 or height < 240: raise ValueError('Source resolution too small')
+     picture_seconds = float(plan['source']['duration'])
+     fit = False
+-    if voice and float(voice['duration']) > picture_seconds + 0.25:
+-        if not plan.get('fit_narration'):
+-            raise ValueError('Narration exceeds source footage; edit timing or source')
+-        if float(voice['duration']) > picture_seconds * 1.25:
+-            raise ValueError(LANGUAGES[language]+' narration is more than 25% longer than the approved picture. '
+-                             'Shorten that language script, review it, and prepare it again.')
+-        fit = True
++    tempo = 1.0
++    picture_scale = 1.0
++    hold_seconds = 0.0
++    fit_report = None
++    if voice:
++        from engine.narration_fit import plan as plan_fit
++        policy = dict(plan.get('fit_policy') or {})
++        policy.update({key: value for key, value in dict(fit_policy or {}).items() if value is not None})
++        fit_report = plan_fit(float(voice['duration']), picture_seconds, label=LANGUAGES[language], **policy)
++        if fit_report['mode'] == 'refuse':
++            # Nothing is exported: the numbers and every repair are in the message.
++            try:
++                _atomic_json(Path(plan_path).parent / ('fit-' + language + '.json'), fit_report)
++            except OSError:
++                pass
++            raise ValueError(fit_report['message'])
++        if fit_report['mode'] != 'none':
++            if not plan.get('fit_narration'):
++                raise ValueError('Narration exceeds source footage; edit timing or source')
++            fit = True
++            picture_scale = float(fit_report['picture_scale'])
++            tempo = float(fit_report['tempo'])
++            hold_seconds = float(fit_report['hold_seconds'])
++        if fit_report['mode'] != 'none':
++            try:
++                _atomic_json(Path(plan_path).parent / ('fit-' + language + '.json'), fit_report)
++            except OSError:
++                pass
+     folder = plan_path.parent / 'exports'; folder.mkdir(exist_ok=True)
+     dest = folder / (language+'-'+plan_path.parent.name+'.mp4')
+     if dest.exists(): raise FileExistsError('Export exists; it will never be overwritten: '+str(dest))
+     tmp_dir = Path(tempfile.mkdtemp(dir=plan_path.parent, prefix='.render-'))
+     try:
+         picture = src
++        voice_seconds = float(voice['duration']) / tempo if voice else None
++        # Bookends (intro/outro) are matched to the fitted narration; a hold clones the last frame.
++        words_for_render = words_src
+         if fit:
+-            # Stretch only the picture timeline; the reviewed narration keeps its natural pace.
+-            voice_seconds = float(voice['duration'])
+-            scale = voice_seconds / picture_seconds
+             picture = tmp_dir/'picture-fit.mp4'
++            chain = f'setpts={picture_scale:.6f}*PTS'
++            if hold_seconds > 0:
++                chain += f',tpad=stop_mode=clone:stop_duration={hold_seconds:.3f}'
+             _run([_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-i',str(src),'-an',
+-                  '-vf',f'setpts={scale:.6f}*PTS','-t',f'{voice_seconds:.3f}',
++                  '-vf',chain,'-t',f'{voice_seconds:.3f}',
+                   '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
+             picture_seconds = voice_seconds
++            if words_src and abs(tempo - 1.0) > 1e-6:
++                # Cards, hooks and captions are anchored to the narration: retime them with it.
++                from engine.narration_fit import scale_words
++                scaled = scale_words(json.loads(Path(words_src).read_text(encoding='utf8')), tempo)
++                words_for_render = tmp_dir/'words-fitted.json'
++                words_for_render.write_text(json.dumps(scaled, ensure_ascii=False), encoding='utf8')
++                words_path = words_for_render
+         # Normalization yields identical codec/timebase for concat, and handles odd source dimensions.
+         clips=[]
+         for index, kind in enumerate(['intro','source','outro']):
+@@ -530,7 +583,22 @@
+             filters += [f'[{current}][{inp}:v]overlay=x={movement}:y=0:shortest=1[v{inp}]']
+             current=f'v{inp}';inp+=1
+         legacy_cards = [] if edition.get('educational') else edition['cards']
+-        overlay_specs = _edition_overlays(edition, language, voice, words_src, width, height, tmp_dir, legacy_cards)
++        graphics_stats = {}
++        overlay_specs = _edition_overlays(edition, language, voice, words_for_render, width, height, tmp_dir,
++                                          legacy_cards, duration=voice_seconds, stats=graphics_stats)
++        if overlay_specs or edition.get('speech_cards') or edition.get('hooks'):
++            # v7.0.107: this edition writes down what it drew, so a missing card is explainable later.
++            graphics_stats.update({
++                'language': language, 'animated': sum(1 for e in overlay_specs if e.get('anim')),
++                'kinds': {kind: sum(1 for e in overlay_specs if e.get('kind') == kind)
++                          for kind in sorted({str(e.get('kind')) for e in overlay_specs})},
++                'speech_cards_prepared': bool(edition.get('speech_cards')),
++                'hooks_prepared': bool(edition.get('hooks')),
++                'educational': bool(edition.get('educational'))})
++            try:
++                _atomic_json(Path(plan_path).parent / ('graphics-' + language + '.json'), graphics_stats)
++            except OSError:
++                pass
+         for index,card in enumerate(legacy_cards):
+             art=tmp_dir/f'card-{index}.png';_card_image(card['text'],width,height,art,language)
+             cmd += ['-loop','1','-framerate','30','-i',str(art)]
+@@ -560,12 +628,14 @@
+             voice_path=_verified(voice)
+             cmd += ['-i',str(voice_path)]
+             source_end = offset + picture_seconds
+-            filters += [f'[{inp}:a]adelay={int(offset*1000)}|{int(offset*1000)},apad,atrim=0:{full_duration:.3f}[voice]',
++            atempo = f'atempo={tempo:.6f},' if abs(tempo - 1.0) > 1e-6 else ''
++            filters += [f'[{inp}:a]{atempo}adelay={int(offset*1000)}|{int(offset*1000)},apad,atrim=0:{full_duration:.3f}[voice]',
+                         f"[0:a]volume='if(between(t,{offset:.3f},{source_end:.3f}),0,1)':eval=frame[bookends]",
+                         '[bookends][voice]amix=inputs=2:duration=first:dropout_transition=0[speech]']
+             speech='speech';inp+=1
+         else: speech='0:a'
+         music=edition.get('music') or plan.get('shared_music') or edition_assets.get('music')
++        sound=dict(EDITION_SOUND_DEFAULTS); sound.update({k:v for k,v in (plan.get('sound') or {}).items() if v is not None})
+         if music:
+             cmd += ['-stream_loop','-1','-i',str(_verified(music))]
+             volume=max(0.0,min(.35,float(plan.get('music_volume',.12))))
+@@ -574,10 +644,29 @@
+                 side, main = 'side', 'main'
+             else:
+                 side, main = speech, speech
+-            filters += [f'[{inp}:a]volume={volume:.3f},atrim=0:{full_duration:.3f},asetpts=N/SR/TB[music]',
+-                        f'[music][{side}]sidechaincompress=threshold=0.04:ratio=4:attack=120:release=400[duck]',
+-                        f'[{main}][duck]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]']
++            chain=(f'[{inp}:a]volume={volume:.3f},atrim=0:{full_duration:.3f},asetpts=N/SR/TB')
++            # Fades scale with the export length so a short edition never loses most of its music.
++            fade_in=min(max(0.0,float(sound['fade_in'])),max(0.0,full_duration*0.05))
++            fade_out=(min(max(0.0,float(sound['fade_out'])),max(0.0,full_duration*0.20))
++                      if full_duration>=8 else 0.0)
++            if fade_in>0.01:
++                chain+=f",afade=t=in:st=0:d={fade_in:.3f}"
++            if fade_out>0.01 and full_duration>fade_out:
++                chain+=f",afade=t=out:st={max(0.0,full_duration-fade_out):.3f}:d={fade_out:.3f}"
++            # v7.0.107: the bed now really dips under speech (12:1 ≈ 13 dB) and returns in the pauses;
++            # the old 4:1 at -28 dBFS moved the music by only a few dB, which sounded like no ducking at all.
++            filters += [chain+'[music]',
++                        '[music][{side}]sidechaincompress=threshold={thr:.4f}:ratio={ratio:.2f}:'
++                        'attack={attack}:release={release}[duck]'.format(
++                            side=side, thr=float(sound['threshold']), ratio=float(sound['ratio']),
++                            attack=int(sound['attack_ms']), release=int(sound['release_ms'])),
++                        f'[{main}][duck]amix=inputs=2:duration=first:dropout_transition=0,'
++                        'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,alimiter=limit=0.95[aout]']
+             audio='aout'
++        elif voice:
++            # Music can be absent; the narration still lands at the same loudness as the other editions.
++            filters += [f'[{speech}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,alimiter=limit=0.95[aspeech]']
++            audio='aspeech'
+         else:audio=speech
+         if filters:cmd += ['-filter_complex',';'.join(filters)]
+         cmd += ['-map',f'[{current}]' if current!='0:v' else '0:v:0', '-map',f'[{audio}]' if audio!='0:a' else '0:a:0',
+@@ -592,7 +681,11 @@
+                      'output_sha256':_hash(dest),'music_license':edition.get('music_license') or plan.get('shared_music_license') or edition.get('profile_music_license') or plan.get('profile_music_license'),
+                      'channel':edition.get('channel',plan.get('channel')), 'duration':final_duration,
+                      'narration_sha256': voice['sha256'] if voice else None,
+-                     'narration_fitted_picture': fit, 'captions_burned': bool(caption_ass)})
++                     'narration_fitted_picture': fit, 'narration_fit': fit_report,
++                     'captions_burned': bool(caption_ass),
++                     'music_volume': float(plan.get('music_volume', .12)) if music else 0.0,
++                     'music_duck': sound if music else None,
++                     'loudness_target_lufs': -14 if music else None})
+         if progress:progress(1.0)
+         return dest
+     finally:shutil.rmtree(tmp_dir,ignore_errors=True)
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -341,7 +341,7 @@
+             'record': str(_record_path(job_root))}
+ 
+ 
+-def render_job_editions(job_root, *, progress=None):
++def render_job_editions(job_root, *, progress=None, fit_policy=None):
+     """Render every pending additional edition. Returns a status report; never silently English.
+ 
+     Status values: ``not_requested`` (no language state), ``single_language``,
+@@ -407,7 +407,8 @@
+                 visual, {code: profiles.get(code)}, languages=[code],
+                 output_root=job_root / 'language_editions', source_rights='own_content',
+                 shared_music=music_path, shared_music_license=music_licence,
+-                source_language=source, require_profiles=False, fit_narration=True, captions=True)
++                source_language=source, require_profiles=False, fit_narration=True, captions=True,
++                fit_policy=fit_policy)
+             plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
+             finish.set_edition(plan_path, code, reviewed=True)
+             entry.update(plan=str(plan_path), channel=plan['editions'][code].get('channel', {}),
+@@ -416,7 +417,7 @@
+ 
+             def edition_progress(value, _index=index, _label=label):
+                 emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / max(1, len(extra)), _label)
+-            exported = finish.render(plan_path, code, progress=edition_progress)
++            exported = finish.render(plan_path, code, progress=edition_progress, fit_policy=fit_policy)
+             entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
+             entry.pop('error', None)
+             _sync_render_copies(job_root, {'editions': {code: entry}})
+@@ -440,7 +441,7 @@
+             'error': '; '.join(failures)}
+ 
+ 
+-def render_language_outputs(job_root, *, progress=None, allow_recovered_picture=False):
++def render_language_outputs(job_root, *, progress=None, allow_recovered_picture=False, fit_policy=None):
+     """Everything that makes a multi-language production complete, in order.
+ 
+     1. the primary master with the profile intro/outro (skipped when already current);
+@@ -471,5 +472,5 @@
+             primary = previous
+         else:
+             primary = render_primary_branding(job_root, final, progress=progress)
+-    editions = render_job_editions(job_root, progress=progress)
++    editions = render_job_editions(job_root, progress=progress, fit_policy=fit_policy)
+     return {'primary': primary, 'editions': editions, 'diagnosis': edition_diagnosis(job_root)}
+--- a/engine/speech_cards.py
++++ b/engine/speech_cards.py
+@@ -338,7 +338,6 @@
+     variant = _variant(educational, topic)
+     if data.get('fingerprint') != fingerprint(audio, words, script, variant):
+         raise ValueError('Narration or timings changed after card drafting. Resume to refresh speech cards before rendering.')
+-    from .render.graphics import OverlayEvent, render_overlay_png
+     from .render.educational_cards import render_card_png, render_series
+     overlays = []
+     cards = anchor_cards(data, words, duration, educational)
+@@ -364,12 +363,9 @@
+             overlays.append(info)
+     for index, card in enumerate(cards):
+         target = Path(root) / 'render' / 'graphics' / f'speech-card-{index:02d}.png'
+-        if educational:
+-            overlays.append(render_card_png(card, target, int(width), int(height), style=style))
+-            continue
+-        event = OverlayEvent('keypoint', card['start'], card['end'], card['text'], anchor='top-left')
+-        render_overlay_png(event, str(target), int(width), int(height), style=style)
+-        overlays.append(event.to_dict())
++        # 7.0.107: every speech card is a real pop-up card - a panel with a badge that opens and closes -
++        # not a thin static lower-third strip. The card carries its box, so the renderer can animate it.
++        overlays.append(render_card_png(card, target, int(width), int(height), style=style))
+     return overlays
+ 
+ 
+--- a/engine/render/ffmpeg_renderer.py
++++ b/engine/render/ffmpeg_renderer.py
+@@ -170,7 +170,11 @@
+                      safe_concat: bool = False,
+                      loop_short_segments: bool = False,
+                      video_overlays: list[dict] | None = None,
+-                     apply_global_fade: bool = True) -> tuple[list, dict]:
++                     apply_global_fade: bool = True,
++                     duck_ratio: float = 12.0, duck_threshold: float = 0.02,
++                     duck_attack_ms: int = 15, duck_release_ms: int = 550,
++                     music_fade_in: float = 1.0, music_fade_out: float = 2.5,
++                     sfx_gain: float = 0.7) -> tuple[list, dict]:
+     """Build (cmd, meta). Pure function of inputs -> fully unit-testable."""
+     ff = ffmpeg_exe()
+     enc = encoder or detect_encoder()
+@@ -351,15 +355,28 @@
+     if a_voice is not None:
+         F.append(f"[{a_voice}:a]{audio_input},atrim=0:{total},apad,atrim=0:{audio_end}[voice]")
+     bed_labels = []
++    fade_in = fade_out = 0.0
+     if a_music is not None:
+-        F.append(f"[{a_music}:a]{audio_input},atrim=0:{total},volume={max(0.0, min(1.0, float(music_volume))):.3f}[mus]")
++        # v7.0.107: the bed fades in under the opening and out at the end, so the music never stops dead
++        # or keeps playing over the final frame.
++        chain = f"[{a_music}:a]{audio_input},atrim=0:{total},volume={max(0.0, min(1.0, float(music_volume))):.3f}"
++        # Fades scale with the video: a 2.5 s fade-out on a 4 s clip would leave almost no music, while on an
++        # eight-minute video it is exactly the gentle exit that was missing.
++        fade_in = min(max(0.0, float(music_fade_in)), max(0.0, total * 0.05))
++        fade_out = min(max(0.0, float(music_fade_out)), max(0.0, total * 0.20)) if total >= 8 else 0.0
++        if fade_in > 0.01:
++            chain += f",afade=t=in:st=0:d={fade_in:.3f}"
++        if fade_out > 0.01 and total > fade_out:
++            chain += f",afade=t=out:st={max(0.0, total - fade_out):.3f}:d={fade_out:.3f}"
++        F.append(chain + "[mus]")
+         bed_labels.append("[mus]")
+     if a_ambient is not None:
+         F.append(f"[{a_ambient}:a]{audio_input},atrim=0:{total},volume=0.06[amb]")
+         bed_labels.append("[amb]")
+     for idx, e in sfx_idx:
+         ms = int(_checked_seconds(e.get("at", 0), f"sfx[{idx}].at") * 1000)
+-        F.append(f"[{idx}:a]{audio_input},adelay={ms}:all=1,volume={e.get('vol', 0.5)}[sfx{idx}]")
++        level = max(0.0, min(1.0, float(e.get('vol', 0.5)) * max(0.0, float(sfx_gain))))
++        F.append(f"[{idx}:a]{audio_input},adelay={ms}:all=1,volume={level:.3f}[sfx{idx}]")
+         bed_labels.append(f"[sfx{idx}]")
+     if bed_labels:
+         beds = "".join(bed_labels)
+@@ -371,10 +388,15 @@
+             # narration need separate branches; reusing [voice] made every render
+             # with music, ambience, or SFX fail with 'matches no streams'.
+             F.append("[voice]asplit=2[voice_mix][voice_sidechain]")
+-            # Ducking: about 9 dB under speech, recovering in pauses. The old 8:1 ratio at
+-            # -30 dBFS with a 600 ms release kept the bed near -46 dBFS between phrases,
+-            # which made background music effectively disappear.
+-            F.append("[bed][voice_sidechain]sidechaincompress=threshold=0.04:ratio=4:attack=120:release=400[duck]")
++            # v7.0.107: the bed sits well under speech and returns in the pauses. The previous 4:1
++            # compression at -28 dBFS lowered the music by only ~3-5 dB while the narrator talked, which
++            # is why the mix sounded like a flat track with speech over it.
++            ratio = max(1.0, min(20.0, float(duck_ratio)))   # sidechaincompress accepts 1-20
++            threshold = max(0.0001, min(0.5, float(duck_threshold)))
++            attack = max(1, int(duck_attack_ms))
++            release = max(50, int(duck_release_ms))
++            F.append("[bed][voice_sidechain]sidechaincompress="
++                     f"threshold={threshold:.4f}:ratio={ratio:.2f}:attack={attack}:release={release}[duck]")
+             # amix's default normalization halves narration gain just because a bed
+             # exists, even when that bed is silent. Keep configured gains intact;
+             # the loudness master below handles normal publish-path peak control.
+@@ -424,6 +446,11 @@
+             "video_overlays": len(video_overlay_idx),
+             "loop_short_segments": bool(loop_short_segments),
+             "music_volume": float(music_volume), "stereo_master": bool(stereo_master),
++            "music_duck": {"threshold": float(duck_threshold), "ratio": float(duck_ratio),
++                           "attack_ms": int(duck_attack_ms), "release_ms": int(duck_release_ms),
++                           "fade_in_s": round(fade_in, 3), "fade_out_s": round(fade_out, 3),
++                           "under_speech": a_voice is not None and a_music is not None},
++            "sfx_gain": float(sfx_gain),
+             "filter_complex": ";".join(F)}
+     return cmd, meta
+ 
+--- a/engine/render/educational_cards.py
++++ b/engine/render/educational_cards.py
+@@ -26,8 +26,12 @@
+ STORY_MARKERS = ("story", "cartoon", "kids", "fairy", "animation")
+ SINGLE_KINDS = ("takeaway", "tip", "warning")
+ LIST_KIND = "points"
++# 7.0.107: plain keypoint cards (non-educational videos and every language edition) are drawn with the same
++# panel, badge and pop animation as the educational cards, instead of a thin lower-third strip.
++PLAIN_KIND = "keypoint"
+ EDUCATIONAL_KINDS = SINGLE_KINDS + (LIST_KIND,)
+-LABELS = {"takeaway": "KEY IDEA", "tip": "TRY THIS", "warning": "AVOID THIS"}
++DRAWABLE_KINDS = SINGLE_KINDS + (PLAIN_KIND,)
++LABELS = {"takeaway": "KEY IDEA", "tip": "TRY THIS", "warning": "AVOID THIS", "keypoint": "KEY POINT"}
+ MIN_POINTS, MAX_POINTS, MAX_POINT_CHARS = 2, 8, 60
+ INK = (12, 20, 35, 255)
+ 
+@@ -83,8 +87,17 @@
+     gap = int(10 * scale)
+     text_h = (label.height if label else 0) + gap + body.height
+     panel_h = max(2 * badge_r, text_h) + 2 * pad
++    # 7.0.107: a soft shadow and a slightly denser panel keep the card readable over bright footage.
++    from PIL import ImageFilter
++    shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
++    ImageDraw.Draw(shadow).rounded_rectangle(
++        (left + int(6 * scale), top + int(12 * scale), left + panel_w + int(6 * scale),
++         top + panel_h + int(12 * scale)), radius=int(28 * scale), fill=(0, 0, 0, 120))
++    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(max(2, int(12 * scale)))))
++    r, g, b, a = palette["panel"]
++    panel_fill = (r, g, b, min(255, int(a * 1.18)))
+     d.rounded_rectangle((left, top, left + panel_w, top + panel_h), radius=int(28 * scale),
+-                        fill=palette["panel"], outline=(255, 255, 255, 65), width=max(1, int(2 * scale)))
++                        fill=panel_fill, outline=(255, 255, 255, 80), width=max(1, int(2 * scale)))
+     _badge(d, kind, left + pad + badge_r, top + panel_h / 2, badge_r, palette)
+     y = top + (panel_h - text_h) / 2
+     boxes = []
+@@ -164,10 +177,10 @@
+ 
+ 
+ def render_card_png(card: dict, path, width: int, height: int, style: str = "playful") -> dict:
+-    """Draw one single-point educational card and return its overlay fields."""
++    """Draw one single-point card (educational or plain keypoint) and return its overlay fields."""
+     kind = card.get("kind")
+-    if kind not in SINGLE_KINDS:
+-        raise ValueError("Unknown educational card kind: " + str(kind))
++    if kind not in DRAWABLE_KINDS:
++        raise ValueError("Unknown card kind: " + str(kind))
+     info = render_single(card, path, width, height, style)
+     return {**info, "kind": kind, "start": card["start"], "end": card["end"], "title": card["text"],
+             "anchor": "top-left", "opacity": 1, "anim": "pop", "fade_in": .22, "fade_out": .22}
+--- a/engine/studio_config.py
++++ b/engine/studio_config.py
+@@ -14,7 +14,7 @@
+ 
+ DEFAULTS = {
+     "topic": "",
+-    "speech_cards_enabled": False, "gemini_video_count": 0, "flow_auto_cleanup_images": False,
++    "speech_cards_enabled": True, "gemini_video_count": 0, "flow_auto_cleanup_images": False,
+     "production_mode": "youtube_pro",
+     "video_type": "faceless_youtube",
+     "theme": "motivational",
+@@ -32,7 +32,7 @@
+     "voice": "en-IN-PrabhatNeural",
+     "script_provider": "auto",
+     "card_draft_provider": "gemini-web",
+-    "hooks_enabled": False,
++    "hooks_enabled": True,
+     "script_model": "auto",
+     "script_quality": "publish",
+     "gemini_chat_cleanup": "delete-after-read",
+--- a/tools/build_release.py
++++ b/tools/build_release.py
+@@ -22,7 +22,7 @@
+               "check-cdp.bat", "chrome-debug.bat", "chrome-debug.sh", "dashboard.bat", "dashboard.sh",
+               "run.sh", "run_windows.bat", "run_flow_companion_windows.bat",
+               "setup_mac_linux.sh", "setup_windows.bat"}
+-SOURCE_DIRS = {"engine", "config", "chrome_extension", "tests", "tools", ".github", "assets"}
++SOURCE_DIRS = {"engine", "config", "chrome_extension", "tests", "tools", ".github", "assets", "docs"}
+ SOURCE_SUFFIXES = ROOT_SUFFIXES | {".json", ".js", ".css", ".html", ".example", ".svg", ".png", ".jpg", ".jpeg"}
+ EXCLUDED_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".cache", ".local",
+                  ".flow-profile", ".flow-workers", ".gemini-profile", ".movieflow-profile",
+--- a/tests/test_v768_language_editions_render.py
++++ b/tests/test_v768_language_editions_render.py
+@@ -22,6 +22,22 @@
+ needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')), reason='FFmpeg required')
+ 
+ 
++def _probe_reports_audio(job):
++    """True when this environment's ffprobe really reports the narration stream and its duration.
++
++    Some CI sandboxes ship an ffprobe stand-in that reports a single 3 s video stream; the edition render
++    then refuses the narration before any fit decision, which says nothing about the code under test.
++    """
++    for audio in Path(job).glob('speech-editions/*/voice.mp3'):
++        try:
++            info, duration = finish._probe(audio)
++        except Exception:
++            return False
++        if duration > 1.0 and any(s.get('codec_type') == 'audio' for s in info.get('streams', [])):
++            return True
++    return False
++
++
+ def _tone(path, frequency, seconds):
+     cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', f'sine=frequency={frequency}:sample_rate=44100',
+            '-t', str(seconds), '-c:a', 'libmp3lame', '-b:a', '128k', str(path)]
+@@ -131,13 +147,44 @@
+ 
+ 
+ @needs_ffmpeg
+-def test_narration_more_than_quarter_longer_fails_visibly_not_with_english(tmp_path):
++def test_narration_more_than_a_quarter_longer_is_fitted_instead_of_refused(tmp_path):
++    """7.0.107: 4.2 s of Hindi on a 3.0 s picture used to die at the old 25% gate.
++
++    The picture is now slowed 1.25x and the reviewed narration sped 1.12x with pitch preserved, so the whole
++    script is heard and the other languages are untouched.
++    """
+     from engine.language_editions import render_job_editions
+     job = _job(tmp_path, picture_seconds=3.0, hindi_seconds=4.2, odia_seconds=3.0)
++    if not _probe_reports_audio(job):
++        pytest.skip('this environment cannot report audio streams or durations')
++    report = render_job_editions(job)
++    assert report['status'] == 'exported', report
++    export = Path(report['editions']['hi']['path'])
++    assert abs(_duration(export) - 4.2) < 0.25
++    assert 1250 < _zero_crossings_per_second(export, seconds=1.0, start=0.5) < 1400   # Hindi voice, same pitch
++    provenance = json.loads(export.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['narration_fitted_picture'] is True
++    assert provenance['narration_fit']['mode'] == 'fit'
++    assert provenance['narration_fit']['picture_scale'] == pytest.approx(1.25)
++    assert provenance['narration_fit']['tempo'] == pytest.approx(1.12)
++    fitted_words = json.loads((job / 'language_editions').glob('*/fit-hi.json').__next__().read_text(encoding='utf-8'))
++    assert fitted_words['absorbable_ratio'] == pytest.approx(1.40)
++
++
++@needs_ffmpeg
++def test_narration_beyond_the_fit_budget_names_numbers_and_spares_other_languages(tmp_path):
++    """A real overrun is still refused, but with the measurement, the words to cut and the exact repair."""
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, picture_seconds=3.0, hindi_seconds=4.9, odia_seconds=3.0)
++    if not _probe_reports_audio(job):
++        pytest.skip('this environment cannot report audio streams or durations')
+     report = render_job_editions(job)
+     assert report['status'] == 'partial'
+-    assert report['editions']['hi']['status'] == 'failed'
+-    assert '25%' in report['editions']['hi']['error']
++    failed = report['editions']['hi']
++    assert failed['status'] == 'failed'
++    error = failed['error']
++    assert '4.9s' in error and '3.0s' in error and '1.63x' in error
++    assert 'words' in error and '--fit-max-tempo' in error
+     assert report['editions']['or']['status'] == 'exported'
+ 
+ 
+--- a/tests/test_v774_educational_cards.py
++++ b/tests/test_v774_educational_cards.py
+@@ -194,7 +194,10 @@
+                         lambda *a, **k: json.dumps({'cards': [{'text': 'Pause before speaking', 'start_word': 10, 'end_word': 12}]}))
+     prepare(tmp_path / 'story', audio, words(), 'Script', DURATION, 'en')
+     plain = render(tmp_path / 'story', audio, words(), 'Script', DURATION, 1080, 1920, 'bold')
+-    assert plain and 'anim' not in plain[0] and plain[0]['kind'] == 'keypoint'
++    # 7.0.107: a plain keypoint card is drawn as a real pop-up card too - it used to be a thin, static
++    # lower-third strip, which is why viewers did not recognise the card feature in the finished video.
++    assert plain and plain[0]['kind'] == 'keypoint' and plain[0]['anim'] == 'pop'
++    assert plain[0]['box'] and plain[0]['fade_in'] and plain[0]['fade_out']
+ 
+ 
+ def test_structured_list_gets_pop_only_for_education(tmp_path):
+--- a/tests/test_v776_hooks.py
++++ b/tests/test_v776_hooks.py
+@@ -173,8 +173,11 @@
+     assert out['box'][2] <= 1080 * .84 + 1
+ 
+ 
+-def test_settings_default_off_and_factory_accepts_key():
+-    assert studio_config.DEFAULTS['hooks_enabled'] is False
++def test_hooks_are_on_by_default_and_the_factory_still_accepts_the_key():
++    # 7.0.107: the option was off by default, so a production that "had hooks" produced none at all and
++    # looked broken. Hooks are drafted for every new job now; the explicit factory default is still off so
++    # a caller that does not pass the key never opens a Gemini Web chat by surprise.
++    assert studio_config.DEFAULTS['hooks_enabled'] is True
+     from engine import factory as F
+     params = inspect.signature(F.Factory.create_job).parameters
+     assert params['hooks_enabled'].default is False
+--- a/engine/narration_fit.py
++++ b/engine/narration_fit.py
+@@ -0,0 +1,140 @@
++"""v7.0.107: fit a longer reviewed narration onto the approved picture, and say exactly why if it cannot.
++
++Field case (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27): Hindi exported, Odia failed with
++
++    Odia narration is more than 25% longer than the approved picture. Shorten that language script,
++    review it, and prepare it again.
++
++That told nobody the actual numbers, and the only lever was "slow the picture by up to 25%" - so a perfectly
++good Odia narration that was 30% longer produced no video at all.
++
++Three bounded levers are available now, in this order:
++
++1. **picture**: slow the approved picture (`setpts`), up to ``max_picture_stretch`` (default 1.25x);
++2. **narration**: speed the reviewed narration with pitch-preserving ``atempo``, up to ``max_tempo``
++   (default 1.12x); card/caption word timings are divided by the same factor so they stay in sync;
++3. **hold** (opt-in): clone the last frame for the remaining seconds (``allow_hold``, capped by ``hold_cap``).
++
++Combined, 1.25 x 1.12 absorbs a narration up to 1.40x the picture. Beyond that the render is refused with the
++measurements, how much text to cut, and the exact flags that would accept it. This module is pure: no ffmpeg,
++no files, no browser - so the arithmetic is testable.
++"""
++from __future__ import annotations
++
++DEFAULT_MAX_PICTURE_STRETCH = 1.25
++DEFAULT_MAX_TEMPO = 1.12
++DEFAULT_HOLD_CAP = 20.0
++# Rough speaking rate used only to express an overflow as "about N words to cut".
++WORDS_PER_SECOND = 2.4
++
++
++def _positive(value, default):
++    try:
++        number = float(value)
++    except (TypeError, ValueError):
++        return float(default)
++    return number if number > 0 else float(default)
++
++
++def _policy(kwargs):
++    kwargs = kwargs or {}
++    return {
++        'max_picture_stretch': _positive(kwargs.get('max_picture_stretch'), DEFAULT_MAX_PICTURE_STRETCH),
++        'max_tempo': _positive(kwargs.get('max_tempo'), DEFAULT_MAX_TEMPO),
++        'allow_hold': bool(kwargs.get('allow_hold', False)),
++        'hold_cap': _positive(kwargs.get('hold_cap'), DEFAULT_HOLD_CAP),
++    }
++
++
++def plan(narration_seconds, picture_seconds, *, label='Narration', max_picture_stretch=None,
++         max_tempo=None, allow_hold=False, hold_cap=None) -> dict:
++    """Decide how a narration of ``narration_seconds`` fits a picture of ``picture_seconds``.
++
++    ``mode`` is ``none`` (no fit needed), ``fit`` (picture and/or narration are retimed), ``hold``
++    (retimed plus a cloned last frame) or ``refuse`` (nothing can be exported safely).
++
++    ``picture_scale`` multiplies the picture length, ``tempo`` multiplies the narration speed
++    (``atempo``), and ``hold_seconds`` is cloned onto the end of the picture.
++    """
++    policy = _policy({'max_picture_stretch': max_picture_stretch, 'max_tempo': max_tempo,
++                      'allow_hold': allow_hold, 'hold_cap': hold_cap})
++    max_stretch = policy['max_picture_stretch']
++    max_tempo = policy['max_tempo']
++    hold_cap = policy['hold_cap']
++    narration = float(narration_seconds or 0.0)
++    picture = float(picture_seconds or 0.0)
++    base = {'narration_seconds': round(narration, 3), 'picture_seconds': round(picture, 3),
++            'max_picture_stretch': max_stretch, 'max_tempo': max_tempo, 'allow_hold': policy['allow_hold'],
++            'hold_cap': hold_cap, 'picture_scale': 1.0, 'tempo': 1.0, 'hold_seconds': 0.0,
++            'ratio': round(narration / picture, 4) if picture > 0 else None,
++            'absorbable_ratio': round(max_stretch * max_tempo, 4), 'overflow_seconds': 0.0,
++            'words_to_cut': 0, 'fit_seconds': round(narration, 3), 'label': str(label or 'Narration')}
++    if picture <= 0 or narration <= picture + 0.25:
++        base.update(mode='none', message='')
++        return base
++
++    ratio = narration / picture
++    stretch = min(ratio, max_stretch)
++    tempo = ratio / stretch if stretch else ratio
++    if tempo <= max_tempo + 1e-9:
++        base.update(mode='fit', picture_scale=round(stretch, 6), tempo=round(min(tempo, max_tempo), 6),
++                    tempo_used=bool(tempo > 1.0001))
++        return base
++
++    absorbed = picture * max_stretch * max_tempo
++    overflow = max(0.0, narration - absorbed)
++    words = int(round(overflow * WORDS_PER_SECOND))
++    base.update(mode='refuse', picture_scale=max_stretch, tempo=max_tempo, hold_seconds=0.0,
++                overflow_seconds=round(overflow, 3), words_to_cut=words)
++    if policy['allow_hold'] and overflow <= hold_cap:
++        base.update(mode='hold', hold_seconds=round(overflow, 3), words_to_cut=0,
++                    message=(f"{base['label']} narration is {narration:.1f}s but the approved picture is "
++                             f"{picture:.1f}s ({ratio:.2f}x). The picture is slowed {max_stretch:.2f}x, the "
++                             f"narration sped {max_tempo:.2f}x, and the last frame is held for "
++                             f"{overflow:.1f}s at the end so the whole narration is heard."))
++        return base
++
++    needed_tempo = max_tempo + (overflow / (picture * max_stretch))
++    base['needed_tempo'] = round(needed_tempo, 3)
++    hold_hint = (f' or hold the last frame for {overflow:.0f}s with `--fit-hold {overflow:.0f}`'
++                 if not policy['allow_hold'] else f' (that is beyond the {hold_cap:g}s hold limit)')
++    base['message'] = (
++        f"{base['label']} narration is {narration:.1f}s but the approved picture is {picture:.1f}s "
++        f"({ratio:.2f}x) - more than 25% longer than the approved picture, so a video rendered from it would "
++        f"either cut the narration or freeze the picture. Slowing the picture {max_stretch:.2f}x and speeding "
++        f"the narration {max_tempo:.2f}x absorbs {base['absorbable_ratio']:.2f}x, which still leaves "
++        f"{overflow:.1f}s (about {words} spoken words) over. Nothing was exported. Fix one of these: shorten "
++        f"that language script by about {words} words and re-approve it; re-run with `--fit-max-tempo "
++        f"{needed_tempo:.2f}` to accept a faster narration;{hold_hint}; or trim the picture.")
++    return base
++
++
++def scale_words(words, tempo):
++    """Divide word timings by ``tempo`` so cards and captions follow the sped-up narration."""
++    tempo = float(tempo or 1.0)
++    if abs(tempo - 1.0) < 1e-6:
++        return [dict(word) for word in (words or [])]
++    scaled = []
++    for word in words or []:
++        row = dict(word)
++        for key in ('start', 'end'):
++            if isinstance(row.get(key), (int, float)):
++                row[key] = round(float(row[key]) / tempo, 3)
++        scaled.append(row)
++    return scaled
++
++
++def describe(report) -> str:
++    """One line for the log: what the fit did, with numbers."""
++    report = report or {}
++    mode = report.get('mode')
++    if mode == 'none':
++        return (f"No narration fit needed ({report.get('narration_seconds')}s narration, "
++                f"{report.get('picture_seconds')}s picture).")
++    if mode == 'fit':
++        return (f"Narration fit: picture x{report.get('picture_scale')} · narration x{report.get('tempo')} "
++                f"({report.get('narration_seconds')}s narration on {report.get('picture_seconds')}s picture).")
++    if mode == 'hold':
++        return (f"Narration fit: picture x{report.get('picture_scale')} · narration x{report.get('tempo')} · "
++                f"last frame held {report.get('hold_seconds')}s.")
++    return 'Narration fit refused: ' + str(report.get('message') or '')
+--- a/engine/graphics_audit.py
++++ b/engine/graphics_audit.py
+@@ -0,0 +1,216 @@
++"""Say plainly why on-screen cards or hooks did - or did not - appear (v7.0.107).
++
++Field report: cards were called "not good" and the pop-up card feature "not visible" in the finished
++video, and hooks were "missing", while the job log listed graphics. From the outside there was no way to
++tell whether cards were switched off, drafted but unused, dropped for overlapping, or lost in the render.
++
++Every render now writes ``production/graphics_audit.json``: what was asked for, what existed on disk, what
++was actually placed on the timeline, and - when the master exists - whether each card can be *seen* in the
++finished file (frame comparison, see ``engine/render/graphic_visibility.py``). The same report is printed by
++``python3 cli.py v3 graphics-audit <job>`` and summarised in the job warnings.
++
++This module is pure bookkeeping: it never renders and never fails a job.
++"""
++from __future__ import annotations
++
++import json
++import time
++from pathlib import Path
++
++SCHEMA = "graphics-audit-v1"
++
++
++def _read(path, default=None):
++    try:
++        path = Path(path)
++        if not path.is_file():
++            return default
++        return json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, ValueError):
++        return default
++
++
++def plan_path(job_root):
++    """Where this job's overlay plan lives (job root, as the renderer writes it, or production/)."""
++    root = Path(job_root)
++    for candidate in (root / "graphics_plan.json", root / "production" / "graphics_plan.json"):
++        if candidate.is_file():
++            return candidate
++    return root / "graphics_plan.json"
++
++
++def _count(kind_map, key):
++    return int(kind_map.get(key, 0) or 0)
++
++
++def _prepared(job_root):
++    """What card/hook work already exists on disk before the render places anything."""
++    root = Path(job_root)
++    speech = _read(root / "production" / "speech_cards.json", {}) or {}
++    hooks = _read(root / "production" / "hooks.json", {}) or {}
++    return {
++        "speech_cards_file": (root / "production" / "speech_cards.json").is_file(),
++        "speech_cards_drafted": len(speech.get("cards") or []),
++        "speech_series_points": len(((speech.get("series") or {}).get("points")) or []),
++        "speech_cards_drafted_at": speech.get("created_at") or speech.get("drafted_at"),
++        "hooks_file": (root / "production" / "hooks.json").is_file(),
++        "hooks_drafted": len(hooks.get("hooks") or []),
++        "hooks_drafted_at": hooks.get("created_at") or hooks.get("drafted_at"),
++    }
++
++
++def _kinds(overlays):
++    counts: dict[str, int] = {}
++    for event in overlays or []:
++        kind = str((event or {}).get("kind") or "unknown")
++        counts[kind] = counts.get(kind, 0) + 1
++    return dict(sorted(counts.items()))
++
++
++def build_report(job_root, *, settings=None, overlays=None, errors=None, dropped_hooks=0,
++                 prepared=None, verified=None):
++    """Every fact needed to explain the on-screen graphics of one job."""
++    settings = settings or {}
++    overlays = list(overlays or [])
++    prepared = dict(prepared if prepared is not None else _prepared(job_root))
++    kinds = _kinds(overlays)
++    cards_on_timeline = sum(count for kind, count in kinds.items() if kind not in ("watermark", "hook"))
++    hooks_on_timeline = _count(kinds, "hook")
++    text_cards = bool(settings.get("text_cards_enabled", settings.get("text_cards", False)))
++    speech_cards = bool(settings.get("speech_cards_enabled", False))
++    hooks_enabled = bool(settings.get("hooks_enabled", False))
++    problems, notes = [], []
++
++    def problem(code, message, fix):
++        problems.append({"code": code, "message": message, "fix": fix})
++
++    def note(code, message, fix=""):
++        notes.append({"code": code, "message": message, "fix": fix})
++
++    if not text_cards:
++        problem("text_cards_off",
++                "Text cards were switched off for this job, so the video only carries the channel watermark.",
++                "Turn on 'Text cards / speech-timed cards' in Create (Finishing options) and render again.")
++    elif cards_on_timeline == 0:
++        problem("no_cards_placed",
++                "Text cards were requested but not one card reached the timeline.",
++                "Open production/graphics_audit.json for the drafting error, then Resume the job to rebuild cards.")
++    if not speech_cards and prepared.get("speech_cards_drafted"):
++        note("speech_cards_unused",
++             f"{prepared.get('speech_cards_drafted', 0)} reviewed speech cards were already prepared, but "
++             "'Use speech-timed Gemini cards' is off, so the automatic keypoint cards were used instead.",
++             "Tick 'Use speech-timed Gemini cards' to use the prepared cards, or delete "
++             "production/speech_cards.json to silence this note.")
++    if speech_cards and not prepared.get("speech_cards_drafted"):
++        problem("speech_cards_missing",
++                "Speech cards are enabled but production/speech_cards.json does not exist or has no cards.",
++                "Resume the job: the prepare stage drafts the cards before the render.")
++    if not hooks_enabled:
++        note("hooks_off",
++             "Hook pills were not requested for this job (the option is off by default).",
++             "Tick 'Add Gemini Web hooks' when creating the job, or set hooks_enabled and Resume.")
++    elif hooks_on_timeline == 0:
++        reason = "; ".join(f"{item.get('stage')}: {item.get('error')}" for item in (errors or [])
++                           if item.get("stage", "").startswith("hook"))
++        problem("hooks_not_placed",
++                "Hooks were requested but none reached the timeline."
++                + (f" Reason: {reason}" if reason else
++                   (f" {dropped_hooks} hook(s) were dropped for overlapping another card." if dropped_hooks
++                    else f" production/hooks.json holds {prepared.get('hooks_drafted', 0)} drafted hook(s).")),
++                "Resume the job to refresh hooks against the current narration, then render again.")
++    elif dropped_hooks:
++        note("hooks_dropped",
++             f"{dropped_hooks} hook(s) were dropped because they would have covered a card.",
++             "Re-draft hooks after the cards settle, or accept the remaining hooks.")
++    for item in errors or []:
++        problem(item.get("stage", "graphics_error"), str(item.get("error") or "")[:400],
++                "Fix that cause and Resume; the render continued without it.")
++    report = {
++        "schema": SCHEMA,
++        "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++        "requested": {"text_cards": text_cards, "speech_cards": speech_cards, "hooks": hooks_enabled},
++        "prepared": prepared,
++        "on_timeline": {"total": len(overlays), "by_kind": kinds, "cards": cards_on_timeline,
++                        "hooks": hooks_on_timeline},
++        "problems": problems,
++        "notes": notes,
++        "verified_in_video": verified or {"checked": 0, "reason": "not_run"},
++    }
++    report["verdict"] = ("no_cards" if text_cards and cards_on_timeline == 0
++                         else "cards_placed" if cards_on_timeline
++                         else "off")
++    return report
++
++
++def write(job_root, report):
++    """Save the audit next to the plan; never raise into a render."""
++    path = Path(job_root) / "production" / "graphics_audit.json"
++    try:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
++        return path
++    except OSError:
++        return None
++
++
++def warnings(report):
++    """Short lines for the job warnings list; problems first."""
++    lines = []
++    for item in report.get("problems") or []:
++        lines.append(f"On-screen graphics: {item['message']} Fix: {item['fix']}")
++    for item in report.get("notes") or []:
++        if item.get("code") in ("hooks_off", "speech_cards_unused"):
++            lines.append(f"On-screen graphics: {item['message']} {item.get('fix') or ''}".strip())
++    seen = report.get("verified_in_video") or {}
++    if seen.get("checked"):
++        missing = seen.get("missing") or []
++        if missing:
++            lines.append(
++                "On-screen graphics: " + str(len(missing)) + " card(s) could not be found in the finished "
++                f"video ({', '.join(missing[:4])}). See production/graphics_audit.json.")
++        else:
++            lines.append(f"On-screen graphics: all {seen['checked']} sampled card(s) are visible in the "
++                         "finished video.")
++    return lines
++
++
++def explain(job_root):
++    """The stored audit as readable text, rebuilt from the plan when the audit is missing."""
++    root = Path(job_root)
++    report = _read(root / "production" / "graphics_audit.json")
++    if not report:
++        overlays = _read(plan_path(root), []) or []
++        report = build_report(root, overlays=overlays)
++        report["source"] = "rebuilt from " + str(plan_path(root).relative_to(root)) + " (no audit was written)"
++    lines = []
++    requested = report.get("requested") or {}
++    timeline = report.get("on_timeline") or {}
++    prepared = report.get("prepared") or {}
++    lines.append("Graphics audit · job " + root.name)
++    if report.get("source"):
++        lines.append("  source: " + str(report["source"]))
++    lines.append("  requested: text cards " + ("on" if requested.get("text_cards") else "off")
++                 + " · speech cards " + ("on" if requested.get("speech_cards") else "off")
++                 + " · hooks " + ("on" if requested.get("hooks") else "off"))
++    lines.append(f"  prepared: {prepared.get('speech_cards_drafted', 0)} speech card(s), "
++                 f"{prepared.get('speech_series_points', 0)} series point(s), "
++                 f"{prepared.get('hooks_drafted', 0)} hook(s)")
++    kinds = ", ".join(f"{kind} x{count}" for kind, count in (timeline.get("by_kind") or {}).items()) or "none"
++    lines.append(f"  on the timeline: {timeline.get('total', 0)} overlay(s) · {kinds}")
++    for item in report.get("problems") or []:
++        lines.append(f"  PROBLEM [{item['code']}] {item['message']}")
++        if item.get("fix"):
++            lines.append(f"          fix: {item['fix']}")
++    for item in report.get("notes") or []:
++        lines.append(f"  note    [{item['code']}] {item['message']}")
++        if item.get("fix"):
++            lines.append(f"          fix: {item['fix']}")
++    seen = report.get("verified_in_video") or {}
++    if seen.get("checked"):
++        lines.append(f"  seen in the video: {seen['checked'] - len(seen.get('missing') or [])}"
++                     f"/{seen['checked']} sampled card(s)")
++        for name in seen.get("missing") or []:
++            lines.append(f"          missing at {name}")
++    elif seen.get("reason"):
++        lines.append("  seen in the video: not checked (" + str(seen["reason"]) + ")")
++    return "\n".join(lines)
+--- a/engine/render/graphic_visibility.py
++++ b/engine/render/graphic_visibility.py
+@@ -0,0 +1,121 @@
++"""Prove that a card really reached the finished video (v7.0.107).
++
++The plan says a card sits at 03:12 for four seconds; that does not prove a viewer sees it. Transport
++problems (a dropped overlay label, an edition render that ignores the overlay list, a card drawn in the
++wrong region) all look identical in the JSON and only differ in the file.
++
++This module samples the finished master: for each placed card it grabs the frame in the middle of the card
++and a control frame shortly before/after it, then compares the pixels of the card's own region. A card that
++is on screen changes those pixels measurably; a card that never rendered leaves them identical.
++
++Bounded by design: at most ``limit`` cards, two half-scale frames each, no audio, no re-encode.
++"""
++from __future__ import annotations
++
++import shutil
++import subprocess
++import tempfile
++from pathlib import Path
++
++VISIBLE_MEAN_DELTA = 3.0  # mean absolute difference (0-255) over the card region
++SKIP_KINDS = {"watermark"}
++
++
++def _tool(name):
++    from ..finishing_studio import _tool as resolve
++    return resolve(name)
++
++
++def _grab(video, when, target, width, height):
++    cmd = [_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
++           "-ss", f"{max(0.0, float(when)):.3f}", "-i", str(video), "-frames:v", "1", "-an",
++           "-vf", f"scale={width}:{height}", str(target)]
++    result = subprocess.run(cmd, capture_output=True, text=True)
++    return Path(target).is_file() and target.stat().st_size > 0 and result.returncode == 0
++
++
++def _region(box, width, height, full_w, full_h):
++    if not box or len(box) != 4:
++        return (0, 0, width, height)
++    scale_x, scale_y = width / float(full_w or width), height / float(full_h or height)
++    x, y, w, h = (float(v) for v in box)
++    left = max(0, min(width - 1, int(x * scale_x)))
++    top = max(0, min(height - 1, int(y * scale_y)))
++    right = max(left + 1, min(width, int((x + w) * scale_x)))
++    bottom = max(top + 1, min(height, int((y + h) * scale_y)))
++    return (left, top, right, bottom)
++
++
++def verify(video, overlays, *, limit=8, duration=None) -> dict:
++    """Return ``{'checked': n, 'missing': [...], 'per_overlay': [...], 'reason': ...}``."""
++    try:
++        from PIL import Image, ImageChops, ImageStat
++    except Exception as error:  # pragma: no cover - Pillow ships with the app
++        return {"checked": 0, "missing": [], "per_overlay": [], "reason": f"Pillow unavailable: {error}"}
++    video = Path(video)
++    if not video.is_file():
++        return {"checked": 0, "missing": [], "per_overlay": [], "reason": "no finished video to check"}
++    candidates = [e for e in (overlays or [])
++                  if str(e.get("kind")) not in SKIP_KINDS
++                  and isinstance(e.get("start"), (int, float)) and isinstance(e.get("end"), (int, float))
++                  and float(e["end"]) - float(e["start"]) >= 0.6]
++    if not candidates:
++        return {"checked": 0, "missing": [], "per_overlay": [], "reason": "nothing to check"}
++    candidates = candidates[:max(1, int(limit))]
++    try:
++        from ..finishing_studio import _probe
++        info, total = _probe(video)
++        stream = next((s for s in info["streams"] if s.get("codec_type") == "video"), {})
++        full_w, full_h = int(stream.get("width") or 0), int(stream.get("height") or 0)
++        total = float(duration or total)
++    except Exception:
++        full_w = full_h = 0
++        total = float(duration or 0)
++    if not full_w or not full_h:
++        return {"checked": 0, "missing": [], "per_overlay": [], "reason": "could not read the video size"}
++    width, height = max(160, full_w // 2), max(160, full_h // 2)
++    per_overlay, missing = [], []
++    folder = Path(tempfile.mkdtemp(prefix=".graphics-check-"))
++    try:
++        for index, event in enumerate(candidates):
++            start, end = float(event["start"]), float(event["end"])
++            if total and start >= total:
++                per_overlay.append({"kind": event.get("kind"), "start": round(start, 2),
++                                    "visible": False, "reason": "card starts after the end of the video"})
++                missing.append(f"{event.get('kind')} at {start:.1f}s (past the end)")
++                continue
++            mid = start + max(0.2, (end - start) / 2)
++            control = start - 0.6 if start > 0.8 else min(end + 0.6, (total or end + 0.6) - 0.05)
++            on_frame, off_frame = folder / f"{index}-on.png", folder / f"{index}-off.png"
++            if not (_grab(video, min(mid, max(0.0, (total or mid) - 0.05)), on_frame, width, height)
++                    and _grab(video, max(0.0, control), off_frame, width, height)):
++                per_overlay.append({"kind": event.get("kind"), "start": round(start, 2),
++                                    "visible": False, "reason": "frames could not be read"})
++                missing.append(f"{event.get('kind')} at {start:.1f}s (frames unreadable)")
++                continue
++            try:
++                with Image.open(on_frame) as first, Image.open(off_frame) as second:
++                    first = first.convert("RGB")
++                    second = second.convert("RGB")
++                    first = first.resize((width, height))
++                    second = second.resize((width, height))
++                    region = _region(event.get("box"), width, height, full_w, full_h)
++                    delta = ImageStat.Stat(ImageChops.difference(first.crop(region), second.crop(region))).mean
++                    score = sum(delta) / max(1, len(delta))
++            except Exception as error:
++                per_overlay.append({"kind": event.get("kind"), "start": round(start, 2),
++                                    "visible": False, "reason": f"frame compare failed: {error}"})
++                missing.append(f"{event.get('kind')} at {start:.1f}s (compare failed)")
++                continue
++            visible = score >= VISIBLE_MEAN_DELTA
++            per_overlay.append({"kind": event.get("kind"), "start": round(start, 2),
++                                "seconds": round(end - start, 2), "visible": visible,
++                                "mean_pixel_delta": round(score, 2),
++                                "region": list(region)})
++            if not visible:
++                missing.append(f"{event.get('kind')} at {start:.1f}s")
++    finally:
++        shutil.rmtree(folder, ignore_errors=True)
++    return {"checked": len(per_overlay), "missing": missing, "per_overlay": per_overlay,
++            "threshold_mean_delta": VISIBLE_MEAN_DELTA,
++            "reason": "" if per_overlay else "nothing to check"}
+--- a/engine/audio/music_catalog.py
++++ b/engine/audio/music_catalog.py
+@@ -0,0 +1,169 @@
++"""Recommended royalty-free music, by video type, with the licence each track carries (v7.0.107).
++
++The user asked for "excellent, widely used, pleasant, royalty-free and without copyright on YouTube"
++background music, per video type, to download locally into ``music_library/``. Guessing a track name is
++useless, so this is a small, checked catalogue:
++
++* every entry names its platform, the exact licence, and whether a credit line is required;
++* ``credit`` holds the line to paste into the YouTube description when attribution is required;
++* ``themes`` uses the tags ``engine/audio/music_library.py`` understands, so an imported track is picked for
++  the right videos automatically;
++* ``search`` is what to type on the platform, so the list still works if a direct link changes.
++
++Nothing here downloads or re-hosts music. Licences change; the doc that ships with the app
++(``docs/MUSIC_LIBRARY.md``) says to re-check the licence page before publishing.
++"""
++from __future__ import annotations
++
++SCHEMA = "music-catalogue-v1"
++
++# Video types the app actually produces (``content_type`` / preset families).
++VIDEO_TYPES = {
++    "education": "Explainer, how-to and educational videos",
++    "motivation": "Motivational and self-improvement videos",
++    "documentary": "Documentary, story and cinematic narration",
++    "technology": "Technology, AI and science videos",
++    "kids": "Kids and cartoon stories",
++    "travel": "Travel and lifestyle",
++    "business": "Business, finance and career",
++}
++
++
++def _track(**row):
++    return row
++
++
++CATALOGUE = [
++    _track(
++        id="monplaisir-free-to-use-1", title="Free To Use 1", artist="Monplaisir",
++        platform="Free Music Archive", licence="CC0 1.0 (public domain)", attribution="none",
++        credit="", url="https://freemusicarchive.org/music/Monplaisir/",
++        search="Monplaisir Free To Use 1", themes=["calm", "motivation"], tempo="slow",
++        video_types=["education", "motivation", "business"],
++        notes="Already the local default in this installation (music_library/). Calm, unobtrusive bed "
++              "that survives ducking under speech. Best first choice for talking-head narration.",
++    ),
++    _track(
++        id="buckley-amberlight", title="Amberlight", artist="Scott Buckley",
++        platform="scottbuckley.com.au", licence="CC BY 4.0", attribution="required",
++        credit="'Amberlight' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au",
++        url="https://www.scottbuckley.com.au/library/amberlight/",
++        search="Scott Buckley Amberlight", themes=["calm", "motivation"], tempo="slow",
++        video_types=["education", "motivation", "documentary"],
++        notes="Warm piano and strings. Empathetic, hopeful tone for habit/wellbeing explainers.",
++    ),
++    _track(
++        id="buckley-life-in-motion", title="Life In Motion", artist="Scott Buckley",
++        platform="scottbuckley.com.au", licence="CC BY 4.0", attribution="required",
++        credit="'Life In Motion' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au",
++        url="https://www.scottbuckley.com.au/library/life-in-motion/",
++        search="Scott Buckley Life In Motion", themes=["calm", "motivation"], tempo="slow",
++        video_types=["education", "documentary", "business", "travel"],
++        notes="Neoclassical piano, clarinet and strings. Introspective without being sad.",
++    ),
++    _track(
++        id="buckley-discovery", title="Discovery", artist="Scott Buckley",
++        platform="scottbuckley.com.au", licence="CC BY 4.0", attribution="required",
++        credit="'Discovery' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au",
++        url="https://www.scottbuckley.com.au/library/discovery/",
++        search="Scott Buckley Discovery", themes=["cinematic", "technology"], tempo="medium",
++        video_types=["documentary", "technology", "education", "travel"],
++        notes="Optimistic hybrid orchestra with synth arpeggios. Good under an opening hook, then duck it.",
++    ),
++    _track(
++        id="buckley-origami", title="Origami", artist="Scott Buckley",
++        platform="scottbuckley.com.au", licence="CC BY 4.0", attribution="required",
++        credit="'Origami' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au",
++        url="https://www.scottbuckley.com.au/library/origami/",
++        search="Scott Buckley Origami", themes=["upbeat", "technology"], tempo="medium",
++        video_types=["business", "technology", "education"],
++        notes="Smooth electro-jazz groove. Works under listicles and 'three things to try' videos.",
++    ),
++    _track(
++        id="buckley-echoes", title="Echoes", artist="Scott Buckley",
++        platform="scottbuckley.com.au", licence="CC BY 4.0", attribution="required",
++        credit="'Echoes' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au",
++        url="https://www.scottbuckley.com.au/library/echoes/",
++        search="Scott Buckley Echoes", themes=["cinematic", "calm"], tempo="slow",
++        video_types=["documentary", "motivation"],
++        notes="Solo cello and strings; builds after 3 minutes, so use its first half as a bed.",
++    ),
++    _track(
++        id="buckley-midvinter", title="Midvinter", artist="Scott Buckley",
++        platform="scottbuckley.com.au", licence="CC BY 4.0", attribution="required",
++        credit="'Midvinter' by Scott Buckley - released under CC-BY 4.0. www.scottbuckley.com.au",
++        url="https://www.scottbuckley.com.au/library/midvinter/",
++        search="Scott Buckley Midvinter", themes=["calm"], tempo="slow",
++        video_types=["education", "kids"],
++        notes="Simple piano lullaby. The gentlest entry here; use at low volume under meditation content.",
++    ),
++]
++
++# Where to get more, and what the licence really allows. Re-check each page before publishing.
++SAFE_SOURCES = [
++    {"name": "YouTube Audio Library", "url": "https://support.google.com/youtube/answer/3376882?hl=en",
++     "licence": "YouTube Audio Library license, or CC BY 4.0 for tracks marked 'Attribution required'",
++     "attribution": "Depends on the track: filter 'Attribution not required' to skip credits",
++     "content_id": "No Content ID claims for tracks downloaded from the Audio Library",
++     "notes": "Safest option for a YouTube-first channel: lives in YouTube Studio, downloadable as MP3, "
++              "filterable by mood and by attribution. The copyright-safe promise is YouTube-only."},
++    {"name": "Pixabay Music", "url": "https://pixabay.com/music/",
++     "licence": "Pixabay Content License (content from before 2019 is CC0)",
++     "attribution": "Not required", "content_id": "Some tracks are Content ID registered (shield icon)",
++     "notes": "Largest free library with no credit line needed. Download the MP3 and keep the track page; "
++              "avoid tracks with the Content ID shield for monetised videos. Do not resell tracks as files."},
++    {"name": "Scott Buckley (CC BY 4.0)", "url": "https://www.scottbuckley.com.au/library/",
++     "licence": "CC BY 4.0", "attribution": "Required in the video description, in the exact published form",
++     "content_id": "Registered with a claim-release process tied to the credit line",
++     "notes": "Cinematic and neoclassical tracks that sound expensive. Paste the credit text verbatim or you "
++              "will get a claim. See https://www.scottbuckley.com.au/library/using-this-music/."},
++    {"name": "Free Music Archive", "url": "https://freemusicarchive.org/",
++     "licence": "Per track: CC0, CC BY, CC BY-SA (never use NC/ND for monetised work)",
++     "attribution": "Depends on the track; filter to CC0 for no-credit use",
++     "content_id": "Varies by artist", "notes": "Where Monplaisir's CC0 catalogue lives."},
++    {"name": "Incompetech / Kevin MacLeod", "url": "https://incompetech.com/music/royalty-free/music.html",
++     "licence": "CC BY 4.0 (older tracks CC BY 3.0)",
++     "attribution": "Required", "content_id": "Some tracks are claimed; the site publishes the credit format",
++     "notes": "Huge, well-known catalogue at every mood; the credit format on each track page must be copied."},
++]
++
++
++def recommend(content_type="", themes=None, limit=8):
++    """Tracks suited to a video type and/or theme tags, best first."""
++    kind = str(content_type or "").strip().lower()
++    wanted = {str(theme).strip().lower() for theme in (themes or []) if str(theme).strip()}
++    scored = []
++    for index, track in enumerate(CATALOGUE):
++        score = 0
++        if kind and kind in track["video_types"]:
++            score += 3
++        score += 2 * len(wanted & set(track["themes"]))
++        if track["attribution"] == "none":
++            score += 1  # fewer obligations is a feature for a channel that reuses tracks
++        if score:
++            scored.append((score, index, track))
++    scored.sort(key=lambda row: (-row[0], row[1]))
++    return [track for _, _, track in scored[:max(1, int(limit))]]
++
++
++def credit_block(tracks):
++    """The description block for every track that needs one; empty when none do."""
++    lines = [track["credit"] for track in tracks or [] if track.get("attribution") == "required" and track.get("credit")]
++    if not lines:
++        return ""
++    return "Music:\n" + "\n".join(lines)
++
++
++def theme_tags(content_type="", tracks=None, limit=3):
++    """The library tags to attach when importing a track for this kind of video.
++
++    Only the themes of the recommended tracks, most common first, so the advice is
++    "tag it calm or motivation" rather than the whole vocabulary.
++    """
++    rows = tracks if tracks is not None else recommend(content_type, limit=6)
++    counts = {}
++    for track in rows:
++        for theme in track["themes"]:
++            counts[theme] = counts.get(theme, 0) + 1
++    ranked = sorted(counts, key=lambda theme: (-counts[theme], theme))
++    return ranked[:max(1, int(limit))] or ["calm"]
+--- a/docs/MUSIC_LIBRARY.md
++++ b/docs/MUSIC_LIBRARY.md
+@@ -0,0 +1,157 @@
++# Background music you can actually publish on YouTube
++
++This guide answers one question: **which royalty-free tracks should I keep locally for which kind of video,
++and what licence do they carry?** It is a companion to `music_library/`, the folder the app reads local music
++from, and to `python3 cli.py v3 music-suggest`.
++
++Nothing in this repository re-hosts, bundles or downloads music. You download the files yourself, once, and
++the app reuses them for every video.
++
++---
++
++## 1. The three licences that matter
++
++| Licence | Credit line | Monetised YouTube | Notes |
++| --- | --- | --- | --- |
++| **YouTube Audio Library licence** | Not required for tracks filtered as *Attribution not required* | Yes (YouTube Partner Program) | YouTube states these tracks are copyright-safe and will not be claimed through Content ID. The safety promise is **YouTube-only**. |
++| **Pixabay Content License** | Not required | Yes | Free for commercial use, no royalty. Tracks with a **shield icon are Content ID registered** — avoid those for monetised videos. You may not resell the track as a file. |
++| **CC BY 4.0** (Scott Buckley, Kevin MacLeod, most of Free Music Archive) | **Required**, in the exact published wording, in the video description | Yes | Credit is a licence condition, not a courtesy. Missing it is how CC-BY tracks produce claims. |
++| **CC0 1.0** (Monplaisir and much of Free Music Archive) | Not required | Yes | Public-domain dedication; the simplest option to reuse forever. |
++
++Never use **CC BY-NC** (no commercial use) or **CC BY-ND** (no edits — and ducking/trimming is an edit) on a
++monetised channel. Re-check the licence page before you publish: terms change, and a track you downloaded
++last year may since have been registered with Content ID.
++
++---
++
++## 2. Recommendations by video type
++
++Start with the CC0 track you already have (`Monplaisir - Free To Use 1.ogg`) and add one track per mood, so a
++45-video backlog never repeats the same bed.
++
++### Education, explainers, how-to, habits, wellbeing
++| Track | Artist | Licence | Why |
++| --- | --- | --- | --- |
++| Free To Use 1 | Monplaisir | CC0 — no credit | Already local. Calm, unobtrusive, survives ducking. Default bed. |
++| Amberlight | Scott Buckley | CC BY 4.0 — credit | Warm piano and strings; hopeful, never sugary. |
++| Life In Motion | Scott Buckley | CC BY 4.0 — credit | Neoclassical and introspective; good under a personal-story opener. |
++| Midvinter | Scott Buckley | CC BY 4.0 — credit | A very gentle piano lullaby; use quietly under slow, calm narration. |
++| Search *"calm piano"* / *"inspiring ambient"* | YouTube Audio Library | filter **Attribution not required** | Zero obligations, four or five usable beds per search. |
++
++### Motivation, self-improvement, discipline
++| Track | Artist | Licence | Why |
++| --- | --- | --- | --- |
++| Free To Use 1 | Monplaisir | CC0 — no credit | Steady pulse without a drop that fights the narration. |
++| Amberlight | Scott Buckley | CC BY 4.0 — credit | Builds without a hard climax, so the payoff line still lands. |
++| Echoes | Scott Buckley | CC BY 4.0 — credit | Solo cello; use the first half only, before it builds at ~3:10. |
++
++### Documentary, story and cinematic narration
++| Track | Artist | Licence | Why |
++| --- | --- | --- | --- |
++| Discovery | Scott Buckley | CC BY 4.0 — credit | Optimistic hybrid orchestra; excellent under an opening hook. |
++| Echoes | Scott Buckley | CC BY 4.0 — credit | Emotional strings with a late climax — cut the video around it. |
++| Search *"cinematic documentary"* | Pixabay Music | Content License, no credit | Large choice; check each track for the Content ID shield. |
++
++### Technology, AI and science
++| Track | Artist | Licence | Why |
++| --- | --- | --- | --- |
++| Origami | Scott Buckley | CC BY 4.0 — credit | Electro-jazz groove; upbeat without being childish. |
++| Discovery | Scott Buckley | CC BY 4.0 — credit | Synth arpeggios read as "future" without a sci-fi cliché. |
++| Search *"technology corporate"* | YouTube Audio Library | filter **Attribution not required** | Clean, neutral beds for tool walk-throughs. |
++
++### Business, finance, career
++| Track | Artist | Licence | Why |
++| --- | --- | --- | --- |
++| Origami | Scott Buckley | CC BY 4.0 — credit | Confident, not aggressive. |
++| Life In Motion | Scott Buckley | CC BY 4.0 — credit | Credible and human for case studies and interviews. |
++| Search *"corporate motivation"* | Pixabay Music | Content License, no credit | Big library of neutral corporate beds. |
++
++### Kids, cartoons, stories
++| Track | Artist | Licence | Why |
++| --- | --- | --- | --- |
++| Midvinter | Scott Buckley | CC BY 4.0 — credit | A gentle bed under bedtime-style stories. |
++| Search *"kids playful"* | Pixabay Music | Content License, no credit | Brighter, toy-like beds — pick tracks without the Content ID shield. |
++
++Get the same list in the terminal, with the current URLs:
++
++```bash
++python3 cli.py v3 music-suggest --content-type education
++python3 cli.py v3 music-suggest --content-type documentary --theme cinematic
++python3 cli.py v3 music-suggest --sources          # licence terms per library
++python3 cli.py v3 music-suggest --json             # machine-readable
++```
++
++The credit block to paste into a description is printed with every suggestion, and is also returned as
++`credit_block` in the JSON.
++
++---
++
++## 3. Download once, keep it locally
++
++1. Download the MP3/OGG/WAV from the platform's own page (not from a re-upload — a re-upload has no licence).
++2. Keep the download page URL, the licence name and the artist next to the file (a note or the
++   `music_library/manifest.json` entry does this).
++3. Check the file before importing:
++
++   ```bash
++   python3 cli.py v3 music-check ~/Downloads/ambient-calm.mp3
++   ```
++
++   It prints the size, SHA-256 and a ready-to-fill `manifest.json` snippet, and refuses files that are not
++   playable audio.
++
++4. Import it:
++
++   * **In the app** — Create → **Music library** → upload the file with a title, theme tags, the HTTPS source
++     page and the exact licence label. The app writes `manifest.json` and tags the track.
++   * **By hand** — copy the file into `music_library/` and add an entry to `music_library/manifest.json`:
++
++     ```json
++     {"schema_version": 1, "tracks": [
++       {"file": "ambient-calm.mp3", "sha256": "<from music-check>",
++        "title": "Amberlight", "tags": ["calm", "motivation"],
++        "source_url": "https://www.scottbuckley.com.au/library/amberlight/",
++        "license": "CC BY 4.0 — credit required"}
++     ]}
++     ```
++
++   * **Elsewhere on disk** — point `AUTOVIDEO_MUSIC_LIBRARY` at that folder instead.
++
++5. Tags decide which videos get the track. The library understands `motivation`, `calm`, `upbeat`,
++   `cinematic` and `technology`; `python3 cli.py v3 music-suggest --content-type <type>` prints the tags for
++   that video type.
++
++---
++
++## 4. How the app mixes the music now (v7.0.107)
++
++* The bed starts at the video's `music_volume` (default 0.10–0.12), **fades in** over 1 s and **fades out**
++  over the last 2.5 s instead of stopping dead.
++* While the narrator speaks, a sidechain compressor pulls the bed down by about **13 dB** (12:1 ratio at a
++  0.02 threshold) with a 15 ms attack and a 550 ms release, so the music **returns in every pause**.
++* The finished mix is normalised to **−14 LUFS**, the same target as the English master, so language editions
++  are not quieter than the original.
++* Sound effects are mixed at 0.65 of their planned level so they sit under the voice.
++
++Tune any of it without touching code:
++
++```bash
++python3 cli.py v3 tune <job_id> --show                    # current values
++python3 cli.py v3 tune <job_id> --duck-ratio 16 --duck-release-ms 700
++python3 cli.py v3 tune <job_id> --music-fade-out 4 --sfx-gain 0.5
++python3 cli.py v3 render <job_id>                          # same takes, no Flow credits
++```
++
++If the music still feels loud under speech, raise `--duck-ratio` (12 → 16 → 20) or lower the job's music
++volume. If it feels like it disappears, lower the ratio to 8 and lengthen the fade-out.
++
++---
++
++## 5. A five-minute checklist before publishing
++
++- [ ] Every track is either CC0 / Audio Library *attribution not required* / Pixabay without a shield icon,
++      **or** its exact credit line is in the description.
++- [ ] The credit text was copied from the licence page or the track page, word for word.
++- [ ] No CC BY-NC or CC BY-ND track anywhere.
++- [ ] The track page URL is saved with the file.
++- [ ] The video was uploaded as **Unlisted** first and the Copyright column checked before going public.
+--- a/tests/test_v7107_fit_cards_music.py
++++ b/tests/test_v7107_fit_cards_music.py
+@@ -0,0 +1,242 @@
++"""v7.0.107: a long language narration is fitted instead of refused, cards really pop, music really ducks."""
++import json
++from pathlib import Path
++
++import pytest
++
++from engine import narration_fit
++from engine.graphics_audit import build_report, explain, warnings
++from engine.render.educational_cards import LABELS, render_card_png
++from engine.render.graphic_visibility import _region
++
++
++# ---------------------------------------------------------------- narration fit
++
++def test_fit_not_needed_when_the_narration_fits_the_picture():
++    report = narration_fit.plan(100.0, 100.0, label='Odia')
++    assert report['mode'] == 'none'
++    assert report['ratio'] == 1.0 and report['picture_scale'] == 1.0 and report['tempo'] == 1.0
++
++
++def test_fit_slows_the_picture_only_inside_the_old_25_percent_limit():
++    report = narration_fit.plan(110.0, 100.0, label='Hindi')
++    assert report['mode'] == 'fit'
++    assert report['picture_scale'] == pytest.approx(1.10)
++    assert report['tempo'] == pytest.approx(1.0)
++
++
++def test_fit_combines_picture_stretch_and_pitch_preserving_narration_speed():
++    # The field failure: an Odia script 30% longer than the approved picture used to be a dead end.
++    report = narration_fit.plan(130.0, 100.0, label='Odia')
++    assert report['mode'] == 'fit'
++    assert report['picture_scale'] == pytest.approx(1.25)
++    assert report['tempo'] == pytest.approx(1.04)
++    assert report['ratio'] == pytest.approx(1.3)
++    assert 'message' not in report
++
++
++def test_fit_refuses_with_numbers_words_and_every_repair():
++    report = narration_fit.plan(160.0, 100.0, label='Odia')
++    assert report['mode'] == 'refuse'
++    assert report['absorbable_ratio'] == pytest.approx(1.40)
++    assert report['overflow_seconds'] == pytest.approx(20.0)
++    assert report['words_to_cut'] == 48
++    message = report['message']
++    assert '160.0s' in message and '100.0s' in message and '1.60x' in message
++    assert '20.0s' in message and '48' in message and '--fit-max-tempo' in message
++
++
++def test_hold_can_absorb_the_overflow_when_the_user_allows_it():
++    report = narration_fit.plan(150.0, 100.0, label='Odia', allow_hold=True, hold_cap=15.0)
++    assert report['mode'] == 'hold'
++    assert report['hold_seconds'] == pytest.approx(10.0)
++    assert report['words_to_cut'] == 0
++    assert 'held for 10.0s' in report['message']
++
++
++def test_hold_is_refused_beyond_its_cap():
++    report = narration_fit.plan(170.0, 100.0, label='Odia', allow_hold=True, hold_cap=5.0)
++    assert report['mode'] == 'refuse'
++    assert report['words_to_cut'] > 0
++    assert 'hold limit' in report['message']
++
++
++def test_scale_words_keeps_cards_and_captions_in_sync():
++    words = [{'word': 'a', 'start': 1.0, 'end': 2.0}, {'word': 'b', 'start': 2.0, 'end': 4.0}]
++    scaled = narration_fit.scale_words(words, 1.25)
++    assert [w['start'] for w in scaled] == [0.8, 1.6]
++    assert [w['end'] for w in scaled] == [1.6, 3.2]
++    assert words[0]['start'] == 1.0  # the input is never mutated
++
++
++def test_describe_reports_the_arithmetic():
++    assert 'No narration fit needed' in narration_fit.describe(narration_fit.plan(90.0, 100.0))
++    fitted = narration_fit.describe(narration_fit.plan(130.0, 100.0))
++    assert 'picture x1.25' in fitted and 'narration x1.04' in fitted
++    assert narration_fit.describe(narration_fit.plan(200.0, 100.0)).startswith('Narration fit refused')
++
++
++# ---------------------------------------------------------------- cards really pop
++
++def test_plain_keypoint_cards_are_drawable_popups(tmp_path):
++    info = render_card_png({'kind': 'keypoint', 'text': 'Two minutes is enough', 'start': 1, 'end': 5},
++                           tmp_path / 'card.png', 540, 960, style='bold')
++    assert info['kind'] == 'keypoint' and info['anim'] == 'pop'
++    assert info['box'][2] > 0 and info['box'][3] > 0
++    assert info['fade_in'] > 0 and info['fade_out'] > 0
++    assert (tmp_path / 'card.png').stat().st_size > 1000
++    assert LABELS['keypoint'] == 'KEY POINT'
++
++
++def test_unknown_card_kinds_are_still_rejected(tmp_path):
++    with pytest.raises(ValueError):
++        render_card_png({'kind': 'nonsense', 'text': 'x', 'start': 0, 'end': 2}, tmp_path / 'x.png', 540, 960)
++
++
++# ---------------------------------------------------------------- graphics audit
++
++def _settings(**overrides):
++    base = {'text_cards_enabled': True, 'speech_cards_enabled': True, 'hooks_enabled': True}
++    base.update(overrides)
++    return base
++
++
++def _overlays(cards=2, hooks=1, watermarks=1):
++    rows = []
++    for index in range(cards):
++        rows.append({'kind': 'keypoint', 'start': 5 + index * 10, 'end': 9 + index * 10, 'path': 'c.png',
++                     'anim': 'pop', 'box': [10, 10, 200, 100]})
++    for index in range(hooks):
++        rows.append({'kind': 'hook', 'start': 30 + index * 10, 'end': 33 + index * 10, 'path': 'h.png'})
++    for index in range(watermarks):
++        rows.append({'kind': 'watermark', 'start': 0, 'end': 60, 'path': 'w.png'})
++    return rows
++
++
++def test_audit_confirms_cards_and_hooks_on_the_timeline(tmp_path):
++    prepared = {'speech_cards_drafted': 4, 'hooks_drafted': 2, 'speech_series_points': 0}
++    report = build_report(tmp_path, settings=_settings(), overlays=_overlays(), prepared=prepared)
++    assert report['verdict'] == 'cards_placed'
++    assert report['on_timeline']['cards'] == 2 and report['on_timeline']['hooks'] == 1
++    assert report['problems'] == []
++
++
++def test_audit_explains_cards_being_switched_off(tmp_path):
++    report = build_report(tmp_path, settings=_settings(text_cards_enabled=False, speech_cards_enabled=False),
++                          overlays=_overlays(cards=0, hooks=0), prepared={'speech_cards_drafted': 9})
++    assert report['verdict'] == 'off'
++    codes = [item['code'] for item in report['problems']]
++    assert 'text_cards_off' in codes
++    assert any(item['code'] == 'speech_cards_unused' for item in report['notes'])
++    text = explain(tmp_path)
++    assert 'text cards off' in text and 'PROBLEM' in text
++
++
++def test_audit_names_drafted_but_unused_speech_cards(tmp_path):
++    report = build_report(tmp_path, settings=_settings(speech_cards_enabled=False),
++                          overlays=_overlays(), prepared={'speech_cards_drafted': 9})
++    note = next(item for item in report['notes'] if item['code'] == 'speech_cards_unused')
++    assert '9 reviewed speech cards' in note['message'] and 'production/speech_cards.json' in note['fix']
++
++
++def test_audit_reports_hooks_that_never_reached_the_timeline(tmp_path):
++    report = build_report(tmp_path, settings=_settings(), overlays=_overlays(cards=2, hooks=0),
++                          prepared={'hooks_drafted': 3, 'speech_cards_drafted': 2}, dropped_hooks=3)
++    problem = next(item for item in report['problems'] if item['code'] == 'hooks_not_placed')
++    assert 'dropped for overlapping' in problem['message']
++    assert any('could not be found' in line or 'Hook' in line for line in warnings(report) + [problem['message']])
++
++
++def test_audit_keeps_drafting_errors_visible(tmp_path):
++    report = build_report(tmp_path, settings=_settings(), overlays=_overlays(),
++                          errors=[{'stage': 'speech_cards_render_failed', 'error': 'narration changed'}])
++    assert any(item['code'] == 'speech_cards_render_failed' for item in report['problems'])
++
++
++def test_audit_surfaces_cards_missing_from_the_finished_video(tmp_path):
++    report = build_report(tmp_path, settings=_settings(), overlays=_overlays(),
++                          verified={'checked': 2, 'missing': ['keypoint at 5.0s']})
++    lines = warnings(report)
++    assert any('could not be found in the finished video' in line for line in lines)
++
++
++def test_explain_rebuilds_when_no_audit_was_written(tmp_path):
++    (tmp_path / 'production').mkdir()
++    (tmp_path / 'production' / 'graphics_plan.json').write_text(json.dumps(_overlays()))
++    text = explain(tmp_path)
++    assert 'rebuilt from' in text and 'graphics_plan.json' in text
++    assert 'keypoint x2' in text
++
++
++# ---------------------------------------------------------------- visibility geometry
++
++def test_visibility_region_maps_a_scaled_box():
++    assert _region([100, 200, 300, 400], 540, 960, 1080, 1920) == (50, 100, 200, 300)
++    assert _region(None, 540, 960, 1080, 1920) == (0, 0, 540, 960)
++    # A box that runs past the frame is clamped instead of raising.
++    assert _region([1000, 1800, 500, 500], 540, 960, 1080, 1920) == (500, 900, 540, 960)
++
++
++# ---------------------------------------------------------------- job tuning
++
++def test_tuning_options_reach_the_render_settings(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    from engine.factory import Factory
++    factory = Factory(outputs=str(tmp_path / 'outputs'), db_path=str(tmp_path / 'jobs.db'))
++    job = factory.create_job('music duck tuning', profile='FLOW_ECONOMY', dry_run=True)
++
++    assert factory.tuning_report(job)['sound']['duck_ratio'] == pytest.approx(12.0)
++    factory.set_tuning_options(job, music_duck_ratio=16, music_fade_out=4, edition_fit_max_tempo=1.15,
++                               edition_fit_hold_seconds=8)
++    settings = factory._settings(job)
++    assert settings['music_duck_ratio'] == 16
++    assert factory.tuning_report(job)['sound']['duck_ratio'] == pytest.approx(16.0)
++    assert factory.tuning_report(job)['sound']['music_fade_out'] == pytest.approx(4.0)
++    fit = factory.tuning_report(job)['edition_fit']
++    assert fit['max_tempo'] == pytest.approx(1.15) and fit['allow_hold'] is True and fit['hold_cap'] == 8.0
++
++
++def test_tuning_refuses_unknown_keys(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    from engine.factory import Factory
++    factory = Factory(outputs=str(tmp_path / 'outputs'), db_path=str(tmp_path / 'jobs.db'))
++    job = factory.create_job('music duck tuning guard', profile='FLOW_ECONOMY', dry_run=True)
++    with pytest.raises(ValueError) as error:
++        factory.set_tuning_options(job, music_duck_ration=16)   # typo
++    assert 'Unknown tuning option' in str(error.value)
++
++
++def test_bad_values_fall_back_to_safe_defaults():
++    from engine.factory import _edition_fit_policy, _sound_policy
++    sound = _sound_policy({'music_duck_ratio': 'loud', 'music_fade_out': -3, 'sfx_gain': 9})
++    assert sound['duck_ratio'] == pytest.approx(12.0)
++    assert sound['music_fade_out'] == pytest.approx(2.5)
++    assert sound['sfx_gain'] == pytest.approx(0.65)
++    fit = _edition_fit_policy({'edition_fit_max_tempo': 0, 'edition_fit_hold_seconds': 'soon'})
++    assert fit['max_tempo'] == pytest.approx(1.12) and fit['allow_hold'] is False
++
++
++# ---------------------------------------------------------------- music catalogue
++
++def test_music_suggestions_name_the_licence_and_the_credit():
++    from engine.audio.music_catalog import CATALOGUE, credit_block, recommend, theme_tags
++    tracks = recommend('education')
++    assert tracks and all(track['video_types'] for track in tracks)
++    assert all(track['licence'] and track['url'].startswith('https://') for track in CATALOGUE)
++    block = credit_block(tracks)
++    assert block.startswith('Music:')
++    for track in tracks:
++        if track['attribution'] == 'required':
++            assert track['credit'] in block
++        else:
++            assert track['credit'] == ''
++    assert 'calm' in theme_tags('education', tracks)
++
++
++def test_music_catalogue_covers_every_video_type_and_flags_no_credit_tracks():
++    from engine.audio.music_catalog import CATALOGUE, SAFE_SOURCES, VIDEO_TYPES
++    covered = {kind for track in CATALOGUE for kind in track['video_types']}
++    assert covered == set(VIDEO_TYPES)
++    youtube = next(source for source in SAFE_SOURCES if source['name'] == 'YouTube Audio Library')
++    assert 'Attribution not required' in youtube['attribution']
++    assert any(track['attribution'] == 'none' for track in CATALOGUE)
+--- a/NARRATION_FIT_CARDS_AND_MUSIC_V7_0_107.md
++++ b/NARRATION_FIT_CARDS_AND_MUSIC_V7_0_107.md
+@@ -0,0 +1,189 @@
++# v7.0.107 — Odia fits, cards pop, hooks appear, music ducks
++
++Field report after one three-language job
++(`20261022-143856-7-small-daily-habits-tha-9729`, 27 Oct 2026):
++
++> the odia mode get failed for some reason … text cards in the video not good … max meaningful pop-up cards
++> feature not visible … hooks missing … the background music does not fade while speaking … recommend
++> royalty-free music per video type
++
++Hindi exported, Odia stopped with one line:
++
++```
++Odia narration is more than 25% longer than the approved picture. Shorten that language script,
++review it, and prepare it again.
++```
++
++That line is true and useless: it never said by how much, and the only lever was "slow the picture by up to
++25%", so a good Odia script 30% longer than the picture produced no video at all.
++
++---
++
++## 1. A longer narration is now fitted, not refused
++
++`engine/narration_fit.py` makes the decision with numbers instead of a bare gate. Three bounded levers:
++
++| Lever | Default | What happens |
++| --- | --- | --- |
++| picture | up to **1.25×** | the approved picture is slowed with `setpts`, exactly as before |
++| narration | up to **1.12×** | the reviewed narration is sped up with pitch-preserving `atempo` |
++| hold (opt-in) | **off** | with `--fit-hold` / `edition_fit_hold_seconds`, the last frame is cloned for the remainder |
++
++Together they absorb a narration up to **1.40×** the picture. Word timings are divided by the same narration
++speed, so cards, hooks and burned captions stay on the spoken words. Your Odia case (1.3×) now exports with a
++1.25× picture and a 1.04× narration.
++
++Beyond 1.40× the edition still refuses — but the message carries the measurement and every repair:
++
++```
++Odia narration is 160.0s but the approved picture is 100.0s (1.60x) - more than 25% longer than the approved
++picture, so a video rendered from it would either cut the narration or freeze the picture. Slowing the picture
++1.25x and speeding the narration 1.12x absorbs 1.40x, which still leaves 20.0s (about 48 spoken words) over.
++Nothing was exported. Fix one of these: shorten that language script by about 48 words and re-approve it; re-run
++with `--fit-max-tempo 1.28` to accept a faster narration; or hold the last frame for 20s with `--fit-hold 20`;
++or trim the picture.
++```
++
++Every edition writes `language_editions/<id>/fit-<language>.json` (the arithmetic) and records the applied fit
++in its `.provenance.json` (`narration_fit.picture_scale`, `.tempo`, `.hold_seconds`). The other languages are
++untouched: one edition's fit can never change another's.
++
++Change the budget for one job:
++
++```bash
++python3 cli.py v3 tune <job_id> --fit-max-tempo 1.15 --fit-hold 10   # persisted in the job's settings.json
++python3 cli.py v3 language-outputs <job_id> --fit-max-tempo 1.15 --fit-hold 10   # this run only
++```
++
++---
++
++## 2. Cards that look like cards, hooks that actually render
++
++Five separate causes were found; the field job could have hit any of them.
++
++1. **Speech cards were only ever used for "educational" videos.** In `finishing_studio.create_plan` the
++   reviewed `speech_cards.json` snapshot was stored only when the edition was educational, so a plain video's
++   language editions fell back to thin keypoint strips. Any reviewed card file is now used, whatever the type.
++2. **Plain keypoint cards were thin, static lower-third strips.** The "pop-up card" look (panel, badge, open
++   and close) only existed for educational content. `render_card_png` now draws keypoint cards too — same
++   panel, a `KEY POINT` badge, a soft shadow, a denser panel for readability over bright footage, and
++   `anim: pop` with fade in/out, so the renderer animates them.
++3. **Editions forced the educational palette.** `_edition_overlays` passed `educational=True` and
++   `style='playful'` for every language, changing the kinds and the palette of a non-educational video. It
++   now uses that edition's own flag.
++4. **Hooks were off by default** and, in editions, only present when the batch was prepared with hooks. New
++   jobs now default to `hooks_enabled = True` and `speech_cards_enabled = True` (still one Gemini Web request
++   each; untick them in Create to skip). The checkboxes explain this.
++5. **Card failures killed the render.** A failed card draft, a stale `speech_cards.json` or a
++   `speech_cards.json` that did not exist raised out of the render. All three now fall back to the automatic
++   cards, log the reason, and finish the video.
++
++### `production/graphics_audit.json`
++
++Every render writes it:
++
++* what was **requested** (text cards, speech cards, hooks);
++* what was **prepared** (cards drafted, series points, hooks drafted);
++* what reached the **timeline** (counts by kind);
++* **problems** with a code, a cause and a fix — e.g. `text_cards_off`, `no_cards_placed`,
++  `speech_cards_missing`, `hooks_not_placed`, `hooks_dropped`;
++* **notes** — e.g. *"9 reviewed speech cards were already prepared, but 'Use speech-timed Gemini cards' is
++  off, so the automatic keypoint cards were used instead."*;
++* `verified_in_video` — see below.
++
++It also appears in the job warnings, in the new **Text cards and hooks · what appeared, and why** panel in the
++app, and on the command line:
++
++```bash
++python3 cli.py v3 graphics-audit <job_id>            # the stored explanation
++python3 cli.py v3 graphics-audit <job_id> --json     # the whole report
++python3 cli.py v3 graphics-audit <job_id> --check    # sample the finished video and update the report
++```
++
++### "Does the card really appear in the video?"
++
++`--check` (and the button in the panel) grabs the frame in the middle of each card and a control frame a
++moment earlier, then compares the pixels **inside that card's own region** (`engine/render/graphic_visibility.py`).
++A card that never rendered leaves those pixels identical. At most eight cards are sampled, two half-scale
++frames each — a few seconds, no re-encode. The result names each card that could not be found, so "the cards
++are missing" becomes a fact with a timecode instead of an impression.
++
++---
++
++## 3. Music that moves with the voice
++
++The bed was technically ducked before, but only by a few dB — the mix sounded like a flat track with speech
++over it.
++
++| | before | 7.0.107 |
++| --- | --- | --- |
++| duck depth under speech | 4:1 at 0.04 threshold ≈ 3–5 dB | **12:1 at 0.02 ≈ 13 dB** |
++| attack / release | 120 ms / 400 ms | **15 ms / 550 ms** (returns in every pause) |
++| music entry / exit | none — the bed started and stopped dead | **fade in ~1 s, fade out ~2.5 s**, both scaled to the video length |
++| sound effects | full planned level | **0.65×**, so they sit under the voice |
++| edition loudness | limiter only | **−14 LUFS**, the same target as the English master |
++
++Fades scale with the length: a 4-second clip fades 0.2 s in and does not fade out at all; an 8-minute video
++gets the full 2.5 s exit. Every value is a job setting and can be tuned without spending credits:
++
++```bash
++python3 cli.py v3 tune <job_id> --show
++python3 cli.py v3 tune <job_id> --duck-ratio 16 --duck-release-ms 700 --music-fade-out 4 --sfx-gain 0.5
++python3 cli.py v3 render <job_id>        # same accepted takes; no Flow credits
++```
++
++---
++
++## 4. Royalty-free music, per video type
++
++See **`docs/MUSIC_LIBRARY.md`**: licence table (YouTube Audio Library, Pixabay, CC BY, CC0), a track list per
++video type with the exact credit line, how to import a track into `music_library/`, and a pre-publish
++checklist.
++
++```bash
++python3 cli.py v3 music-suggest --content-type education
++python3 cli.py v3 music-suggest --content-type documentary --theme cinematic
++python3 cli.py v3 music-suggest --sources          # where to download, and the terms
++python3 cli.py v3 music-check ~/Downloads/track.mp3   # validates the file and prints the manifest entry
++```
++
++Catalogue entries are real, checked pages (`engine/audio/music_catalog.py`), starting with the CC0 track this
++installation already has. Nothing is downloaded for you; the guide says to re-check each licence page before
++publishing, and warns about the Content ID shield on Pixabay tracks.
++
++---
++
++## 5. Install
++
++```bash
++# 1. extract AutoVideoAI-v7.0.107...zip beside the existing folder
++python3 ../AutoVideoAI-v7.0.107/tools/update_v7106_to_v7107.py .            # dry run
++python3 ../AutoVideoAI-v7.0.107/tools/update_v7106_to_v7107.py . --apply    # install
++# 2. restart the dashboard
++```
++
++Only code and documentation are replaced; outputs, saved jobs, Flow journals, browser profiles and
++`music_library/` are never touched. A re-run is safe and does nothing once installed. If the installed version
++is older than 7.0.106, the updater refuses and names the earlier update to apply first.
++
++### Re-running the Odia edition you already have
++
++Nothing needs to be re-generated and no Flow credit is spent:
++
++```bash
++python3 cli.py v3 language-outputs outputs/<your-job-id> --fit-hold 8
++```
++
++`--fit-hold 8` is only needed if that particular Odia script is more than 1.40× the picture; the message tells
++you the seconds and the words. If you would rather keep the picture pace identical, shorten the script by the
++number of words the message names and re-approve it in Jobs & Recovery → Speech batches.
++
++### If something is still wrong, send these four files
++
++They are small JSON files under `AutoVideoAI-Shared/outputs/<job>/` and they answer the question without a
++video upload:
++
++1. `production/graphics_audit.json` — requested vs prepared vs placed, plus the visibility check;
++2. `production/speech_cards.json` — the drafted cards (count, text, anchors);
++3. `production/hooks.json`, if present — the drafted hooks;
++4. `language_editions/<id>/fit-or.json` and the Odia `.provenance.json` — the fit arithmetic that was applied.
+--- a/tools/update_v7106_to_v7107.py
++++ b/tools/update_v7106_to_v7107.py
+@@ -0,0 +1,186 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.107 update to a v7.0.106 installation.
++
++Three field problems from one three-language job:
++
++1. **A 30% longer Odia narration produced no video.** The edition render only allowed the picture to be slowed
++   by 25% and then refused with one line that stated neither the overrun nor any way out. A narration is now
++   fitted by bounded retiming (picture up to 1.25x, pitch-preserving narration speed up to 1.12x, optional
++   cloned last frame), word timings follow the narration speed, and anything beyond the budget is refused with
++   the seconds, the ratio, the number of words to cut and the exact flags that would accept it.
++2. **Cards and hooks were missing or unconvincing.** Hooks and speech cards default to on; reviewed speech cards
++   are used for every language edition (not only educational videos); plain cards are drawn as real animated
++   pop-ups instead of static lower-third strips; editions keep their own card kind and palette; a failed card
++   draft no longer kills the render. Every render writes ``production/graphics_audit.json`` explaining what was
++   requested, prepared and placed, and ``graphics-audit --check`` proves from the finished file whether each
++   card is visible.
++3. **The music did not drop under speech.** The bed is ducked ~13 dB (12:1) with a 15 ms attack and 550 ms
++   release, fades in and out with the video length, effects sit at 0.65x, and editions are normalised to
++   -14 LUFS. ``cli.py v3 tune`` adjusts all of it without spending credits.
++
++Plus a curated royalty-free music guide (``docs/MUSIC_LIBRARY.md``) with ``music-suggest`` and ``music-check``.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.107 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.107/tools/update_v7106_to_v7107.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.107/tools/update_v7106_to_v7107.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py',
++    'engine/factory.py', 'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/speech_cards.py',
++    'engine/render/ffmpeg_renderer.py', 'engine/render/educational_cards.py', 'engine/studio_config.py',
++    'tools/build_release.py',
++    # new in 7.0.107
++    'engine/narration_fit.py', 'engine/graphics_audit.py', 'engine/render/graphic_visibility.py',
++    'engine/audio/music_catalog.py', 'docs/MUSIC_LIBRARY.md',
++    'tests/test_v7107_fit_cards_music.py', 'tests/test_v768_language_editions_render.py',
++    'tests/test_v774_educational_cards.py', 'tests/test_v776_hooks.py',
++    'NARRATION_FIT_CARDS_AND_MUSIC_V7_0_107.md', 'tools/update_v7106_to_v7107.py',
++]
++# Files as they exist in 7.0.106: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['67e44222f8fd091c4c50137e42e63fb8eb8352a62191439773a2c98bcd2e4c6f'],
++    'app.py': ['f0205cdbafdbe17c2a703ecb876beb44866479e34c94df66549cd1795db0c738'],
++    'cli.py': ['270a986484693bc88ce223eb3b3708cc9b6a092c6690e9c0b68793c58df38c3a'],
++    'engine/factory.py': ['b290d6121cfbc5d34c8aecfd59c353a56ee36b1f0fb6763ffd9879ac28077fde'],
++    'engine/finishing_studio.py': ['de583f869e2419c3ad583bc245145be9ef22c7ec78b413768f1c998180682032'],
++    'engine/language_editions.py': ['2c75676748358f1e43830d3c2907c7c9f15392606d109668ed034811fe10ad4b'],
++    'engine/render/educational_cards.py': ['061d5400abf011aac692126d6446046d4cbd5e9b52dc8b5984cff27cef38194d'],
++    'engine/render/ffmpeg_renderer.py': ['0c1ab0c0bc784d707c276e0d72cebf82e682a52cc0f21b396a62507bfd7816fa'],
++    'engine/speech_cards.py': ['8bc73052097fcd4086f11c974daefc4d1d4663de7ef3720fc5a997cb9d23492e'],
++    'engine/studio_config.py': ['8058025a234f1654798dcd225bedf7c1e46e1c480a305b414b8db273c87440eb'],
++    'tools/build_release.py': ['92923e9433f401a9e36c655fbab0a993b6b747fe76c8f187cfd7d85da4b22f41'],
++    'tests/test_v768_language_editions_render.py': ['30b8da8eb7f87975b1c7277934a0cc6b0086993c4435a6eae16bdb8d39bcd9ae'],
++    'tests/test_v774_educational_cards.py': ['22f46d0fb9beafbd3b9146aefa91cb1385f2a17999525d04c7ce055faf739be4'],
++    'tests/test_v776_hooks.py': ['de7973e2772a58aff068d12fefc257d60278f50523bdede4667c3c9f87b45719'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.106', '7.0.107')  # 7.0.107 allows a safe re-run after success
++
++# The 7.0.106 zip carries the 7.0.105 to 7.0.106 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.105', '7.0.106', 'tools/update_v7105_to_v7106.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.106 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.106 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.106 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.107'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered and no Flow credit was spent. Existing jobs keep their saved takes.')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

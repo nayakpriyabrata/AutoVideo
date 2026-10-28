@@ -1,0 +1,959 @@
+diff --git a/FIT_CAPTIONS_AND_REPAIR_V7_0_113.md b/FIT_CAPTIONS_AND_REPAIR_V7_0_113.md
+new file mode 100644
+index 0000000..4871e57
+--- /dev/null
++++ b/FIT_CAPTIONS_AND_REPAIR_V7_0_113.md
+@@ -0,0 +1,125 @@
++# AutoVideoAI v7.0.113 — the transcript that came back, and the line that caused it
++
++Your 7.0.112 picture check settled it, and it settled it against me: the current Odia export **does** carry burned
++captions, although the job asks for none.
++
++```
++Odia (or)
++  burned captions: yes (provenance, from the reviewed script)
++  picture check: 10.14% bright / 7.69% edges … — consistent with a burned transcript.
++```
++
++So my earlier "the render was right, you were watching the old file" was wrong. The file you watched was the right
++file, and it was wrong. This release fixes the cause, repairs the job, and says what happened.
++
++---
++
++## The cause: one line in the narration-fit step
++
++When a narration is longer than the picture, the render fits it — the picture is slowed, the voice is sped up with
++pitch preserved, and (with `--fit-hold`) the last frame may be held. Fitting also re-times the word file, because
++cards and captions are anchored to the narration.
++
++The render decides whether to burn a transcript at the top:
++
++```python
++words_path = _verified(edition['words']) if edition.get('words') and plan.get('captions') else None
++```
++
++`None` means "no transcript for this language". Then, fifteen lines lower, the fit step did this:
++
++```python
++words_for_render.write_text(json.dumps(scaled, …))
++words_path = words_for_render        # ← captions switched back on, whatever the plan said
++```
++
++So a language whose transcript was switched **off** got its captions back as soon as its narration had to be fitted.
++That is why Odia (whose narration is the longest) had them and the job's record still said `captions: false` — the
++record was right about the *request* and the file was right about what the *renderer* did. It is why the old
++"re-render with the transcript off" instruction changed nothing: every re-render hit the same line. And it has been
++there since 7.0.107, when fitting landed, so any fitted language was affected.
++
++Reproduced on the 7.0.112 tree before changing anything, with a 7.8 s Odia narration on a 6 s picture:
++
++```
++status: exported | plan captions: False
++provenance captions_burned: True | from_reviewed_script: True
++picture check: 15.13% bright / 4.20% edges — consistent with a burned transcript
++```
++
++## The fix
++
++1. **The fit step only decides about timing.** `words_path` is handed to the caption stage only if captions were
++   asked for in the first place:
++
++   ```python
++   if words_path is not None:          # the plan asked for captions
++       words_path = words_for_render
++   ```
++
++   The same reproduction after the change: `captions_burned: False`, picture check **1.34 % edges** — not text.
++   The control still works: a fitted edition that *does* ask for its transcript gets it.
++
++2. **A plain render repairs your job.** A language whose current export shows a transcript while the job asks for
++   none is now treated as out of date and rendered again — that language only, from its saved narration, no new
++   voice, no Flow credit. The earlier file stays where it is and is marked `superseded.json`.
++
++3. **No repair loop.** If a freshly rendered file still disagrees (a pathological source, say), it is kept, marked
++   `captions_disputed`, and explained — it will not be rendered again automatically.
++
++4. **The message names the cause** instead of asking you to re-check the switch you had already checked.
++
++## What to do with your job
++
++```
++python3 cli.py v3 language-outputs outputs/20261022-143856-7-small-daily-habits-tha-9729 --files --check-captions
++```
++
++On 7.0.113 that lists the problem **and** prints the exact render command beneath it:
++
++```
++    python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++```
++
++Run it once. Odia is rendered again without captions (Hindi and English are untouched, because they already agree
++with what the job asks), the new `or-<stamp>.mp4` is the current one, and the previous one is kept as the earlier
++version with a `superseded.json` beside it. No new voice, no Flow credit.
++
++Afterwards the listing should read `burned captions: no` and `no burned transcript detected` for Odia.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.113/tools/update_v7112_to_v7113.py /path/to/AutoVideoAI-v7.0.112         # dry run
++python3 ../AutoVideoAI-v7.0.113/tools/update_v7112_to_v7113.py /path/to/AutoVideoAI-v7.0.112 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses an installation older
++than 7.0.112. Code backups go to `code-update-backups/v7.0.112-to-v7.0.113-<stamp>/`.
++
++Small housekeeping: the 7.0.112 updater's own description still opened with "v7.0.111"; the update behaved
++correctly, and the wording is corrected here.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7113_fit_captions_repair.py` (**7**), all with real FFmpeg renders.
++
++* a fitted edition with its transcript off burns no captions — provenance, record and picture all agree — while the
++  fitting itself still happened (`narration_fitted_picture: true`);
++* a fitted edition that asks for its transcript still gets it, and a narration that needs no fit honours the choice
++  in both directions;
++* a job already in the field state (export with captions, job wanting none, record claiming current) is repaired by
++  **one plain render**, keeping the old file and marking it superseded;
++* a file that disagrees even after re-rendering is kept, marked `captions_disputed`, and not rendered again;
++* the listing names the cause ("a narration longer than the picture … re-enabled captions") and the cost of the
++  repair ("no new voice and no Flow credits").
++
++Full suite: **28 failed / 1 819 passed / 4 skipped**, against a pristine 7.0.112 tree failing the *identical* 28
++tests (environment-caused: browser, optional codecs). No regressions; 7 new tests.
+diff --git a/VERSION b/VERSION
+index 90b5ba9..2e17f01 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.112
+\ No newline at end of file
++7.0.113
+\ No newline at end of file
+diff --git a/cli.py b/cli.py
+index 4dbb98c..8c1e06a 100644
+--- a/cli.py
++++ b/cli.py
+@@ -698,6 +698,12 @@ def main_v3(argv):
+                     print(line)
+                 if not data.get("problems"):
+                     print("No problem found: the files above are current, and their caption state is recorded.")
++                else:
++                    # 7.0.113: name the command that repairs exactly the languages above.
++                    print("")
++                    print("To repair the languages named above, render them again (only those languages, from "
++                          "their saved narration - no new voice, no Flow credits):")
++                    print("    python3 cli.py v3 language-outputs " + str(args.job_id) + " --fit-hold 8")
+             return
+         if getattr(args, "explain", False):
+             # 7.0.95: read-only. Names the language and the one action that unblocks it.
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+index 3fc0a24..d827507 100644
+--- a/engine/edition_files.py
++++ b/engine/edition_files.py
+@@ -224,6 +224,13 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+                 sentence = explain_captions(detected, expected=requested)
+                 if sentence and sentence not in row['problems']:
+                     row['problems'].append(sentence)
++            if entry.get('captions_disputed'):
++                row['problems'].append(
++                    _label(code) + ' was rendered again and its picture still shows burned text. It is kept as it '
++                    'is and will not be re-rendered automatically again; set the transcript switch for ' +
++                    _label(code) + ' explicitly and render once more.')
++            elif (entry.get('repaint_reason') or '') and entry.get('repaint_reason') not in row['problems']:
++                row['problems'].append(str(entry['repaint_reason']))
+             if current.get('render_copy_matches') is False:
+                 row['problems'].append(
+                     'The copy in render/ (' + Path(current['render_copy']).name + ') is not the current export. '
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index f2dbe0c..4be5ad6 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -669,14 +669,19 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                   '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
+             picture_seconds = voice_seconds
+             if words_src and abs(tempo - 1.0) > 1e-6:
+-                # Cards, hooks and captions are anchored to the narration: retime them with it. Captions follow
+-                # whichever word file this render burns (a correction, when one exists).
++                # Cards and hooks are anchored to the narration, so their word times shrink with it.
+                 from engine.narration_fit import scale_words
+                 scaled_source = caption_edit or Path(words_src)
+                 scaled = scale_words(json.loads(Path(scaled_source).read_text(encoding='utf8')), tempo)
+                 words_for_render = tmp_dir/'words-fitted.json'
+                 words_for_render.write_text(json.dumps(scaled, ensure_ascii=False), encoding='utf8')
+-                words_path = words_for_render
++                # v7.0.113: only hand the retimed words to the caption stage when captions were asked for.
++                # Before this, fitting a longer narration set ``words_path`` unconditionally - so a language
++                # whose transcript was switched OFF got its captions back as soon as the narration had to be
++                # fitted onto the picture. That is exactly the field report: plan says "captions: false", the
++                # exported file has them, in the language whose transcript was turned off.
++                if words_path is not None:
++                    words_path = words_for_render
+         # Normalization yields identical codec/timebase for concat, and handles odd source dimensions.
+         clips=[]
+         for index, kind in enumerate(['intro','source','outro']):
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index 24f3f45..8ac341a 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -508,6 +508,63 @@ def edition_diagnosis(job_root, *, verify=True):
+             'record': str(_record_path(job_root))}
+ 
+ 
++def caption_evidence(job_root, code, entry, *, measure=False):
++    """What the *current export* actually shows, and whether that contradicts the job (v7.0.113).
++
++    Returns ``{'looks_like_text': bool|None, 'source': ..., 'detail': str, 'disputed': bool}``.
++
++    A record can be wrong about a file - and in the field it was: the plan said ``captions: false``, the file had
++    captions, because the narration-fit step re-enabled them. So when the job asks for no transcript, the export's
++    own picture is the evidence: the detections recorded at render time, or, with ``measure=True``, a fresh
++    sampling of the file.
++    """
++    path = Path(str(entry.get('path') or ''))
++    result = {'looks_like_text': None, 'source': '', 'detail': '', 'disputed': False}
++    if not path.is_file():
++        return result
++    detected = entry.get('captions_detected') or {}
++    if detected.get('checked') and not measure:
++        result.update(looks_like_text=bool(detected.get('looks_like_text')), source='recorded',
++                      detail=str(detected.get('detail') or ''))
++        return result
++    if measure:
++        try:
++            from .render.caption_check import probe
++            fresh = probe(path)
++            if fresh.get('checked'):
++                result.update(looks_like_text=bool(fresh.get('looks_like_text')), source='measured now',
++                              detail=str(fresh.get('detail') or ''))
++                return result
++        except Exception:
++            pass
++    if detected.get('checked'):
++        result.update(looks_like_text=bool(detected.get('looks_like_text')), source='recorded',
++                      detail=str(detected.get('detail') or ''))
++    return result
++
++
++def _captions_contradict(job_root, code, entry, *, wants, measure=False):
++    """True when this export must be rendered again because it shows the wrong thing.
++
++    Two pieces of evidence, in order: the export's own provenance (``captions_burned``) and its picture. The job's
++    wish is the reference. A file that was already re-rendered once and still disagrees is not re-rendered again
++    for ever: it is marked ``captions_disputed`` and explained instead.
++    """
++    if entry.get('status') != 'exported' or entry.get('captions_disputed'):
++        return False
++    # Measuring costs a few frame reads, so it is only done when this job asks for NO transcript - that is the
++    # direction nobody can see from the record alone, and the one the field report was about.
++    evidence = caption_evidence(job_root, code, entry, measure=bool(measure) and not wants)
++    shown = evidence['looks_like_text']
++    if shown is None:
++        # No picture evidence yet: fall back to what the export recorded it burned.
++        from . import finishing_studio as finish
++        prov = _read(Path(str(entry.get('path') or '')).with_suffix('.provenance.json'), {}) or {}
++        if 'captions_burned' in prov:
++            shown = bool(prov.get('captions_burned'))
++    return shown is not None and bool(shown) != bool(wants)
++
++
+ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+     """Render every pending additional edition. Returns a status report; never silently English.
+ 
+@@ -539,6 +596,18 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                                                                 record['editions'].get(code, {}),
+                                                                 transcript=wants[code],
+                                                                 captions_sha=captions[code][0])]
++    # v7.0.113: a file can be "current" and still show the wrong thing. When the job asks for no transcript in a
++    # language and the current export has captions burned into it, that language is pending again - which is how
++    # the field job gets repaired by simply rendering it, instead of needing a hand-edited record.
++    for code in extra:
++        if code in pending:
++            continue
++        entry = record['editions'].get(code, {})
++        if _captions_contradict(job_root, code, entry, wants=wants[code], measure=True):
++            entry['repaint_reason'] = ('The current export of ' + _label(code) + ' shows burned captions although '
++                                       'this job asks for no transcript in ' + _label(code) + '. It is rendered '
++                                       'again, and the earlier file is kept.')
++            pending.append(code)
+     if not pending:
+         if _sync_render_copies(job_root, record):
+             _save_record(job_root, record)
+@@ -573,7 +642,10 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+         entry = {'status': 'rendering', 'audio_sha256': bundle.get('audio_sha256'), 'captions': wants[code],
+                  'caption_words_sha256': captions[code][0], 'caption_source': captions[code][1],
+                  'channel': {}, 'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++        reason = str((record['editions'].get(code) or {}).get('repaint_reason') or '')
+         record['editions'][code] = entry
++        if reason:
++            entry['repaint_reason'] = reason
+         _save_record(job_root, record)
+         try:
+             # One plan per language: a rejected plan for Hindi must not stop Odia.
+@@ -602,6 +674,7 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                 emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / max(1, len(extra)), _label)
+             exported = finish.render(plan_path, code, progress=edition_progress, fit_policy=fit_policy)
+             entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
++            entry.pop('repaint_reason', None)
+             suppressed = str((_read(Path(str(exported)).with_suffix('.provenance.json'), {}) or {})
+                              .get('captions_suppressed') or '')
+             if suppressed:
+@@ -617,9 +690,20 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                 # find nothing prove nothing - but text that IS visible while this job asked for none is
+                 # exactly the report that started this.
+                 if detected.get('checked') and detected.get('looks_like_text') and not wants[code]:
++                    # Rendered again and the picture still disagrees: one more attempt is pointless. Say so, and
++                    # stop treating this file as stale so a render does not loop for ever.
++                    entry['captions_disputed'] = True
++                    entry.pop('repaint_reason', None)
+                     entry['warning'] = (entry.get('warning') + ' ' if entry.get('warning') else '') + \
+                         ('This finished file shows burned text in its caption band, although this job asks for '
+-                         'no transcript in ' + _label(code) + '. ' + str(detected.get('detail') or ''))
++                         'no transcript in ' + _label(code) + ', and it was just rendered. ' +
++                         str(detected.get('detail') or '') +
++                         ' The file is kept and will not be re-rendered again automatically. Set the transcript '
++                         'switch for ' + _label(code) + ' explicitly (job panel, or '
++                         '`python3 cli.py v3 language-outputs <job> --transcript-off ' + code + '`) and render '
++                         'once more.')
++                elif detected.get('checked'):
++                    entry.pop('captions_disputed', None)
+             except Exception:      # a check must never stop an export
+                 entry['captions_detected'] = {'checked': False, 'detail': 'Not checked.'}
+             entry.pop('error', None)
+diff --git a/engine/render/caption_check.py b/engine/render/caption_check.py
+index 761e226..15977fb 100644
+--- a/engine/render/caption_check.py
++++ b/engine/render/caption_check.py
+@@ -122,7 +122,9 @@ def explain(result, *, expected):
+         # between cues. The check only ever reports text it can see.
+         return ''
+     if (not expected) and result['looks_like_text']:
+-        return ('Bright text is visible in the caption band of this file, although the job asks for no transcript. '
+-                'This is the file to look at, not an older one: render that language again after checking that its '
+-                'transcript switch is off.')
++        return ('Bright text is visible in the caption band of this file, although this job asks for no transcript '
++                'in this language. This is the current file, not an older one. Until 7.0.113 a narration longer '
++                'than the picture was fitted by a step that re-enabled captions, whatever the plan said - so the '
++                'file really does carry them. Rendering this language again repairs it, only this language, '
++                'with no new voice and no Flow credits.')
+     return ''
+diff --git a/tests/test_v7112_card_band_and_picture_check.py b/tests/test_v7112_card_band_and_picture_check.py
+index f2f7398..4515d68 100644
+--- a/tests/test_v7112_card_band_and_picture_check.py
++++ b/tests/test_v7112_card_band_and_picture_check.py
+@@ -178,7 +178,7 @@ def test_the_picture_check_can_disagree_with_the_job_and_says_so(tmp_path):
+     from engine.render.caption_check import explain, probe
+     result = probe(_video(tmp_path, True))
+     sentence = explain(result, expected=False)
+-    assert 'although the job asks for no transcript' in sentence
++    assert 'although this job asks for no transcript' in sentence
+     assert explain(result, expected=True) == ''
+     plain = probe(_video(tmp_path, False))
+     # The other direction is deliberately silent: a caption is not on screen every second, so a handful of
+diff --git a/tests/test_v7113_fit_captions_repair.py b/tests/test_v7113_fit_captions_repair.py
+new file mode 100644
+index 0000000..400c7fa
+--- /dev/null
++++ b/tests/test_v7113_fit_captions_repair.py
+@@ -0,0 +1,228 @@
++"""v7.0.113: the Odia transcript that came back when the narration had to be fitted.
++
++Field report, after v7.0.112 made the renderer look at the picture: the current Odia export is recorded as
++`captions: false` for the job, its provenance says `captions_burned: true ... from the reviewed script`, and the
++picture check agrees - bright text with sharp edges in the caption band. So the render really did burn a transcript
++the job had switched off.
++
++Cause, reproduced on the 7.0.112 tree before changing it: when a narration is longer than the picture, the render
++fits it (slows the picture, speeds the voice, optionally holds the last frame) and then **handed the retimed word
++file to the caption stage unconditionally**. ``words_path`` was ``None`` because the plan asked for no captions;
++fifteen lines later it was a file, and captions were burned. Every language whose narration needed fitting was
++affected, from 7.0.107 (when fitting landed) to 7.0.112.
++
++These tests hold the fix to four promises:
++
++* fitting never re-enables captions the job switched off - and never suppresses captions it asked for;
++* a plain render repairs a job that is already in the field state (export with captions, job wanting none),
++  keeping the earlier file;
++* a file that disagrees even after being rendered again is not re-rendered for ever: it is kept and explained;
++* the messages name the cause instead of asking the user to do what they already did.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++
++WORDS = [{'word': 'ଶବ୍ଦ' + str(i), 'start': 0.3 + i * 0.75, 'end': 0.3 + i * 0.75 + 0.6} for i in range(10)]
++FIT = {'allow_hold': 8.0, 'hold_cap': 8.0}
++
++
++def _job(tmp_path, *, narration_seconds=7.8, picture_seconds=6.0, transcript=None):
++    """A job whose Odia narration is longer than the picture, so every render has to fit it."""
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = job / 'render' / 'visual-master.mp4'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    f'testsrc2=size=640x360:rate=24', '-t', str(picture_seconds), '-an',
++                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(picture)], check=True)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': picture_seconds}), encoding='utf-8')
++    folder = job / 'speech-editions' / 'or' / 'key'
++    folder.mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=700:sample_rate=44100', '-t', str(narration_seconds),
++                    '-c:a', 'pcm_s16le', str(voice)], check=True)
++    (folder / 'words.json').write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': narration_seconds,
++              'words': str(folder / 'words.json'), 'script': ' '.join(word['word'] for word in WORDS),
++              'language': 'or', 'timing_source': 'test', 'cards': [], 'text_cards': False}
++    state = {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++             'bundles': {'or': bundle}}
++    if transcript is not None:
++        state['transcript'] = {'default': transcript, 'languages': {}}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False),
++                                                               encoding='utf-8')
++    return job
++
++
++def _entry(job, code='or'):
++    from engine.language_editions import _record_path
++    return json.loads(_record_path(job).read_text(encoding='utf-8'))['editions'][code]
++
++
++def _provenance(entry):
++    return json.loads(Path(entry['path']).with_suffix('.provenance.json').read_text(encoding='utf-8'))
++
++
++# --------------------------------------------------------------------------- the bug itself
++
++
++@needs_ffmpeg
++def test_a_fitted_edition_with_its_transcript_off_burns_no_captions(tmp_path):
++    """The field bug: the job asks for no transcript, the narration is 30% too long, and captions came back."""
++    from engine.language_editions import render_job_editions
++    from engine.render.caption_check import probe
++    job = _job(tmp_path)
++    report = render_job_editions(job, fit_policy=FIT)
++    assert report['status'] == 'exported', report
++    entry = _entry(job)
++    assert entry['captions'] is False                     # the job's wish
++    assert _provenance(entry)['captions_burned'] is False  # and the file
++    assert entry['caption_words_sha256'] == ''
++    picture = probe(entry['path'])
++    assert picture['checked'] and picture['looks_like_text'] is False, picture['detail']
++    assert entry['captions_detected']['looks_like_text'] is False
++    # the fitting itself still happened: the picture was stretched/held to the narration
++    assert _provenance(entry)['narration_fitted_picture'] is True
++
++
++@needs_ffmpeg
++def test_a_fitted_edition_that_asks_for_its_transcript_still_gets_it(tmp_path):
++    """The control: the fix must not switch captions off for everybody."""
++    from engine.language_editions import render_job_editions
++    from engine.render.caption_check import probe
++    job = _job(tmp_path, transcript=True)
++    report = render_job_editions(job, fit_policy=FIT)
++    assert report['status'] == 'exported', report
++    entry = _entry(job)
++    assert _provenance(entry)['captions_burned'] is True
++    assert probe(entry['path'])['looks_like_text'] is True
++
++
++@needs_ffmpeg
++def test_the_fit_step_only_decides_about_timing_not_about_captions(tmp_path):
++    """A narration that fits needs no retiming, and the transcript choice is honoured in both directions."""
++    from engine.language_editions import render_job_editions
++    from engine.render.caption_check import probe
++    for wanted in (False, True):
++        job = _job(tmp_path / ('off' if not wanted else 'on'), narration_seconds=5.6, transcript=wanted)
++        render_job_editions(job, fit_policy=FIT)
++        entry = _entry(job)
++        assert _provenance(entry)['narration_fitted_picture'] is False
++        assert probe(entry['path'])['looks_like_text'] is wanted
++
++
++# --------------------------------------------------------------------------- repairing a job already in the field
++
++
++@needs_ffmpeg
++def test_a_plain_render_repairs_a_current_file_that_still_has_the_captions(tmp_path):
++    """Exactly the user's state: the record says current, the job wants none, the file still shows text."""
++    from engine.language_editions import render_job_editions, _record_path
++    job = _job(tmp_path, transcript=True)
++    first = render_job_editions(job, fit_policy=FIT)
++    broken = Path(first['editions']['or']['path'])
++    assert json.loads(broken.with_suffix('.provenance.json').read_text())['captions_burned'] is True
++
++    # The job now asks for none, and the record (as 7.0.107-7.0.112 wrote it) claims the export is current.
++    state = json.loads((job / 'production' / 'language_editions.json').read_text())
++    state.pop('transcript')
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False))
++    record = json.loads(_record_path(job).read_text())
++    record['editions']['or']['captions'] = False
++    record['editions']['or'].pop('captions_detected', None)
++    _record_path(job).write_text(json.dumps(record), encoding='utf-8')
++
++    again = render_job_editions(job, fit_policy=FIT)
++    assert again['status'] == 'exported'
++    fixed = Path(again['editions']['or']['path'])
++    assert fixed != broken                                   # a new file, the old one untouched
++    assert broken.is_file()
++    assert json.loads(fixed.with_suffix('.provenance.json').read_text())['captions_burned'] is False
++    assert again['editions']['or']['captions_detected']['looks_like_text'] is False
++    assert (broken.parents[1] / 'superseded.json').is_file()
++    assert 'repaint_reason' not in again['editions']['or']    # cleared once the repair succeeded
++
++
++@needs_ffmpeg
++def test_a_file_that_still_disagrees_is_kept_and_not_rendered_for_ever(tmp_path, monkeypatch):
++    from engine.language_editions import render_job_editions, _record_path
++    job = _job(tmp_path, transcript=True)
++    render_job_editions(job, fit_policy=FIT)
++    state = json.loads((job / 'production' / 'language_editions.json').read_text())
++    state.pop('transcript')
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False))
++    record = json.loads(_record_path(job).read_text())
++    record['editions']['or']['captions'] = False
++    record['editions']['or'].pop('captions_detected', None)
++    _record_path(job).write_text(json.dumps(record), encoding='utf-8')
++
++    # Pretend every render still yields a picture with text (a pathological source, e.g. a wall of bright text).
++    from engine.render import caption_check
++    monkeypatch.setattr(caption_check, 'probe', lambda *a, **k: {
++        'checked': True, 'looks_like_text': True, 'ratio': 0.2, 'edge_ratio': 0.2,
++        'detail': 'caption band: 20.00% bright / 20.00% edges at 1.0s — consistent with a burned transcript.',
++        'frames': [], 'band': 0.7})
++    once = render_job_editions(job, fit_policy=FIT)
++    assert once['editions']['or']['captions_disputed'] is True
++    assert 'will not be re-rendered again automatically' in once['editions']['or']['warning']
++    twice = render_job_editions(job, fit_policy=FIT)
++    assert twice['editions']['or']['path'] == once['editions']['or']['path']      # no new render
++    assert twice['editions']['or']['captions_disputed'] is True
++
++
++@needs_ffmpeg
++def test_the_listing_explains_the_cause_instead_of_asking_again(tmp_path):
++    from engine import edition_files
++    from engine.language_editions import render_job_editions, _record_path
++    job = _job(tmp_path, transcript=True)
++    first = render_job_editions(job, fit_policy=FIT)
++    broken = Path(first['editions']['or']['path'])
++    state = json.loads((job / 'production' / 'language_editions.json').read_text())
++    state.pop('transcript')
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False))
++    record = json.loads(_record_path(job).read_text())
++    record['editions']['or']['captions'] = False
++    _record_path(job).write_text(json.dumps(record), encoding='utf-8')
++
++    report = edition_files.report(job, check_captions=True)
++    problems = '\n'.join(report['editions']['or']['problems'])
++    assert 'although this job asks for no transcript' in problems
++    assert 'narration longer than the picture' in problems          # the cause, named
++    assert 'no new voice and no Flow credits' in problems           # and the cost of the repair
++    assert broken.is_file()
++
++
++# --------------------------------------------------------------------------- one more regression guard
++
++
++@needs_ffmpeg
++def test_fitting_still_retimes_the_cards_and_keeps_the_words_available(tmp_path):
++    """The word file is still produced and scaled: only its use as captions is now conditional."""
++    from engine import finishing_studio as finish
++    job = _job(tmp_path)
++    state = json.loads((job / 'production' / 'language_editions.json').read_text())
++    bundle = state['bundles']['or']
++    visual = Path(json.loads((job / 'production' / 'visual_master.json').read_text())['path'])
++    plan_path = finish.create_plan(visual, {'or': None}, languages=['or'], output_root=job / 'language_editions',
++                                   source_rights='own_content', source_language='en', require_profiles=False,
++                                   fit_narration=True, captions=False, fit_policy=FIT)
++    finish.set_edition(plan_path, 'or', reviewed=True)
++    exported = finish.render(plan_path, 'or', fit_policy=FIT)
++    provenance = json.loads(Path(exported).with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['narration_fitted_picture'] is True
++    assert provenance['captions_burned'] is False
++    fit = json.loads((Path(exported).parent.parent / 'fit-or.json').read_text(encoding='utf-8'))
++    assert fit['mode'] != 'none' and fit['tempo'] > 1.0
+diff --git a/tools/update_v7111_to_v7112.py b/tools/update_v7111_to_v7112.py
+deleted file mode 100644
+index 1d6ca02..0000000
+--- a/tools/update_v7111_to_v7112.py
++++ /dev/null
+@@ -1,174 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.111 update to a v7.0.110 installation.
+-
+-Two field reports:
+-
+-1. **"The Odia video still has the transcript, in language_editions and in render."** v7.0.111 named the current
+-   file and made a stale plan incapable of re-burning captions. v7.0.112 adds the witness that cannot argue with
+-   itself: every render now samples the finished picture and records whether text is actually burned into its
+-   caption band, ``--files --check-captions`` shows that measurement, and the panel plays the uniquely named
+-   export instead of the stable ``render/`` copy a browser can serve from its cache.
+-2. **"The English text card covers the presenter's face, and the Hindi/Odia cards look different - make them match
+-   the English one, in the middle, off the face."** One card band now applies to every language and every card
+-   kind (``engine/render/card_band.py``): below the head, above the burned captions, centred in between. The
+-   editions draw their cards with the same renderer and the same style the English master used, instead of their
+-   own navy panel at 72 %.
+-
+-Nothing is generated, re-recorded or charged by this update.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.112 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.112/tools/update_v7111_to_v7112.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.112/tools/update_v7111_to_v7112.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py',
+-    'engine/edition_files.py', 'engine/language_editions.py', 'engine/finishing_studio.py',
+-    'engine/speech_cards.py', 'engine/render/graphics.py', 'engine/render/educational_cards.py',
+-    'engine/render/captions_ass.py', 'engine/render/card_band.py', 'engine/render/caption_check.py',
+-    'tests/test_v7112_card_band_and_picture_check.py', 'tests/test_v733_publication_review.py',
+-    'CARDS_AND_CAPTION_CHECK_V7_0_112.md', 'tools/update_v7111_to_v7112.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['a9731290a3c8614d00c3f689eab19b31845b55daf219e09ca9cf853604596c2d'],
+-    'app.py': ['aa068fae4b61af4728c7229632a5275187f4ba5fc72c27789ae7dcdaaaf890bc'],
+-    'cli.py': ['50d1a6ea2cfd66feedca29cb4fcc5a3e082b5a9a88264045e36f389bb845d4bf'],
+-    'engine/language_editions.py': ['f30331af16e875c83a0bf4735797b339b3bc7251918740045538fa85507b7601'],
+-    'engine/finishing_studio.py': ['383f86b94d139df7ea161fcc66c8be676d6a11ac50fb369b59a8e0339dc23ae6'],
+-    'engine/edition_files.py': ['d015806d9f6e0f0a493bc75bcea316780c07527f63aba8c4395ede6c687c4cb5'],
+-    'engine/speech_cards.py': ['edabb9db2a725235c51cb5ea4b7da0cfeb10d3e98bdaf8ae980d383dcd536ff4'],
+-    'engine/render/graphics.py': ['c70fafef9be8cdaff15cf2546fc2b8ad34b78d5f023ba60704f1fc20ad6a8865'],
+-    'engine/render/educational_cards.py': ['1a53320fd9d0c9d947e681bb4b42822953178a6d0f75307e10fc1293197eb455'],
+-    'engine/render/captions_ass.py': ['136ca1ec8c85ce6704fdd60e9fab0edac8c30cfbad9d6590d7f8ab6f98480440'],
+-    'tests/test_v733_publication_review.py': ['98c559d2b90b962879371bff0f492e8d1e215b02e650fc6eaea1294ff592e14d'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.111', '7.0.112')  # 7.0.112 allows a safe re-run after success
+-
+-# The 7.0.112 zip carries the 7.0.111 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.110', '7.0.111', 'tools/update_v7110_to_v7111.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.111 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.111 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.111 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.112'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To see which '
+-              'language video is the current one, and whether it really shows a transcript: '
+-              'python3 cli.py v3 language-outputs <job> --files --check-captions')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7112_to_v7113.py b/tools/update_v7112_to_v7113.py
+new file mode 100644
+index 0000000..3fb7129
+--- /dev/null
++++ b/tools/update_v7112_to_v7113.py
+@@ -0,0 +1,179 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.113 update to a v7.0.112 installation.
++
++One field report, traced to its cause:
++
++* **"The Odia video still has the transcript, in language_editions and in render."** v7.0.112 added a picture check,
++  and it agreed with the report: the current export really does carry burned captions although the job asks for
++  none. The cause is one line - when a narration is longer than the picture, the render fits it, and then handed
++  the retimed word file to the caption stage unconditionally. A language whose transcript was switched off got its
++  captions back the moment its narration had to be fitted. Every language needing a fit was affected from 7.0.107
++  (when fitting landed) to 7.0.112.
++
++v7.0.113 does four things:
++
++1. **The fit step only decides about timing.** Captions are burned when the job asks for them, and not otherwise.
++2. **A plain render repairs the job.** A language whose current export shows a transcript while the job asks for
++   none is treated as out of date, rendered again (that language only), and the earlier file is kept.
++3. **No repair loop.** If a fresh render still disagrees, the file is kept, marked, and explained - it is not
++   rendered again for ever.
++4. **The messages name the cause**, instead of asking you to re-check the switch you already checked.
++
++Nothing is generated, re-recorded or charged by this update, and the repair itself re-records nothing either: it
++reuses the saved narration and the approved picture.
++
++Usage (run from the existing installation folder, after extracting the 7.0.113 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.113/tools/update_v7112_to_v7113.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.113/tools/update_v7112_to_v7113.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++
++(v7.0.113 also corrects the first line of the 7.0.112 updater's own description, which still said 7.0.111; the
++update itself behaved correctly.)
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'cli.py',
++    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
++    'engine/render/caption_check.py',
++    'tests/test_v7113_fit_captions_repair.py', 'tests/test_v7112_card_band_and_picture_check.py',
++    'FIT_CAPTIONS_AND_REPAIR_V7_0_113.md', 'tools/update_v7112_to_v7113.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['ea5b506226f6439c37c835e00b7e801fced56093374b03ff5e7922b963ddd9d6'],
++    'cli.py': ['704deada71d8ede4ada180aff4ccc07831bc7b2220516f106e0e95c0f2032d03'],
++    'engine/finishing_studio.py': ['f014d64d5413b71f760c5ec3b57d1ad2ccc4097df140185963b87ad67e760179'],
++    'engine/language_editions.py': ['3814db96520bff5464f093a3fdd066b9f8d3f3c638e4c8dc824c1f964726e195'],
++    'engine/edition_files.py': ['550abc371c869ec68d4e85e20ec30f01d1ced7810eb3e8b761db898bc3210594'],
++    'engine/render/caption_check.py': ['3d101ec50f16c055258e13d62281af79926213783a02ede66e2929b2c2da7206'],
++    'tests/test_v7112_card_band_and_picture_check.py': ['19d9a48ef28f60bed09f886fe694616175bc9bc633c84d080bd022a8a94f0633'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.112', '7.0.113')  # 7.0.113 allows a safe re-run after success
++
++# The 7.0.113 zip carries the 7.0.112 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.111', '7.0.112', 'tools/update_v7111_to_v7112.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.112 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.112 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.112 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.113'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To check a job, '
++              'and repair any language whose file shows a transcript you switched off: '
++              'python3 cli.py v3 language-outputs <job> --files --check-captions  - then run the render command '
++              'it prints (that language only, from its saved narration)')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

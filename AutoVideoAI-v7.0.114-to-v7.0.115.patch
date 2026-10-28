@@ -1,0 +1,1124 @@
+diff --git a/EXPORT_CHECK_V7_0_115.md b/EXPORT_CHECK_V7_0_115.md
+new file mode 100644
+index 0000000..5f0f293
+--- /dev/null
++++ b/EXPORT_CHECK_V7_0_115.md
+@@ -0,0 +1,126 @@
++# AutoVideoAI v7.0.115 — the export check that deleted what it was checking
++
++You ran the Odia repair and the render finished. Then:
++
++```
++[ 73%] Rendering Odia edition Odia
++[100%] Language editions finished
++"status": "failed",
++"error": "Export QC failed: duration or audio"
++```
++
++Fifty-nine minutes, and that was the entire explanation. Everything else came from one line inside the renderer:
++
++```python
++if abs(final_duration - full_duration) > 0.8 or not any(s.get('codec_type') == 'audio' …):
++    raise ValueError('Export QC failed: duration or audio')
++```
++
++It raised inside the `try` whose `finally` deletes the temporary folder — so **the finished video was deleted with
++it**. No numbers, no file, no cause, nothing to play, nothing to inspect. The Odia file from before is still on disk
++(that is why you could still watch one), but the new render left no trace at all.
++
++## What v7.0.115 changes
++
++**1. The check measures the two tracks separately, and says the numbers.**
++
++"The picture stops at 0:54.0" and "the audio stops at 0:54.0" are different defects with different repairs; the old
++check could not tell them apart, or tell you either. It now reports the expected length, the file's own length, its
++picture length and its audio length in seconds.
++
++**2. A failed check keeps the video it made.**
++
++The finished file is copied beside the plan as `result-<lang>.qc-failed.mp4`, and `qc-<lang>.json` keeps the numbers.
++The job says so in words:
++
++```
++Odia edition failed: Export QC failed: the picture stops at 0:54.0 but the timeline runs to 1:01.4. …
++  The render did produce a file: …/language_editions/20261028-124105-d29cddeb/result-or.qc-failed.mp4
++  (expected 61.4s, picture 54.0s, audio 61.4s). It is kept and playable but not marked current, because it
++  failed the duration check.
++```
++
++and the listing repeats the path with `Play it before spending another render on it`.
++
++**3. The picture is extended to the timeline before the expensive pass.**
++
++If the concatenated picture is even slightly shorter than the container says — an intro/outro whose audio runs past
++its video, a fitted picture that lost a few frames — the last frame is now cloned to cover the gap, for free, before
++the hour-long encode. That is a plausible cause of exactly this failure, and it no longer lands after the encode.
++
++**4. An mp4 whose header disagrees with its own tracks is no longer a failure.**
++
++If both tracks run to the timeline and only the container's duration field is off, the export is accepted with a
++note in its provenance: *the tracks are what plays*. Re-rendering for an hour would produce the same file.
++
++**5. When a language has no current export, the videos it still has are named.**
++
++This is the third report in a row where the app said `Odia: no current video yet` while finished Odia videos sat in
++the folder — the record had lost its pointer, the files had not moved. The summary now reads:
++
++```
++Odia: no current video · newest one on disk: or-20261027-214110-f0e33d42.mp4 · captions: yes
++```
++
++and the listing explains that it is not current, why, and that it is still there.
++
++---
++
++## What to do with your Odia video
++
++Update to 7.0.115, then render once more:
++
++```
++python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++```
++
++Outcomes, all of them informative now:
++
++* **it exports** — you have the Odia video without a transcript, the earlier files are kept;
++* **it fails the check again** — the finished file is kept at
++  `language_editions/<stamp>/result-or.qc-failed.mp4`, `.qc-failed`. Play it. If the picture and the narration both
++  end where they should, the file is good in every way that matters and the numbers in the message tell me what to
++  change next; if the picture really does stop early, the message says by how much and where.
++
++Nothing in this release re-records a voice, spends a Flow credit, or deletes any video.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.115/tools/update_v7114_to_v7115.py /path/to/AutoVideoAI-v7.0.114         # dry run
++python3 ../AutoVideoAI-v7.0.115/tools/update_v7114_to_v7115.py /path/to/AutoVideoAI-v7.0.114 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses anything older than
++7.0.114. Code backups go to `code-update-backups/v7.0.114-to-v7.0.115-<stamp>/`.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7115_qc_keeps_the_file.py` (**12**), real FFmpeg renders where they matter.
++
++* a good export passes with no problems and no notes; a missing audio track, a picture that stops early and a short
++  audio track are each named with both numbers in seconds;
++* a container whose header disagrees with its own tracks produces a note, not a failure;
++* an mp4 that omits per-stream durations falls back to the container instead of inventing a defect;
++* a fitted export that comes up short names the fit (`picture x1.25`, `narration x1.12`, `last frame held 14.0s`) and
++  says the picture had already been extended;
++* a successful render writes `qc-<lang>.json` and its provenance now carries `export_qc` with the measurements;
++* a failed check keeps `result-or.qc-failed.mp4`, writes the numbers to `qc-or.json`, raises a message that names the
++  defect, the numbers, the kept file and the cost of retrying — and the temporary folder no longer holds the only
++  copy;
++* the panel diagnosis says *the render did produce a file* and gives its path; the listing says the same and adds
++  "play it before spending another render on it";
++* a language whose record lost its pointer names the newest finished video on disk, with date and caption state, in
++  both the summary and the listing;
++* after a failed check, the same command exports normally — the failure is not sticky.
++
++Full suite in this environment: **55 failed / 1 806 passed / 4 skipped**, against a pristine 7.0.114 tree failing the
++**identical** 55 tests (this sandbox's FFmpeg build has no `subtitles`/`drawtext` filters, so the caption and
++clip-editing suites cannot run here). No regressions; 12 new tests.
+diff --git a/VERSION b/VERSION
+index 62c2cbb..60002d0 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.114
+\ No newline at end of file
++7.0.115
+\ No newline at end of file
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+index b60be96..47404d2 100644
+--- a/engine/edition_files.py
++++ b/engine/edition_files.py
+@@ -215,8 +215,15 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+             row['superseded_by'] = current_path
+             older.append(row)
+         requested = _requested(job_root, code)
++        qc_failed_path = str(entry.get('qc_failed_export') or '')
++        qc_failed = dict(entry.get('qc') or {})
++        if qc_failed_path and Path(qc_failed_path).is_file():
++            qc_failed.update({'path': qc_failed_path, 'exists': True, 'exported_at': _stamp(qc_failed_path),
++                              'captions': captions_state(qc_failed_path)})
++        else:
++            qc_failed = {}
+         row = {'language': code, 'label': _label(code), 'requested_transcript': requested,
+-               'current': current, 'kept': kept, 'older': older, 'problems': []}
++               'current': current, 'kept': kept, 'qc_failed': qc_failed, 'older': older, 'problems': []}
+         if current is not None:
+             burned = (current.get('captions') or {}).get('burned')
+             if requested is False and burned is True:
+@@ -261,6 +268,32 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+                 '. The file from before it is unchanged at ' + kept_path +
+                 ' - that is still the version you have, not a repaired one. Fix the cause above and render that '
+                 'language again.')
++        if current is None and kept is None and older:
++            # v7.0.115: three field reports in a row said "no current video yet" while finished videos sat in the
++            # folder. The record lost its pointer; the files did not go anywhere. Name the newest one.
++            newest = older[-1]
++            newest_burned = (newest.get('captions') or {}).get('burned')
++            count = len(older)
++            row['problems'].append(
++                _label(code) + ' has no current export, but '
++                + ('one finished ' + _label(code) + ' video is' if count == 1 else
++                   str(count) + ' finished ' + _label(code) + ' videos are') + ' still on disk. The newest is '
++                + newest['path'] + ' ('
++                + str(newest.get('exported_at') or 'date unknown') + ', '
++                + ('captions: yes' if newest_burned is True else
++                   'captions: no' if newest_burned is False else 'captions: unknown') +
++                '). It is not marked current because the render that was meant to replace it did not finish - '
++                'watch it if you need a video now, and render this language again to get a current one.')
++        if qc_failed:
++            row['problems'].append(
++                _label(code) + ' was rendered, and the file it produced is kept at ' + qc_failed_path +
++                ' - it is not current because it failed the export check ('
++                + (', '.join(qc_failed.get('problems') or []) or 'duration or audio') + '; expected '
++                + str(qc_failed.get('expected_seconds') or '?') + 's, picture '
++                + str(qc_failed.get('video_seconds') or '?') + 's, audio '
++                + str(qc_failed.get('audio_seconds') or 'none') + 's). Play it before spending another render on '
++                'it: if the picture and the narration both end where they should, the next render will very '
++                'likely hit the same check, so send the numbers printed above.')
+         if entry.get('status') == 'failed' and any(
+                 marker in str(entry.get('error') or '') for marker in
+                 ('Input/output error', 'No space left on device', 'read-only file system')):
+@@ -303,6 +336,13 @@ def summary(job_root, *, verify=False):
+                              + Path(kept['path']).name + ' · '
+                              + ('captions: yes' if kept_burned is True else
+                                 'captions: no' if kept_burned is False else 'captions: unknown'))
++            elif row.get('older'):
++                newest = row['older'][-1]
++                newest_burned = (newest.get('captions') or {}).get('burned')
++                lines.append(row['label'] + ': no current video · newest one on disk: '
++                             + Path(newest['path']).name + ' · '
++                             + ('captions: yes' if newest_burned is True else
++                                'captions: no' if newest_burned is False else 'captions: unknown'))
+             else:
+                 lines.append(row['label'] + ': no current video yet')
+             continue
+@@ -326,7 +366,9 @@ def format_report(data):
+         lines.append(row['label'] + ' (' + code + ')')
+         if not current.get('path'):
+             kept = row.get('kept') or {}
+-            if kept.get('path'):
++            if (row.get('qc_failed') or {}).get('path'):
++                lines.append('  no current video: the export check failed on the file this render made')
++            elif kept.get('path'):
+                 kept_burned = (kept.get('captions') or {}).get('burned')
+                 lines.append('  no current video: the render did not finish')
+                 lines.append('  unchanged file from before it: ' + kept['path'] + ' · '
+@@ -335,6 +377,12 @@ def format_report(data):
+                              + ' · ' + str(kept.get('exported_at') or ''))
+             else:
+                 lines.append('  no current video for this language yet')
++            qc_failed = row.get('qc_failed') or {}
++            if qc_failed.get('path'):
++                lines.append('  the render produced a file that failed the export check: ' + qc_failed['path'] +
++                             ' · expected ' + str(qc_failed.get('expected_seconds')) + 's, picture '
++                             + str(qc_failed.get('video_seconds')) + 's, audio '
++                             + str(qc_failed.get('audio_seconds')) + 's')
+             for old in row.get('older') or []:
+                 lines.append('  earlier file (not current): ' + old['path'])
+             for problem in row.get('problems') or []:
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index d37c820..86d9155 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -66,6 +66,109 @@ def _probe(path):
+     return info, float(info.get('format', {}).get('duration') or 0)
+ 
+ 
++def _span(value, default=0.0):
++    try:
++        return float(value)
++    except (TypeError, ValueError):
++        return float(default)
++
++
++def _stream_seconds(info):
++    """How long each track of a file really is, from the streams (v7.0.115).
++
++    ``format.duration`` is the container's opinion, and it is a single number for two tracks that can differ.
++    The export check needs them apart: a picture that stops early and a narration that stops early are different
++    defects with different repairs, and a container that merely disagrees with both is neither.
++    """
++    spans = {}
++    for stream in (info or {}).get('streams') or []:
++        kind = str(stream.get('codec_type') or '')
++        if kind not in ('video', 'audio'):
++            continue
++        seconds = _span(stream.get('duration'))
++        if seconds <= 0:
++            seconds = _span(stream.get('tags', {}).get('DURATION_TS') if isinstance(stream.get('tags'), dict)
++                            else 0)
++        if seconds > 0 and seconds > spans.get(kind, 0.0):
++            spans[kind] = seconds
++    return spans
++
++
++def _clock(seconds):
++    """m:ss, for a message a person reads."""
++    seconds = max(0.0, _span(seconds))
++    return f'{int(seconds // 60)}:{seconds % 60:04.1f}'
++
++
++def export_qc_report(path, expected, *, fit_report=None, video_padded=0.0, tolerance=0.8):
++    """Compare a finished export's two tracks with the timeline it was built from (v7.0.115).
++
++    The old check was one line - ``if abs(duration - expected) > 0.8 or no audio: raise ValueError('Export QC
++    failed: duration or audio')`` - and it threw away the finished file with the temporary folder. After a
++    fifty-nine minute render the field report was therefore five words long and the video no longer existed.
++    Now the numbers are kept, the file is kept, and the reason is named.
++
++    ``problems`` is what must stop the export; ``notes`` is what is worth saying but does not.
++    """
++    info, container = _probe(path)
++    spans = _stream_seconds(info)
++    kinds = {str(stream.get('codec_type') or '') for stream in (info or {}).get('streams') or []}
++    container = _span(container)
++    # A stream that does not state its own duration is not a broken stream: fall back to the container rather than
++    # inventing a defect. Only a track that is *absent* is a finding.
++    video = spans.get('video') or (container if 'video' in kinds else 0.0)
++    audio = (spans.get('audio') or container) if 'audio' in kinds else None
++    problems, notes = [], []
++    if audio is None:
++        problems.append('the finished file has no audio track')
++    if video <= 0:
++        problems.append('the finished file has no readable picture')
++    duration = round(container, 3)
++    if video > 0 and video < expected - tolerance:
++        problems.append(f'the picture stops at {_clock(video)} but the timeline runs to {_clock(expected)}')
++    if audio is not None and audio < expected - tolerance:
++        problems.append(f'the audio stops at {_clock(audio)} but the timeline runs to {_clock(expected)}')
++    if not problems and abs(duration - expected) > tolerance:
++        # Both tracks are right and only the container's own duration disagrees. That is a muxer quirk, not a
++        # broken video, and re-rendering it for an hour would produce the same file.
++        notes.append(f'the file header says {_clock(duration)} while its tracks run to {_clock(max(video, audio or 0))}'
++                     '; the tracks are what plays')
++    fit = dict(fit_report or {})
++    report = {'expected_seconds': round(_span(expected), 3), 'container_seconds': duration,
++              'video_seconds': round(video, 3), 'audio_seconds': None if audio is None else round(audio, 3),
++              'tolerance_seconds': tolerance, 'problems': problems, 'notes': notes,
++              'video_padded_seconds': round(_span(video_padded), 3),
++              'fit_mode': fit.get('mode'), 'fit_picture_scale': fit.get('picture_scale'),
++              'fit_tempo': fit.get('tempo'), 'fit_hold_seconds': fit.get('hold_seconds'),
++              'checked_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++    return report
++
++
++def export_qc_message(report, *, language_label='this language', kept_path=''):
++    """The sentence a failed export is reported with: the numbers, the cause, and where the file went."""
++    problems = list(report.get('problems') or [])
++    lines = ['Export QC failed: ' + '; '.join(problems) + '.',
++             f'Expected a {_clock(report["expected_seconds"])} {language_label} video and got '
++             f'{_clock(report["container_seconds"])} (picture {_clock(report["video_seconds"])}, '
++             + ('no audio' if report.get('audio_seconds') is None else 'audio ' + _clock(report['audio_seconds']))
++             + ').']
++    if report.get('fit_mode') and report.get('fit_mode') != 'none':
++        lines.append(f'The narration had been fitted to the picture (picture x{report.get("fit_picture_scale")}, '
++                     f'narration x{report.get("fit_tempo")}'
++                     + (f', last frame held {report.get("fit_hold_seconds")}s'
++                        if report.get('fit_hold_seconds') else '') + ').')
++    if report.get('video_padded_seconds'):
++        lines.append(f'The picture was already extended by {report["video_padded_seconds"]:.2f}s to meet the '
++                     'narration, and it still came up short.')
++    if kept_path:
++        lines.append('The file this render produced is kept at ' + str(kept_path) +
++                     ' - it is complete enough to play, but it is not marked current because it failed this check.')
++    lines.append('Nothing was deleted. The check compares the finished file with the timeline it was built from, '
++                 'so a language can be rendered again from its saved narration: no voice is re-recorded and no '
++                 'Flow credit is spent.')
++    return '\n'.join(lines)
++
++
+ def _snapshot(path, folder, kind):
+     path = Path(path).expanduser().resolve(strict=True)
+     if not path.is_file() or path.is_symlink() or path.suffix.lower() not in MEDIA_EXT or not path.stat().st_size:
+@@ -760,9 +863,21 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+         joined=tmp_dir/'joined.mp4'
+         _run([_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-f','concat','-safe','0','-i',str(concat),'-c','copy',str(joined)])
+         offset=sum(d for kind,_,d in clips if kind=='intro')
+-        _, full_duration=_probe(joined)
++        joined_info, full_duration=_probe(joined)
++        # v7.0.115: the timeline, and the picture's own length. If the concatenated picture is even slightly
++        # shorter than the container says - the usual cause is an intro/outro whose audio runs past its video, or
++        # a fitted picture that lost a few frames - the whole export lands short and, until this release, failed
++        # the duration check *after* the expensive encode with no numbers and no file left behind. Extending the
++        # last frame to the timeline costs nothing here and makes the check meaningful.
++        joined_spans = _stream_seconds(joined_info)
++        video_padded = round(max(0.0, _span(full_duration) - joined_spans.get('video', 0.0)), 3)
++        if video_padded < 0.04:
++            video_padded = 0.0
+         cmd=[_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-i',str(joined)]
+         filters=[]; current='0:v'; inp=1
++        if video_padded:
++            filters += [f'[0:v]tpad=stop_mode=clone:stop_duration={video_padded:.3f}[vpad]']
++            current = 'vpad'
+         # No Flow watermark mask or tracking. Branding is an independently placed channel mark.
+         # 7.0.95: a profile may carry logo-en / logo-hi / logo-or; the shared logo is the fallback.
+         logo_key = next((key for key in ('logo-' + language, 'logo') if key in assets), None)
+@@ -875,13 +990,34 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                 '-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p',
+                 '-c:a','aac','-b:a','192k','-movflags','+faststart','-t',str(full_duration),str(tmp_dir/'result.mp4')]
+         _run(cmd,progress,full_duration)
+-        result=tmp_dir/'result.mp4'; final_info, final_duration=_probe(result)
+-        if abs(final_duration-full_duration)>0.8 or not any(s.get('codec_type')=='audio' for s in final_info['streams']):
+-            raise ValueError('Export QC failed: duration or audio')
++        result=tmp_dir/'result.mp4'
++        # v7.0.115: the check now says what it found, and the file it found it in is kept instead of being deleted
++        # with the temporary folder - a fifty-nine minute render must not vanish behind five words.
++        qc = export_qc_report(result, full_duration, fit_report=fit_report, video_padded=video_padded)
++        qc_path = Path(plan_path).parent / ('qc-' + language + '.json')
++        if qc['problems']:
++            kept_qc = Path(plan_path).parent / ('result-' + language + '.qc-failed.mp4')
++            try:
++                shutil.copy2(result, kept_qc)
++            except OSError:
++                kept_qc = result
++            qc['kept'] = str(kept_qc)
++            qc['message'] = export_qc_message(qc, language_label=LANGUAGES.get(language, language),
++                                              kept_path=str(kept_qc))
++            try:
++                _atomic_json(qc_path, qc)
++            except OSError:
++                pass
++            raise ValueError(qc['message'])
++        try:
++            _atomic_json(qc_path, qc)
++        except OSError:
++            pass
+         os.replace(result,dest)
+         _atomic_json(dest.with_suffix('.provenance.json'), {'plan':str(plan_path),'language':language,'source_sha256':plan['source']['sha256'],
+                      'output_sha256':_hash(dest),'music_license':edition.get('music_license') or plan.get('shared_music_license') or edition.get('profile_music_license') or plan.get('profile_music_license'),
+-                     'channel':edition.get('channel',plan.get('channel')), 'duration':final_duration,
++                     'channel':edition.get('channel',plan.get('channel')),
++                     'duration':qc.get('container_seconds'),
+                      'narration_sha256': voice['sha256'] if voice else None,
+                      'narration_fitted_picture': fit, 'narration_fit': fit_report,
+                      'captions_burned': bool(caption_ass),
+@@ -895,7 +1031,10 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                      'rendered_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                      'music_volume': float(plan.get('music_volume', .12)) if music else 0.0,
+                      'music_duck': sound if music else None,
+-                     'loudness_target_lufs': -14 if music else None})
++                     'loudness_target_lufs': -14 if music else None,
++                     'export_qc': {key: qc.get(key) for key in
++                                   ('expected_seconds', 'container_seconds', 'video_seconds', 'audio_seconds',
++                                    'video_padded_seconds', 'notes', 'checked_at')}})
+         if progress:progress(1.0)
+         return dest
+     finally:shutil.rmtree(tmp_dir,ignore_errors=True)
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index daac8e8..0b4c50f 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -478,6 +478,13 @@ def edition_diagnosis(job_root, *, verify=True):
+                 # v7.0.114: the previous export is still on disk - say so instead of implying the language vanished.
+                 kept_note = (' The previous ' + _label(code) + ' video is unchanged at ' + kept_path +
+                              '; it is not the repaired version, but nothing was lost.')
++            qc_failed = str(entry.get('qc_failed_export') or '')
++            if qc_failed and Path(qc_failed).is_file():
++                qc = entry.get('qc') or {}
++                kept_note += (' The render did produce a file: ' + qc_failed + ' (expected '
++                              + f"{qc.get('expected_seconds')}s, picture {qc.get('video_seconds')}s, audio "
++                              + f"{qc.get('audio_seconds')}s). It is kept and playable but not marked current, "
++                              'because it failed the duration check.')
+             if 'refresh-cards' in detail:
+                 repair = ("Run the `refresh-cards` command quoted in the message above, then press "
+                           '"Add primary intro/outro and render pending language editions" again. It re-drafts '
+@@ -730,6 +737,14 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+             # whole instead of being cut in the middle of the instructions.
+             detail = str(error)[:1500]
+             entry.update(status='failed', error=detail)
++            # v7.0.115: an export that fails its own check now keeps the file it produced and the numbers behind
++            # the verdict, in ``qc-<language>.json`` beside the plan. Read them here so the job can say what is
++            # wrong with the video that exists, instead of only that the render failed.
++            qc = _read(Path(str(entry.get('plan') or '')).parent / ('qc-' + code + '.json'), {}) or {}
++            if qc:
++                entry['qc'] = qc
++                if qc.get('kept'):
++                    entry['qc_failed_export'] = str(qc['kept'])
+             # v7.0.114: a failed repair used to replace the record outright, so a job that still had the previous
+             # Odia video on disk reported "no current video yet" - and the file the user could still watch became
+             # invisible. The old export is kept on disk by design; keep it in the record too, and mark it.
+diff --git a/tests/test_v7115_qc_keeps_the_file.py b/tests/test_v7115_qc_keeps_the_file.py
+new file mode 100644
+index 0000000..5e6ced4
+--- /dev/null
++++ b/tests/test_v7115_qc_keeps_the_file.py
+@@ -0,0 +1,298 @@
++"""v7.0.115: the export check that said five words, and deleted the video it was checking.
++
++Field report, on 7.0.114 - the release that finally made a plain render repair the Odia edition:
++
++    [ 73%] Rendering Odia edition Odia
++    [100%] Language editions finished
++    "status": "failed",
++    "error": "Export QC failed: duration or audio"
++
++Fifty-nine minutes of rendering, and that was everything the user learned. The check itself was one line:
++
++    if abs(final_duration - full_duration) > 0.8 or not any(s.get('codec_type') == 'audio' ...):
++        raise ValueError('Export QC failed: duration or audio')
++
++and it ran inside the ``try`` whose ``finally`` deletes the temporary folder - so the finished ``result.mp4`` was
++deleted with it. No numbers, no file, no cause, nothing to play and nothing to inspect.
++
++v7.0.115 changes three things, and these tests hold them:
++
++* **measure the two tracks separately.** "The picture stops early" and "the narration stops early" are different
++  defects with different repairs, and a container whose header merely disagrees with both is neither - that one is
++  accepted with a note instead of costing another hour;
++* **keep the file.** A failed check copies the finished video beside the plan as ``result-<lang>.qc-failed.mp4``
++  and writes ``qc-<lang>.json`` with the numbers, so the job can say "the render did produce a file, here it is";
++* **pad the picture to the timeline before the expensive pass.** When the concatenated picture is even slightly
++  shorter than the container says, the last frame is extended (free) instead of the export landing short and
++  failing after the encode.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++
++WORDS = [{'word': 'ଶବ୍ଦ' + str(i), 'start': 0.3 + i * 0.75, 'end': 0.3 + i * 0.75 + 0.6} for i in range(10)]
++FIT = {'allow_hold': 8.0, 'hold_cap': 8.0}
++
++
++def _video(path, seconds, *, audio=False):
++    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++           f'testsrc2=size=640x360:rate=24:duration={seconds}']
++    if audio:
++        cmd += ['-f', 'lavfi', '-i', f'sine=frequency=440:sample_rate=48000:duration={seconds}',
++                '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0']
++    else:
++        cmd += ['-an']
++    cmd += ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)]
++    subprocess.run(cmd, check=True)
++    return path
++
++
++def _job(tmp_path, *, narration_seconds=7.8, picture_seconds=6.0, transcript=False):
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = _video(job / 'render' / 'visual-master.mp4', picture_seconds)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': picture_seconds}), encoding='utf-8')
++    folder = job / 'speech-editions' / 'or' / 'key'
++    folder.mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=700:sample_rate=44100', '-t', str(narration_seconds),
++                    '-c:a', 'pcm_s16le', str(voice)], check=True)
++    (folder / 'words.json').write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': narration_seconds,
++              'words': str(folder / 'words.json'), 'script': ' '.join(word['word'] for word in WORDS),
++              'language': 'or', 'timing_source': 'test', 'cards': [], 'text_cards': False}
++    state = {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++             'bundles': {'or': bundle}, 'transcript': {'default': transcript, 'languages': {}}}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False),
++                                                               encoding='utf-8')
++    return job
++
++
++def _entry(job, code='or'):
++    from engine.language_editions import _record_path
++    return json.loads(_record_path(job).read_text(encoding='utf-8'))['editions'][code]
++
++
++# ------------------------------------------------------------------ the check itself, with numbers
++
++
++@needs_ffmpeg
++def test_a_good_export_passes_without_notes(tmp_path):
++    from engine.finishing_studio import export_qc_report
++    path = _video(tmp_path / 'ok.mp4', 6.0, audio=True)
++    report = export_qc_report(path, 6.0)
++    assert report['problems'] == [] and report['notes'] == []
++    assert report['audio_seconds'] and report['video_seconds']
++    assert report['expected_seconds'] == 6.0
++
++
++@needs_ffmpeg
++def test_a_missing_audio_track_is_named(tmp_path):
++    from engine.finishing_studio import export_qc_report, export_qc_message
++    path = _video(tmp_path / 'silent.mp4', 6.0, audio=False)
++    report = export_qc_report(path, 6.0)
++    assert 'the finished file has no audio track' in report['problems']
++    message = export_qc_message(report)
++    assert 'no audio' in message and 'Expected a 0:06.0' in message
++
++
++@needs_ffmpeg
++def test_a_picture_that_stops_early_says_so_in_seconds(tmp_path):
++    from engine.finishing_studio import export_qc_report, export_qc_message
++    path = _video(tmp_path / 'short.mp4', 4.0, audio=True)
++    report = export_qc_report(path, 6.0)
++    problem = ' '.join(report['problems'])
++    assert 'the picture stops at 0:04.0' in problem and 'runs to 0:06.0' in problem
++    message = export_qc_message(report, language_label='Odia', kept_path=str(tmp_path / 'kept.mp4'))
++    assert 'Export QC failed' in message
++    assert 'Odia' in message and str(tmp_path / 'kept.mp4') in message
++    assert 'No voice is re-recorded' not in message        # sentence case, but the promise is there
++    assert 'no voice is re-recorded' in message and 'no Flow credit' in message
++
++
++def test_a_container_that_disagrees_with_its_own_tracks_is_a_note_not_a_failure(monkeypatch):
++    """An mp4 header can be off by a second while both tracks are right - do not re-render an hour for that."""
++    from engine import finishing_studio as finish
++    monkeypatch.setattr(finish, '_probe', lambda path: (
++        {'streams': [{'codec_type': 'video', 'duration': '300.0'},
++                     {'codec_type': 'audio', 'duration': '300.0'}],
++         'format': {'duration': '297.5'}}, 297.5))
++    report = finish.export_qc_report('anything.mp4', 300.0)
++    assert report['problems'] == []
++    assert 'the file header says' in ' '.join(report['notes'])
++    assert 'tracks are what plays' in ' '.join(report['notes'])
++
++
++def test_a_stream_that_does_not_state_a_duration_is_not_a_defect(monkeypatch):
++    """Some mp4s omit per-stream durations. Falling back to the container must never fail a good export."""
++    from engine import finishing_studio as finish
++    monkeypatch.setattr(finish, '_probe', lambda path: (
++        {'streams': [{'codec_type': 'video'}, {'codec_type': 'audio'}],
++         'format': {'duration': '300.0'}}, 300.0))
++    report = finish.export_qc_report('anything.mp4', 300.0)
++    assert report['problems'] == []
++    assert report['video_seconds'] == 300.0 and report['audio_seconds'] == 300.0
++
++
++def test_a_fitted_export_that_comes_up_short_names_the_fit(monkeypatch):
++    from engine import finishing_studio as finish
++    monkeypatch.setattr(finish, '_probe', lambda path: (
++        {'streams': [{'codec_type': 'video', 'duration': '250.0'},
++                     {'codec_type': 'audio', 'duration': '300.0'}],
++         'format': {'duration': '300.0'}}, 300.0))
++    report = finish.export_qc_report('anything.mp4', 300.0, fit_report={
++        'mode': 'hold', 'picture_scale': 1.25, 'tempo': 1.12, 'hold_seconds': 14.0}, video_padded=0.5)
++    message = finish.export_qc_message(report, language_label='Odia')
++    assert 'picture x1.25' in message and 'narration x1.12' in message
++    assert 'last frame held 14.0s' in message
++    assert 'already extended by 0.50s' in message
++
++
++def test_a_picture_that_lost_frames_is_extended_to_the_timeline(tmp_path):
++    """The cheap repair: the fitted/concat picture is short of the timeline, so clone its last frame."""
++    from engine import finishing_studio as finish
++    joined = _video(tmp_path / 'joined.mp4', 6.0, audio=True)
++    info, duration = finish._probe(joined)
++    spans = finish._stream_seconds(info)
++    assert spans['video'] > 5.0 and abs(duration - 6.0) < 0.3
++    # exactly what render() computes before the expensive pass
++    padded = round(max(0.0, duration - spans['video']), 3)
++    assert padded < 0.04                   # a healthy file needs no padding
++    # and a file whose picture is 1.2s shorter does
++    assert round(max(0.0, 6.0 - 4.8), 3) == 1.2
++
++
++# ------------------------------------------------------------------ the render keeps what it made
++
++
++@needs_ffmpeg
++def test_a_successful_render_records_its_own_check(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    report = render_job_editions(job, fit_policy=FIT)
++    assert report['status'] == 'exported', report
++    entry = _entry(job)
++    plan_folder = Path(entry['plan']).parent
++    qc = json.loads((plan_folder / 'qc-or.json').read_text(encoding='utf-8'))
++    assert qc['problems'] == []
++    assert abs(qc['expected_seconds'] - qc['video_seconds']) < 0.8
++    provenance = json.loads(Path(entry['path']).with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    checked = provenance['export_qc']
++    assert checked['video_padded_seconds'] == 0.0 and checked['notes'] == []
++    assert checked['expected_seconds'] == qc['expected_seconds']
++    assert provenance['duration'] == checked['container_seconds']
++    assert provenance['captions_burned'] is False
++
++
++@needs_ffmpeg
++def test_a_failed_check_keeps_the_video_and_the_numbers(tmp_path, monkeypatch):
++    from engine import finishing_studio as finish
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    real = finish.export_qc_report
++
++    def strict(path, expected, **kwargs):
++        report = real(path, expected, **kwargs)
++        # the same shape the field failure had: the picture is short of the timeline
++        report['problems'] = ['the picture stops at 0:54.0 but the timeline runs to 1:01.4']
++        return report
++    monkeypatch.setattr(finish, 'export_qc_report', strict)
++    failed = render_job_editions(job, fit_policy=FIT)
++    assert failed['status'] == 'failed'
++    entry = _entry(job)
++    assert entry['status'] == 'failed'
++    assert 'the picture stops at 0:54.0' in entry['error']
++    assert 'The file this render produced is kept at' in entry['error']
++    kept = Path(entry['qc_failed_export'])
++    assert kept.is_file() and kept.suffix == '.mp4' and kept.stat().st_size > 0
++    assert 'qc-failed' in kept.name
++    qc = json.loads((Path(entry['plan']).parent / 'qc-or.json').read_text(encoding='utf-8'))
++    assert qc['problems'] and qc['kept'] == str(kept)
++    assert qc['expected_seconds'] > 0 and qc['video_seconds'] > 0
++    # the temporary folder is gone, the evidence is not
++    assert not list(Path(entry['plan']).parent.glob('.render-*'))
++
++
++@needs_ffmpeg
++def test_the_job_says_the_failed_render_did_produce_a_file(tmp_path, monkeypatch):
++    from engine import finishing_studio as finish
++    from engine import edition_files
++    from engine.language_editions import render_job_editions, edition_diagnosis
++    job = _job(tmp_path)
++
++    real = finish.export_qc_report
++
++    def strict(path, expected, **kwargs):
++        report = dict(real(path, expected, **kwargs))
++        report['problems'] = ['the picture stops at 0:54.0 but the timeline runs to 1:01.4']
++        return report
++    monkeypatch.setattr(finish, 'export_qc_report', strict)
++    render_job_editions(job, fit_policy=FIT)
++    entry = _entry(job)
++    assert entry['qc_failed_export']
++
++    row = edition_diagnosis(job)['editions']['or']
++    assert 'The render did produce a file' in row['message']
++    assert entry['qc_failed_export'] in row['message']
++    assert 'not marked current' in row['message']
++
++    data = edition_files.report(job)
++    problems = '\n'.join(data['editions']['or']['problems'])
++    assert 'failed the export check' in problems
++    assert entry['qc_failed_export'] in problems
++    assert 'Play it before spending another render on it' in problems
++    listing = '\n'.join(edition_files.format_report(data))
++    assert 'the render produced a file that failed the export check: ' + entry['qc_failed_export'] in listing
++
++
++@needs_ffmpeg
++def test_no_current_export_but_files_on_disk_are_named(tmp_path):
++    """Three field reports in a row said "no current video yet" while finished videos sat in the folder."""
++    from engine import edition_files
++    from engine.language_editions import render_job_editions, _record_path
++    job = _job(tmp_path, transcript=True)
++    first = render_job_editions(job, fit_policy=FIT)
++    old = Path(first['editions']['or']['path'])
++    assert old.is_file()
++    record = json.loads(_record_path(job).read_text(encoding='utf-8'))
++    record['editions']['or'] = {'status': 'failed', 'error': 'FFmpeg failed: something', 'captions': True}
++    _record_path(job).write_text(json.dumps(record), encoding='utf-8')
++
++    data = edition_files.report(job)
++    row = data['editions']['or']
++    assert row['current'] is None
++    problems = '\n'.join(row['problems'])
++    assert 'has no current export, but one finished Odia video is still on disk' in problems
++    assert str(old) in problems and 'captions: yes' in problems
++    summary = ' '.join(edition_files.summary(job))
++    assert 'no current video · newest one on disk: ' + old.name in summary
++    assert 'captions: yes' in summary
++
++
++@needs_ffmpeg
++def test_a_language_that_failed_can_still_be_rendered_again(tmp_path, monkeypatch):
++    from engine import finishing_studio as finish
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    real = finish.export_qc_report
++    monkeypatch.setattr(finish, 'export_qc_report',
++                        lambda path, expected, **kwargs: dict(real(path, expected, **kwargs)) | {
++                            'problems': ['the picture stops at 0:02.0 but the timeline runs to 0:06.0']})
++    assert render_job_editions(job, fit_policy=FIT)['status'] == 'failed'
++    monkeypatch.undo()
++    again = render_job_editions(job, fit_policy=FIT)
++    assert again['status'] == 'exported'
++    assert Path(again['editions']['or']['path']).is_file()
++    assert 'qc_failed_export' not in _entry(job)
+diff --git a/tools/update_v7113_to_v7114.py b/tools/update_v7113_to_v7114.py
+deleted file mode 100644
+index d18873a..0000000
+--- a/tools/update_v7113_to_v7114.py
++++ /dev/null
+@@ -1,175 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.114 update to a v7.0.113 installation.
+-
+-One field report on 7.0.113, when the repair it introduced was run for the first time:
+-
+-    [ 50%] Rendering Odia edition
+-    "error": "FFmpeg failed: av_interleaved_write_frame(): Input/output error
+-              Error writing trailer of .../.render-j06ayvm3/picture-fit.mp4: Input/output error"
+-    Odia: no current video yet
+-
+-Three things were wrong, and the repair itself was not one of them:
+-
+-1. **The message named a temp file that was already deleted** and nothing about the volume. "Input/output error"
+-   while writing a trailer is what a full, over-quota or read-only volume looks like to FFmpeg. The failure now
+-   reports the file, the free space on that volume in GB, and what to do - and a listing that finds a job in this
+-   state measures the volume again when you run it.
+-2. **The working picture was written twice.** It carried ``+faststart``, which rewrites the whole file at trailer
+-   time - the exact moment this render died - for a file that is decoded again immediately and never played. It is
+-   now written once, without it.
+-3. **A failed render hid the file you still had.** The record was replaced by the failure, so the previous Odia
+-   export - complete, on disk, with its captions - became "no current video yet". The previous export is now kept
+-   in the record as ``kept_export`` and named everywhere: the listing, the panel diagnosis and the job summary. It
+-   is described as what it is, unchanged but not repaired.
+-
+-The language stays pending, so after the cause is fixed the same command finishes the job. Nothing is re-recorded
+-and no Flow credit is spent by it.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.114 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.114/tools/update_v7113_to_v7114.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.114/tools/update_v7113_to_v7114.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION',
+-    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
+-    'tests/test_v7114_failed_repair_keeps_file.py',
+-    'REPAIR_THAT_FAILED_V7_0_114.md', 'tools/update_v7113_to_v7114.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['3e317c697be4d298a7ddbfb5b3a08a18346e927b7e30c17eae6bf2d9174c6c47'],
+-    'engine/finishing_studio.py': ['d17f6362fcc7eaf6d2c20c1b1a34804b7c04b0a77abfb6097e60f46bca88115d'],
+-    'engine/language_editions.py': ['dcfee2a4a6c14dc4b29568e79842c7b1d08bbca5a2df8815480dd3dc49f665f6'],
+-    'engine/edition_files.py': ['ab45d38a177244f3ee0088522d9df533adc06d7df4ebc4cb3f14cf944522f7fb'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.113', '7.0.114')  # 7.0.114 allows a safe re-run after success
+-
+-# The 7.0.114 zip carries the 7.0.113 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.112', '7.0.113', 'tools/update_v7112_to_v7113.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.113 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.113 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.113 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.114'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. If a repair '
+-              'render stopped with an Input/output error, run the same render again after the listing says the '
+-              'volume has room: python3 cli.py v3 language-outputs <job> --files --check-captions  - the file you '
+-              'already have is kept and named while that language is not current.')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7114_to_v7115.py b/tools/update_v7114_to_v7115.py
+new file mode 100644
+index 0000000..ed93960
+--- /dev/null
++++ b/tools/update_v7114_to_v7115.py
+@@ -0,0 +1,179 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.115 update to a v7.0.114 installation.
++
++One field report on 7.0.114, from the repair render itself:
++
++    [ 73%] Rendering Odia edition Odia
++    [100%] Language editions finished
++    "error": "Export QC failed: duration or audio"
++
++Fifty-nine minutes of rendering, and that was everything it said. The check behind it was one line that compared the
++finished file's duration with the timeline and threw ``Export QC failed: duration or audio`` - inside the ``try``
++whose ``finally`` deletes the temporary folder, so the finished video was deleted with it. No numbers, no file, no
++cause, nothing to play.
++
++v7.0.115:
++
++1. **The check measures the two tracks separately** and reports both, in seconds. "The picture stops early" and
++   "the narration stops early" are different defects with different repairs, and an mp4 whose *header* merely
++   disagrees with both is neither - that one is now accepted with a note instead of costing another hour.
++2. **A failed export keeps the video it made.** It is copied beside the plan as ``result-<lang>.qc-failed.mp4``,
++   with ``qc-<lang>.json`` holding the numbers, and the job says so: the file exists, play it, here is why it is
++   not marked current.
++3. **The picture is extended to the timeline before the expensive pass.** When the concatenated picture is even
++   slightly shorter than the container says, the last frame is cloned to cover the gap - free - instead of the
++   export landing short and failing after the encode.
++4. **A language with no current export names the videos it still has.** Three field reports in a row said "no
++   current video yet" while finished videos sat in the folder; the newest one on disk is now named, with its date
++   and whether it has captions.
++
++Nothing is generated, re-recorded or charged by this update, and the repair render re-records nothing either: it
++reuses the saved narration and the approved picture.
++
++Usage (run from the existing installation folder, after extracting the 7.0.115 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.115/tools/update_v7114_to_v7115.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.115/tools/update_v7114_to_v7115.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION',
++    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
++    'tests/test_v7115_qc_keeps_the_file.py',
++    'EXPORT_CHECK_V7_0_115.md', 'tools/update_v7114_to_v7115.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['e6aa888014bcdd0da7a253ae5b7806352faf58fd857c4955885872c08807d893'],
++    'engine/finishing_studio.py': ['ac092dc57f2470c3453e734d9aebd52b3c2f8bc31826206c011c68628f4b98e6'],
++    'engine/language_editions.py': ['52289d6b0eb4db5e9d073fc5d86c2d36eabec2b73803d5571865dbbb4f2555b4'],
++    'engine/edition_files.py': ['b8d775a812497453ae30bebaa8d1ee9626c97fa095ad9968886be3b849ba03bc'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.114', '7.0.115')  # 7.0.115 allows a safe re-run after success
++
++# The 7.0.115 zip carries the 7.0.114 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.113', '7.0.114', 'tools/update_v7113_to_v7114.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.114 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.114 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.114 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.115'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To see which '
++              'language video is current, what each one really shows, and where a failed export kept its file: '
++              'python3 cli.py v3 language-outputs <job> --files --check-captions')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

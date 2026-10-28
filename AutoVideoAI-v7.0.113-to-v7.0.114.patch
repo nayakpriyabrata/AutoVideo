@@ -1,0 +1,1031 @@
+diff --git a/REPAIR_THAT_FAILED_V7_0_114.md b/REPAIR_THAT_FAILED_V7_0_114.md
+new file mode 100644
+index 0000000..c36a68e
+--- /dev/null
++++ b/REPAIR_THAT_FAILED_V7_0_114.md
+@@ -0,0 +1,116 @@
++# AutoVideoAI v7.0.114 — the repair that stopped half way, and the file it must not hide
++
++You ran the repair 7.0.113 introduced and it stopped:
++
++```
++[ 50%] Rendering Odia edition Odia
++"error": "FFmpeg failed: av_interleaved_write_frame(): Input/output error
++          Error writing trailer of .../.render-j06ayvm3/picture-fit.mp4: Input/output error"
++
++Odia: no current video yet
++! Odia has no current export, only earlier files. Render that language again.
++```
++
++The repair logic is fine — the render itself could not write. What was wrong is everything the app said about it:
++it named a file in a temporary folder that had already been deleted, it did not mention the volume it could not
++write to, and it then told you that you had no Odia video at all, while your previous Odia video sat on the disk,
++complete. That is what this release fixes.
++
++## What "Input/output error … Error writing trailer" means
++
++FFmpeg says this when the **volume cannot take the rest of the file**: the disk is full, the folder is over quota,
++read-only, or a drive/network share went away. It is not a codec problem and it is not caused by your script or your
++narration. The two things to check are free space on the drive holding `AutoVideoAI-Shared`, and whether that folder
++is still writable.
++
++Two things made it worse in 7.0.113 and are fixed here:
++
++* **the working picture was written twice.** When a narration is longer than the picture, the render makes a retimed
++  copy of the picture first — a working file that is decoded again immediately and never played. It was being written
++  with `+faststart`, which rewrites the whole file a second time *at trailer time* — precisely the moment this render
++  died — doubling the writes on the drive that was already short of room. It is now written once, without it.
++* **a failed render hid the file you had.** The language's record was replaced by the failure, so a video that was
++  still on disk became "no current video yet".
++
++## What the messages say now
++
++A failed FFmpeg write now reports the file, the volume, and the room left on it:
++
++```
++FFmpeg failed: … Error writing trailer of …/picture-fit.mp4: Input/output error
++The file being written was …/picture-fit.mp4. Disk free on that volume: 0.6 GB free of 465.7 GB (…).
++This is what a full or read-only volume looks like to FFmpeg ("Input/output error", "No space left on device").
++Free space there — the earlier exports and the working copies in render/ are the biggest files — or point the
++outputs folder at another disk, then run the same command again: finished languages are not redone, no voice is
++re-recorded and no Flow credit is spent.
++```
++
++And the listing keeps your file visible:
++
++```
++Odia (or)
++  no current video: the render did not finish
++  unchanged file from before it: …/language_editions/20261027-214110-f0e33d42/exports/or-…mp4 · burned captions: yes
++  ! Odia has no current export because the render did not finish: FFmpeg failed: … Input/output error. The file from
++    before it is unchanged at …/or-…mp4 - that is still the version you have, not a repaired one. Fix the cause above
++    and render that language again.
++  ! Disk free on the volume holding this job right now: 0.6 GB of 465.7 GB (…). The render that failed needed room
++    there for a working copy of the fitted picture, as large as the video itself.
++```
++
++The job summary line becomes `Odia: repair did not finish · previous file kept: or-….mp4 · captions: yes` instead of
++`no current video yet`, and the panel's next action is the command that retries it, not advice to press a button that
++cannot help.
++
++## How to finish your Odia video
++
++1. **Free some room** on the drive holding `AutoVideoAI-Shared` — the earlier exports (`language_editions/`,
++   `primary_branding/`) and the copies in `render/` are the big files. A fitted repair needs roughly one extra
++   copy of the video while it works.
++2. Run the same command again:
++
++   ```
++   python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++   ```
++
++Odia is the only language still not current, so only Odia is rendered: Hindi and English are not redone, no voice is
++re-recorded, no Flow credit is spent. The new file is written next to the old one, the old one stays as the earlier
++version, and the listing should then read `burned captions: no` with `no burned transcript detected`.
++
++If the listing still reports less free space than the video's size, the retry will fail the same way — the numbers
++are printed for exactly that reason.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.114/tools/update_v7113_to_v7114.py /path/to/AutoVideoAI-v7.0.113         # dry run
++python3 ../AutoVideoAI-v7.0.114/tools/update_v7113_to_v7114.py /path/to/AutoVideoAI-v7.0.113 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses anything older than
++7.0.113. Code backups go to `code-update-backups/v7.0.113-to-v7.0.114-<stamp>/`.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7114_failed_repair_keeps_file.py` (**6**), real FFmpeg renders where they matter.
++
++* the retimed working picture is written once — no `-movflags`, no `+faststart` — while still holding the last frame
++  and stopping at the narration length;
++* a real FFmpeg write failure reports the file, the free space on that volume, what the error means, and that a
++  retry costs no Flow credit;
++* a failed repair keeps the previous export as `kept_export` in the record, names it in the panel diagnosis, says
++  "nothing was lost", and offers the retry command instead of a dead-end button;
++* the listing shows that file as *unchanged, not repaired*, with its real caption state, and measures the volume
++  again; the one-line summary says `repair did not finish · previous file kept`;
++* the language stays pending, so re-running after the cause is fixed exports a new file with `captions_burned:
++  false`, keeps the old one, and drops the shadowing entry.
++
++Full suite: **28 failed / 1 825 passed / 4 skipped**, against a pristine 7.0.113 tree failing the *identical* 28
++tests (browser/codec availability in this environment). No regressions; 6 new tests.
+diff --git a/VERSION b/VERSION
+index 2e17f01..62c2cbb 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.113
+\ No newline at end of file
++7.0.114
+\ No newline at end of file
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+index d827507..b60be96 100644
+--- a/engine/edition_files.py
++++ b/engine/edition_files.py
+@@ -22,6 +22,7 @@ Nothing is rendered, copied or deleted here; it only reads.
+ from __future__ import annotations
+ 
+ import json
++import shutil
+ import time
+ from pathlib import Path
+ 
+@@ -157,6 +158,11 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+             entry = record.get('primary') or {}
+         current_path = str(entry.get('path') or '')
+         current = None
++        # v7.0.114: a render that failed leaves the previous export on disk. It is not current, but it is not gone
++        # either - a repair that stops half way must not make the video the user already has disappear.
++        kept_entry = entry.get('kept_export') or {}
++        kept_path = str(kept_entry.get('path') or '')
++        kept = None
+         if current_path and Path(current_path).is_file():
+             current = _describe(current_path, verify=verify)
+             # A fresh picture check wins; otherwise report what the render recorded.
+@@ -196,9 +202,13 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+         elif current_path:
+             problems.append(_label(code) + ' is recorded as exported, but its file is missing: ' + current_path +
+                             '. Render that language again from the job panel.')
++        if current is None and kept_path and Path(kept_path).is_file():
++            kept = _describe(kept_path, verify=False)
++            kept['note'] = str(kept_entry.get('note') or '')
++            kept['reason'] = str(entry.get('error') or '').strip().splitlines()[0][:300] if entry.get('error') else ''
+         older = []
+         for path in scan_exports(job_root):
+-            if _export_language(path) != code or str(path) == current_path:
++            if _export_language(path) != code or str(path) in (current_path, kept_path if kept else ''):
+                 continue
+             row = _describe(path, verify=False)
+             row['superseded'] = True
+@@ -206,7 +216,7 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+             older.append(row)
+         requested = _requested(job_root, code)
+         row = {'language': code, 'label': _label(code), 'requested_transcript': requested,
+-               'current': current, 'older': older, 'problems': []}
++               'current': current, 'kept': kept, 'older': older, 'problems': []}
+         if current is not None:
+             burned = (current.get('captions') or {}).get('burned')
+             if requested is False and burned is True:
+@@ -243,9 +253,28 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+                 row['problems'].append(
+                     'Older ' + _label(code) + ' videos in this job are not current; some of them still have the '
+                     'captions you switched off. The current one is ' + current['path'] + '.')
+-        elif older:
+-            row['problems'].append(_label(code) + ' has no current export, only earlier files. Render that '
+-                                                  'language again.')
++        elif kept:
++            # The repair was attempted and stopped; the file before it is intact.
++            row['problems'].append(
++                _label(code) + ' has no current export because the render did not finish'
++                + (': ' + kept['reason'] if kept and kept.get('reason') else '') +
++                '. The file from before it is unchanged at ' + kept_path +
++                ' - that is still the version you have, not a repaired one. Fix the cause above and render that '
++                'language again.')
++        if entry.get('status') == 'failed' and any(
++                marker in str(entry.get('error') or '') for marker in
++                ('Input/output error', 'No space left on device', 'read-only file system')):
++            # v7.0.114: the volume is the likely cause, so say how much room it has *now* - the number that
++            # decides whether trying again can work.
++            try:
++                total, _used, free = shutil.disk_usage(str(job_root))
++                row['problems'].append(
++                    'Disk free on the volume holding this job right now: '
++                    + f'{free / 1024 ** 3:.1f} GB of {total / 1024 ** 3:.1f} GB (' + str(job_root) + '). The '
++                    'render that failed needed room there for a working copy of the fitted picture, as large as '
++                    'the video itself.')
++            except OSError:
++                pass
+         editions[code] = row
+         problems.extend(row['problems'])
+     return {'schema': SCHEMA, 'job': str(job_root), 'source_language': source, 'editions': editions,
+@@ -267,7 +296,15 @@ def summary(job_root, *, verify=False):
+     for code, row in data['editions'].items():
+         current = row.get('current') or {}
+         if not current.get('path'):
+-            lines.append(row['label'] + ': no current video yet')
++            kept = row.get('kept') or {}
++            if kept.get('path'):
++                kept_burned = (kept.get('captions') or {}).get('burned')
++                lines.append(row['label'] + ': repair did not finish · previous file kept: '
++                             + Path(kept['path']).name + ' · '
++                             + ('captions: yes' if kept_burned is True else
++                                'captions: no' if kept_burned is False else 'captions: unknown'))
++            else:
++                lines.append(row['label'] + ': no current video yet')
+             continue
+         burned = (current.get('captions') or {}).get('burned')
+         state = 'captions: yes' if burned else ('captions: no' if burned is False else 'captions: unknown')
+@@ -288,9 +325,20 @@ def format_report(data):
+         current = row.get('current') or {}
+         lines.append(row['label'] + ' (' + code + ')')
+         if not current.get('path'):
+-            lines.append('  no current video for this language yet')
++            kept = row.get('kept') or {}
++            if kept.get('path'):
++                kept_burned = (kept.get('captions') or {}).get('burned')
++                lines.append('  no current video: the render did not finish')
++                lines.append('  unchanged file from before it: ' + kept['path'] + ' · '
++                             + ('burned captions: yes' if kept_burned is True else
++                                'burned captions: no' if kept_burned is False else 'burned captions: unknown')
++                             + ' · ' + str(kept.get('exported_at') or ''))
++            else:
++                lines.append('  no current video for this language yet')
+             for old in row.get('older') or []:
+                 lines.append('  earlier file (not current): ' + old['path'])
++            for problem in row.get('problems') or []:
++                lines.append('  ! ' + problem)
+             continue
+         watch = current.get('render_copy') or current.get('path')
+         lines.append('  watch: ' + watch)
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index 4be5ad6..d37c820 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -419,6 +419,52 @@ def propose_cards(transcript, duration, language, *, cleanup='delete-after-read'
+     return result
+ 
+ 
++WRITE_ERRORS = ('input/output error', 'no space left on device', 'error writing', 'cannot write',
++                'error opening output', 'no such file or directory', 'permission denied',
++                'read-only file system', 'disk quota exceeded')
++
++
++def disk_note(cmd):
++    """v7.0.114: how much room the volume FFmpeg was writing to has right now.
++
++    Field report: the Odia repair render stopped after two minutes with ``av_interleaved_write_frame(): Input/output
++    error ... Error writing trailer of ... picture-fit.mp4``. That is what FFmpeg says when the volume cannot take
++    the rest of the file - a full disk, a full quota, or a read-only / disconnected folder. The message named the
++    temp file and nothing else, so the only thing to do with it was guess. This returns a factual line about the
++    volume and, only when the text really is a write error, what it usually means and how to retry.
++    """
++    target = None
++    try:
++        target = Path(str(cmd[-1]))
++    except (IndexError, ValueError):
++        pass
++    folder = target.parent if target is not None else None
++    while folder is not None and not folder.is_dir():
++        folder = folder.parent if folder.parent != folder else None
++    if folder is None:
++        return ''
++    try:
++        total, used, free = shutil.disk_usage(str(folder))
++    except OSError:
++        return ''
++    gb = 1024.0 ** 3
++    return ('\nThe file being written was ' + str(target) + '. Disk free on that volume: '
++            + f'{free / gb:.1f} GB free of {total / gb:.1f} GB (' + str(folder) + ').')
++
++
++def _write_hint(cmd, err):
++    """The volume line, plus what a write error means, for a failed FFmpeg run (v7.0.114)."""
++    note = disk_note(cmd)
++    lowered = str(err or '').lower()
++    if any(marker in lowered for marker in WRITE_ERRORS):
++        note += ('\nThis is what a full or read-only volume looks like to FFmpeg ("Input/output error", '
++                 '"No space left on device"). Free space there - the earlier exports and the working copies in '
++                 'render/ are the biggest files - or point the outputs folder at another disk, then run the same '
++                 'command again: finished languages are not redone, no voice is re-recorded and no Flow credit is '
++                 'spent.')
++    return note
++
++
+ def _run(cmd, progress=None, duration=None):
+     if progress and duration:
+         cmd = cmd[:-1] + ['-progress', 'pipe:1', '-nostats', cmd[-1]]
+@@ -431,13 +477,29 @@ def _run(cmd, progress=None, duration=None):
+                 except (ValueError, TypeError): pass
+         err = p.stderr.read(); result = p.wait()
+         if result:
+-            raise RuntimeError('FFmpeg failed: ' + err[-1200:])
++            raise RuntimeError('FFmpeg failed: ' + err[-1200:] + _write_hint(cmd, err))
+     finally:
+         if p.poll() is None:
+             p.kill(); p.wait()
+         p.stdout.close(); p.stderr.close()
+ 
+ 
++def _fit_picture_cmd(src, dest, *, picture_scale, hold_seconds, seconds):
++    """The retimed picture an edition is built from when its narration is longer than the source (v7.0.114).
++
++    This is a working file: it is decoded again a moment later to make the normalised segments, so it is written
++    without ``+faststart``. Faststart rewrites the whole file a second time at the end (which is the moment the
++    field render failed, "Error writing trailer"), costs another picture-sized write on the exact volume that was
++    already short of room, and buys nothing for a file nobody plays.
++    """
++    chain = f'setpts={picture_scale:.6f}*PTS'
++    if hold_seconds > 0:
++        chain += f',tpad=stop_mode=clone:stop_duration={hold_seconds:.3f}'
++    return [_tool('ffmpeg'), '-y', '-hide_banner', '-loglevel', 'error', '-i', str(src), '-an',
++            '-vf', chain, '-t', f'{seconds:.3f}',
++            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', str(dest)]
++
++
+ def _card_image(text, width, height, path, language, *, style='playful', captions=True):
+     """Draw one edition card with the same renderer as the English master (v7.0.112).
+ 
+@@ -661,12 +723,8 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                 pass
+         if fit:
+             picture = tmp_dir/'picture-fit.mp4'
+-            chain = f'setpts={picture_scale:.6f}*PTS'
+-            if hold_seconds > 0:
+-                chain += f',tpad=stop_mode=clone:stop_duration={hold_seconds:.3f}'
+-            _run([_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-i',str(src),'-an',
+-                  '-vf',chain,'-t',f'{voice_seconds:.3f}',
+-                  '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
++            _run(_fit_picture_cmd(src, picture, picture_scale=picture_scale, hold_seconds=hold_seconds,
++                                  seconds=voice_seconds))
+             picture_seconds = voice_seconds
+             if words_src and abs(tempo - 1.0) > 1e-6:
+                 # Cards and hooks are anchored to the narration, so their word times shrink with it.
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index 8ac341a..daac8e8 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -471,14 +471,30 @@ def edition_diagnosis(job_root, *, verify=True):
+         if entry.get('status') == 'failed' or entry.get('error'):
+             # Narration and picture are both present; the render itself failed.
+             detail = str(entry.get('error', ''))
+-            repair = ("Run the `refresh-cards` command quoted in the message above, then press "
+-                      '"Add primary intro/outro and render pending language editions" again. It re-drafts '
+-                      "the cards only: no narration, no video, no Flow credits."
+-                      if 'refresh-cards' in detail else
+-                      'Fix the message above, then press "Add primary intro/outro and render pending '
+-                      'language editions".')
+-            editions[code] = {'status': 'failed', 'error': detail, 'transcript': want_transcript, 'transcript_source': caption_source,
+-                              'message': _label(code) + ' edition failed: ' + detail[:900],
++            kept = entry.get('kept_export') or {}
++            kept_path = str(kept.get('path') or '')
++            kept_note = ''
++            if kept_path and Path(kept_path).is_file():
++                # v7.0.114: the previous export is still on disk - say so instead of implying the language vanished.
++                kept_note = (' The previous ' + _label(code) + ' video is unchanged at ' + kept_path +
++                             '; it is not the repaired version, but nothing was lost.')
++            if 'refresh-cards' in detail:
++                repair = ("Run the `refresh-cards` command quoted in the message above, then press "
++                          '"Add primary intro/outro and render pending language editions" again. It re-drafts '
++                          "the cards only: no narration, no video, no Flow credits.")
++            elif ('Disk free' in detail or 'No space left on device' in detail
++                  or 'Input/output error' in detail):
++                repair = ('Free space on the volume named in the message above (or point the outputs folder at '
++                          'another disk), then run the same render again: `python3 cli.py v3 language-outputs '
++                          + job_root.name + ' --fit-hold 8`. Only the languages that are not current are '
++                          'rendered; no voice is re-recorded and no Flow credits are spent.')
++            else:
++                repair = ('Fix the cause named above, then run the same render again: `python3 cli.py v3 '
++                          'language-outputs ' + job_root.name + ' --fit-hold 8`. Only the languages that are not '
++                          'current are rendered, no voice is re-recorded and no Flow credits are spent.')
++            editions[code] = {'status': 'failed', 'error': detail, 'transcript': want_transcript,
++                              'transcript_source': caption_source, 'kept_export': kept_path,
++                              'message': _label(code) + ' edition failed: ' + detail[:900] + kept_note,
+                               'next_action': repair}
+             continue
+         editions[code] = {'status': entry.get('status') or 'pending',
+@@ -639,10 +655,11 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+         emit('Rendering ' + label + ' edition', 100 * index / max(1, len(extra)), label)
+         # The previous export stays on disk in its own language_editions/<stamp>/exports/ folder, so switching
+         # the transcript back and forth never destroys the version the user already had.
++        previous = dict(record['editions'].get(code) or {})
+         entry = {'status': 'rendering', 'audio_sha256': bundle.get('audio_sha256'), 'captions': wants[code],
+                  'caption_words_sha256': captions[code][0], 'caption_source': captions[code][1],
+                  'channel': {}, 'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+-        reason = str((record['editions'].get(code) or {}).get('repaint_reason') or '')
++        reason = str(previous.get('repaint_reason') or '')
+         record['editions'][code] = entry
+         if reason:
+             entry['repaint_reason'] = reason
+@@ -711,8 +728,23 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+         except Exception as error:  # keep the primary edition and every finished edition
+             # 7.0.108: these messages now carry the numbers and the exact repair command, so they are kept
+             # whole instead of being cut in the middle of the instructions.
+-            entry.update(status='failed', error=str(error)[:1500])
+-            failures.append(label + ': ' + str(error)[:900])
++            detail = str(error)[:1500]
++            entry.update(status='failed', error=detail)
++            # v7.0.114: a failed repair used to replace the record outright, so a job that still had the previous
++            # Odia video on disk reported "no current video yet" - and the file the user could still watch became
++            # invisible. The old export is kept on disk by design; keep it in the record too, and mark it.
++            kept = {key: previous.get(key) for key in
++                    ('path', 'sha256', 'finished_at', 'render_copy', 'plan', 'captions', 'caption_source',
++                     'caption_words_sha256', 'channel', 'captions_detected')
++                    if previous.get(key) not in (None, '', {})}
++            kept_path = Path(str(kept.get('path') or ''))
++            if kept.get('path') and kept_path.is_file():
++                entry['kept_export'] = kept
++                entry['kept_export']['note'] = (
++                    'The render that was meant to repair ' + label + ' did not finish, so this is still the '
++                    'previous ' + label + ' file. It is unchanged and complete; it is simply not the repaired '
++                    'version.')
++            failures.append(label + ': ' + detail[:900])
+         entry['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+         _save_record(job_root, record)
+     emit('Language editions finished', 100)
+diff --git a/tests/test_v7114_failed_repair_keeps_file.py b/tests/test_v7114_failed_repair_keeps_file.py
+new file mode 100644
+index 0000000..4a9dc85
+--- /dev/null
++++ b/tests/test_v7114_failed_repair_keeps_file.py
+@@ -0,0 +1,224 @@
++"""v7.0.114: the repair render that stopped half way, and the file it must not hide.
++
++Field report, on 7.0.113 - the release that made a plain render repair a language whose export still carried the
++transcript the job had switched off:
++
++    python3 cli.py v3 language-outputs 20261022-...-9729 --fit-hold 8
++    [ 50%] Rendering Odia edition Odia
++    ...
++    "status": "failed",
++    "error": "FFmpeg failed: av_interleaved_write_frame(): Input/output error
++              Error writing trailer of .../.render-j06ayvm3/picture-fit.mp4: Input/output error"
++
++and then, from the same run:
++
++    Odia: no current video yet
++    ! Odia has no current export, only earlier files. Render that language again.
++
++Three things were wrong with that, and none of them was the repair itself:
++
++* the message named a file inside a temporary folder that had already been deleted, and nothing about the volume it
++  could not write to. "Input/output error" while writing a trailer is what a volume that is full, over quota or
++  read-only looks like to FFmpeg;
++* the working picture was written with ``+faststart``, which rewrites the whole file a second time at exactly the
++  moment the field render failed - twice the writes, on the volume that was already short of room, for a file that
++  is decoded again immediately and never played;
++* a failed render replaced the language's record, so the previous Odia export - still on disk, still complete -
++  became invisible: "no current video yet" when there was one.
++
++These tests hold v7.0.114 to what it promises:
++
++* the working picture is written once, without a pointless second pass;
++* a failed FFmpeg write reports the volume and what to do, instead of only a temp path;
++* a failed repair keeps the previous export visible and named, and says nothing was lost;
++* the next run picks the language up again, so the repair can simply be retried.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++
++WORDS = [{'word': 'ଶବ୍ଦ' + str(i), 'start': 0.3 + i * 0.75, 'end': 0.3 + i * 0.75 + 0.6} for i in range(10)]
++FIT = {'allow_hold': 8.0, 'hold_cap': 8.0}
++FIELD_ERROR = ('FFmpeg failed: av_interleaved_write_frame(): Input/output error\n'
++               'Error writing trailer of /tmp/job/language_editions/x/.render-abc/picture-fit.mp4: '
++               'Input/output error\n')
++
++
++def _job(tmp_path, *, narration_seconds=7.8, picture_seconds=6.0, transcript=None):
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = job / 'render' / 'visual-master.mp4'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'testsrc2=size=640x360:rate=24', '-t', str(picture_seconds), '-an',
++                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(picture)], check=True)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': picture_seconds}), encoding='utf-8')
++    folder = job / 'speech-editions' / 'or' / 'key'
++    folder.mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=700:sample_rate=44100', '-t', str(narration_seconds),
++                    '-c:a', 'pcm_s16le', str(voice)], check=True)
++    (folder / 'words.json').write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': narration_seconds,
++              'words': str(folder / 'words.json'), 'script': ' '.join(word['word'] for word in WORDS),
++              'language': 'or', 'timing_source': 'test', 'cards': [], 'text_cards': False}
++    state = {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++             'bundles': {'or': bundle}}
++    if transcript is not None:
++        state['transcript'] = {'default': transcript, 'languages': {}}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False),
++                                                               encoding='utf-8')
++    return job
++
++
++def _entry(job, code='or'):
++    from engine.language_editions import _record_path
++    return json.loads(_record_path(job).read_text(encoding='utf-8'))['editions'][code]
++
++
++def _ask_for_no_transcript(job):
++    """The job switches Odia's transcript off, with a record that still claims the captioned file is current."""
++    from engine.language_editions import _record_path
++    state = json.loads((job / 'production' / 'language_editions.json').read_text())
++    state.pop('transcript', None)
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False))
++    record = json.loads(_record_path(job).read_text())
++    record['editions']['or']['captions'] = False
++    record['editions']['or'].pop('captions_detected', None)
++    _record_path(job).write_text(json.dumps(record), encoding='utf-8')
++
++
++# --------------------------------------------------------------- the working picture is written once
++
++
++def test_the_working_picture_is_written_once_without_a_faststart_second_pass():
++    """Faststart rewrites the whole file at trailer time - the exact moment the field render failed."""
++    from engine import finishing_studio as finish
++    cmd = finish._fit_picture_cmd('in.mp4', 'out.mp4', picture_scale=1.31, hold_seconds=1.4, seconds=7.8)
++    assert '+faststart' not in ' '.join(cmd)
++    assert '-movflags' not in cmd
++    assert 'tpad=stop_mode=clone:stop_duration=1.400' in cmd[cmd.index('-vf') + 1]
++    assert cmd[cmd.index('-t') + 1] == '7.800'
++    assert '-an' in cmd                                  # the narration is added once, later
++
++
++def test_a_scale_only_fit_needs_no_hold_filter():
++    from engine import finishing_studio as finish
++    cmd = finish._fit_picture_cmd('in.mp4', 'out.mp4', picture_scale=1.2, hold_seconds=0.0, seconds=6.0)
++    chain = cmd[cmd.index('-vf') + 1]
++    assert chain == 'setpts=1.200000*PTS'
++
++
++# --------------------------------------------------------------- a failed write says where and why
++@needs_ffmpeg
++def test_a_write_failure_names_the_volume_and_the_repair(tmp_path):
++    from engine import finishing_studio as finish
++    missing = tmp_path / 'no-such-folder' / 'out.mp4'
++    with pytest.raises(RuntimeError) as failed:
++        finish._run([finish._tool('ffmpeg'), '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                     'testsrc2=size=64x64:rate=5', '-t', '0.4', str(missing)])
++    message = str(failed.value)
++    assert 'Disk free on that volume' in message          # how much room there is, in GB
++    assert str(missing) in message                        # which file FFmpeg could not write
++    assert 'full or read-only volume' in message          # what the error actually means
++    assert 'no Flow credit' in message                    # and that retrying costs nothing
++
++
++# --------------------------------------------------------------- a failed repair keeps the file and says so
++@needs_ffmpeg
++def test_a_failed_repair_keeps_the_previous_export_in_the_record(tmp_path, monkeypatch):
++    from engine import finishing_studio as finish
++    from engine.language_editions import render_job_editions, edition_diagnosis
++    job = _job(tmp_path, transcript=True)
++    first = render_job_editions(job, fit_policy=FIT)
++    before = Path(first['editions']['or']['path'])
++    assert before.is_file()
++    _ask_for_no_transcript(job)
++
++    def explode(*args, **kwargs):
++        raise RuntimeError(FIELD_ERROR)
++    monkeypatch.setattr(finish, 'render', explode)
++    failed = render_job_editions(job, fit_policy=FIT)
++    assert failed['status'] == 'failed'
++    entry = _entry(job)
++    assert entry['status'] == 'failed'
++    assert 'Input/output error' in entry['error']
++    kept = entry['kept_export']
++    assert Path(kept['path']) == before and before.is_file()
++    assert 'did not finish' in kept['note']
++
++    report = edition_diagnosis(job)
++    row = report['editions']['or']
++    assert row['status'] == 'failed'
++    assert row['kept_export'] == str(before)
++    assert 'unchanged at ' + str(before) in row['message']
++    assert 'nothing was lost' in row['message']
++    assert 'language-outputs ' + job.name + ' --fit-hold 8' in row['next_action']
++    assert 'no voice is re-recorded' in row['next_action']
++    assert 'Press' not in row['next_action']
++
++
++@needs_ffmpeg
++def test_the_listing_shows_the_kept_file_instead_of_claiming_there_is_none(tmp_path, monkeypatch):
++    from engine import finishing_studio as finish
++    from engine import edition_files
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, transcript=True)
++    first = render_job_editions(job, fit_policy=FIT)
++    before = Path(first['editions']['or']['path'])
++    _ask_for_no_transcript(job)
++    monkeypatch.setattr(finish, 'render', lambda *a, **k: (_ for _ in ()).throw(RuntimeError(FIELD_ERROR)))
++    render_job_editions(job, fit_policy=FIT)
++
++    data = edition_files.report(job)
++    row = data['editions']['or']
++    assert row['current'] is None
++    assert Path(row['kept']['path']) == before
++    assert (row['kept']['captions'] or {}).get('burned') is True     # honest about what that file shows
++    problems = '\n'.join(row['problems'])
++    assert 'the render did not finish' in problems
++    assert str(before) in problems
++    assert 'that is still the version you have, not a repaired one' in problems
++
++    summary = ' '.join(edition_files.summary(job))
++    assert 'repair did not finish' in summary and 'previous file kept' in summary
++    listing = '\n'.join(edition_files.format_report(data))
++    assert 'the render did not finish' in listing
++    assert 'unchanged file from before it: ' + str(before) in listing
++    assert '! Odia has no current export because the render did not finish' in listing
++    # the file described as kept is not also listed as an older, unrelated file
++    assert 'earlier file (not current): ' + str(before) not in listing
++    # the volume that could not take the write is measured now, so the next attempt is a decision, not a guess
++    assert 'Disk free on the volume holding this job right now' in problems
++
++
++@needs_ffmpeg
++def test_the_language_stays_pending_so_the_repair_can_be_retried(tmp_path, monkeypatch):
++    """After the disk is freed, the same command finishes the job - the failure is not sticky."""
++    from engine import finishing_studio as finish
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path, transcript=True)
++    first = render_job_editions(job, fit_policy=FIT)
++    broken = Path(first['editions']['or']['path'])
++    _ask_for_no_transcript(job)
++    monkeypatch.setattr(finish, 'render', lambda *a, **k: (_ for _ in ()).throw(RuntimeError(FIELD_ERROR)))
++    assert render_job_editions(job, fit_policy=FIT)['status'] == 'failed'
++    monkeypatch.undo()
++
++    again = render_job_editions(job, fit_policy=FIT)
++    assert again['status'] == 'exported'
++    fixed = Path(again['editions']['or']['path'])
++    assert fixed != broken and fixed.is_file() and broken.is_file()
++    assert json.loads(fixed.with_suffix('.provenance.json').read_text())['captions_burned'] is False
++    assert 'kept_export' not in _entry(job)               # the old entry no longer shadows the new file
+diff --git a/tools/update_v7112_to_v7113.py b/tools/update_v7112_to_v7113.py
+deleted file mode 100644
+index 3fb7129..0000000
+--- a/tools/update_v7112_to_v7113.py
++++ /dev/null
+@@ -1,179 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.113 update to a v7.0.112 installation.
+-
+-One field report, traced to its cause:
+-
+-* **"The Odia video still has the transcript, in language_editions and in render."** v7.0.112 added a picture check,
+-  and it agreed with the report: the current export really does carry burned captions although the job asks for
+-  none. The cause is one line - when a narration is longer than the picture, the render fits it, and then handed
+-  the retimed word file to the caption stage unconditionally. A language whose transcript was switched off got its
+-  captions back the moment its narration had to be fitted. Every language needing a fit was affected from 7.0.107
+-  (when fitting landed) to 7.0.112.
+-
+-v7.0.113 does four things:
+-
+-1. **The fit step only decides about timing.** Captions are burned when the job asks for them, and not otherwise.
+-2. **A plain render repairs the job.** A language whose current export shows a transcript while the job asks for
+-   none is treated as out of date, rendered again (that language only), and the earlier file is kept.
+-3. **No repair loop.** If a fresh render still disagrees, the file is kept, marked, and explained - it is not
+-   rendered again for ever.
+-4. **The messages name the cause**, instead of asking you to re-check the switch you already checked.
+-
+-Nothing is generated, re-recorded or charged by this update, and the repair itself re-records nothing either: it
+-reuses the saved narration and the approved picture.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.113 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.113/tools/update_v7112_to_v7113.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.113/tools/update_v7112_to_v7113.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-
+-(v7.0.113 also corrects the first line of the 7.0.112 updater's own description, which still said 7.0.111; the
+-update itself behaved correctly.)
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'cli.py',
+-    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
+-    'engine/render/caption_check.py',
+-    'tests/test_v7113_fit_captions_repair.py', 'tests/test_v7112_card_band_and_picture_check.py',
+-    'FIT_CAPTIONS_AND_REPAIR_V7_0_113.md', 'tools/update_v7112_to_v7113.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['ea5b506226f6439c37c835e00b7e801fced56093374b03ff5e7922b963ddd9d6'],
+-    'cli.py': ['704deada71d8ede4ada180aff4ccc07831bc7b2220516f106e0e95c0f2032d03'],
+-    'engine/finishing_studio.py': ['f014d64d5413b71f760c5ec3b57d1ad2ccc4097df140185963b87ad67e760179'],
+-    'engine/language_editions.py': ['3814db96520bff5464f093a3fdd066b9f8d3f3c638e4c8dc824c1f964726e195'],
+-    'engine/edition_files.py': ['550abc371c869ec68d4e85e20ec30f01d1ced7810eb3e8b761db898bc3210594'],
+-    'engine/render/caption_check.py': ['3d101ec50f16c055258e13d62281af79926213783a02ede66e2929b2c2da7206'],
+-    'tests/test_v7112_card_band_and_picture_check.py': ['19d9a48ef28f60bed09f886fe694616175bc9bc633c84d080bd022a8a94f0633'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.112', '7.0.113')  # 7.0.113 allows a safe re-run after success
+-
+-# The 7.0.113 zip carries the 7.0.112 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.111', '7.0.112', 'tools/update_v7111_to_v7112.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.112 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.112 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.112 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.113'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To check a job, '
+-              'and repair any language whose file shows a transcript you switched off: '
+-              'python3 cli.py v3 language-outputs <job> --files --check-captions  - then run the render command '
+-              'it prints (that language only, from its saved narration)')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7113_to_v7114.py b/tools/update_v7113_to_v7114.py
+new file mode 100644
+index 0000000..d18873a
+--- /dev/null
++++ b/tools/update_v7113_to_v7114.py
+@@ -0,0 +1,175 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.114 update to a v7.0.113 installation.
++
++One field report on 7.0.113, when the repair it introduced was run for the first time:
++
++    [ 50%] Rendering Odia edition
++    "error": "FFmpeg failed: av_interleaved_write_frame(): Input/output error
++              Error writing trailer of .../.render-j06ayvm3/picture-fit.mp4: Input/output error"
++    Odia: no current video yet
++
++Three things were wrong, and the repair itself was not one of them:
++
++1. **The message named a temp file that was already deleted** and nothing about the volume. "Input/output error"
++   while writing a trailer is what a full, over-quota or read-only volume looks like to FFmpeg. The failure now
++   reports the file, the free space on that volume in GB, and what to do - and a listing that finds a job in this
++   state measures the volume again when you run it.
++2. **The working picture was written twice.** It carried ``+faststart``, which rewrites the whole file at trailer
++   time - the exact moment this render died - for a file that is decoded again immediately and never played. It is
++   now written once, without it.
++3. **A failed render hid the file you still had.** The record was replaced by the failure, so the previous Odia
++   export - complete, on disk, with its captions - became "no current video yet". The previous export is now kept
++   in the record as ``kept_export`` and named everywhere: the listing, the panel diagnosis and the job summary. It
++   is described as what it is, unchanged but not repaired.
++
++The language stays pending, so after the cause is fixed the same command finishes the job. Nothing is re-recorded
++and no Flow credit is spent by it.
++
++Usage (run from the existing installation folder, after extracting the 7.0.114 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.114/tools/update_v7113_to_v7114.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.114/tools/update_v7113_to_v7114.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION',
++    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
++    'tests/test_v7114_failed_repair_keeps_file.py',
++    'REPAIR_THAT_FAILED_V7_0_114.md', 'tools/update_v7113_to_v7114.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['3e317c697be4d298a7ddbfb5b3a08a18346e927b7e30c17eae6bf2d9174c6c47'],
++    'engine/finishing_studio.py': ['d17f6362fcc7eaf6d2c20c1b1a34804b7c04b0a77abfb6097e60f46bca88115d'],
++    'engine/language_editions.py': ['dcfee2a4a6c14dc4b29568e79842c7b1d08bbca5a2df8815480dd3dc49f665f6'],
++    'engine/edition_files.py': ['ab45d38a177244f3ee0088522d9df533adc06d7df4ebc4cb3f14cf944522f7fb'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.113', '7.0.114')  # 7.0.114 allows a safe re-run after success
++
++# The 7.0.114 zip carries the 7.0.113 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.112', '7.0.113', 'tools/update_v7112_to_v7113.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.113 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.113 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.113 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.114'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. If a repair '
++              'render stopped with an Input/output error, run the same render again after the listing says the '
++              'volume has room: python3 cli.py v3 language-outputs <job> --files --check-captions  - the file you '
++              'already have is kept and named while that language is not current.')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

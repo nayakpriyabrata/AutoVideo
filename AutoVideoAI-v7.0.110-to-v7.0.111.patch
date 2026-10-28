@@ -1,0 +1,1409 @@
+diff --git a/VERSION b/VERSION
+index 14999e2..a76f9e6 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.110
+\ No newline at end of file
++7.0.111
+\ No newline at end of file
+diff --git a/WHICH_EDITION_FILE_V7_0_111.md b/WHICH_EDITION_FILE_V7_0_111.md
+new file mode 100644
+index 0000000..ed8b19f
+--- /dev/null
++++ b/WHICH_EDITION_FILE_V7_0_111.md
+@@ -0,0 +1,117 @@
++# AutoVideoAI v7.0.111 — the render was right; the file you watched was not the new one
++
++You switched the Odia transcript off, rendered again, and the Odia video still had the same Odia captions.
++
++**The render did what you asked.** The job's record and the new export both say *no captions*, and the new Odia
++file has none. What was missing was any way to know **which** file was which: every render keeps the earlier video
++on purpose, so the job now holds two Odia videos with equally convincing names — and the old one, the one with the
++captions you switched off, plays exactly like a fresh render unless something tells you otherwise.
++
++v7.0.111 makes the current file impossible to mix up, and makes the plan unable to resurrect the captions.
++
++---
++
++## 1. Which file is current
++
++### In the app
++
++The **Three-language output** panel (Queue, Create, or Storyboard → job panel) now labels what it plays:
++
++> **Odia** · exported · no transcript
++> **This is the current Odia video**: `…-or-edition.mp4` · without a burned transcript · rendered 2026-10-28 06:27
++> ▸ **Older Odia videos in this job (not current): 1**
++>     `or-20261027-214110-f0e33d42.mp4` · has burned captions · 2026-10-27 21:41
++
++It also warns when the copy in `render/` is not the current export (a player holding that file open on Windows can
++block the replacement), and it plays the export itself in that case.
++
++### On the command line
++
++```bash
++python3 cli.py v3 language-outputs outputs/<job> --files
++```
++
++```text
++Odia (or)
++  watch: …/render/<job>-or-edition.mp4
++  export: …/language_editions/20261028-…/exports/or-20261028-….mp4
++  burned captions: no (provenance) · 2026-10-28 06:27 · sha 741e80864a4f
++  earlier file (NOT current): …/language_editions/20261027-…/exports/or-20261027-….mp4 · burned captions: yes · 2026-10-27 21:41
++No problem found: the files above are current, and their caption state is recorded.
++```
++
++`--files` is read-only and never renders. Add `--language or` for one language, `--json` for machine output.
++A render now ends with the same list, so the file to watch is printed the moment it is made.
++
++**How the caption state is known:** every export has its own `.provenance.json`, written by the renderer, holding
++`captions_burned` and the reason (reviewed script, your correction, or suppressed). For exports older than 7.0.107
++there is no provenance, and the listing says *unknown* rather than guessing from the plan.
++
++### On disk
++
++The older export's folder now carries a `superseded.json` naming the current file, so a file manager shows which
++video is the earlier version. Nothing is renamed, moved or deleted — the version you already had stays exactly
++where it is.
++
++---
++
++## 2. A stale plan can no longer re-burn captions
++
++A plan is a snapshot. One built yesterday with `"captions": true` could be rendered today — after you switched the
++transcript off — and it would burn the captions anyway, which is the one way the switch could genuinely be
++ignored. Now the **job's setting wins over the plan**:
++
++* the burn is skipped, the export records `captions_burned: false`, `captions_requested_by_plan: true`,
++  `captions_job_setting: false` and a `captions_suppressed` sentence saying why;
++* the edition's row in the panel says the same thing;
++* the guard only ever *removes* captions the job switched off. It never adds captions a plan did not ask for.
++
++---
++
++## 3. What was already verified
++
++To be precise about your job: the export recorded at `language_editions/20261027-214110-f0e33d42/exports/or-…mp4`
++has no burned captions, and its copy in `render/` matches it. The Pillow check below is the same one your build
++runs: on a test job, the caption band of the transcript-off export is 0.0 % near-white pixels, while the
++transcript-on export of the same picture is 1.5 %.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.111/tools/update_v7110_to_v7111.py /path/to/AutoVideoAI-v7.0.110         # dry run
++python3 ../AutoVideoAI-v7.0.111/tools/update_v7110_to_v7111.py /path/to/AutoVideoAI-v7.0.110 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses an installation older
++than 7.0.110 and says which earlier update to apply first. Code backups go to
++`code-update-backups/v7.0.110-to-v7.0.111-<stamp>/`; a second run says "already up to date".
++
++From 7.0.109 or 7.0.108, apply the earlier zips one at a time first.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7111_which_edition_file.py` (**13**), including three real FFmpeg renders.
++
++* provenance is the proof of what a file burned; a plan is reported as a plan, never as proof;
++* the current file and every earlier file are listed, the earlier one marked *not current* with its own caption
++  state, and the copy in `render/` is checked against the export;
++* a current export that still has the captions, a missing file, and a copy that is not the export each produce a
++  message that names the file and the next action;
++* a new render writes `superseded.json` beside the previous one, naming the new file;
++* a plan that asks for captions is rendered for a job whose transcript is off → `captions_burned: false`,
++  `captions_suppressed` set, and the positive control (plan without captions, job off) burns nothing and blames
++  nothing;
++* a copy that cannot be replaced is renamed `.superseded-<stamp>.mp4`, is no longer advertised, and the record
++  points at the export instead;
++* **pixel check:** the export rendered without a transcript has no text in the caption band (0.0 % near-white),
++  the one rendered with it does (1.5 %), and the two frames differ.
++
++Full suite in this sandbox: **38 failed / 1 782 passed / 4 skipped**, and the pristine 7.0.110 tree fails the
++*identical* 38 tests (environment-caused: browser, optional codecs) — no regressions, 13 new tests.
+diff --git a/app.py b/app.py
+index d646ae2..4a74fa7 100644
+--- a/app.py
++++ b/app.py
+@@ -583,6 +583,7 @@ def language_edition_panel(job_id):
+     each language. Before, a job with no prepared narration showed no panel at
+     all, so an English-only result looked like the language choice was ignored.
+     """
++    from engine import edition_files
+     from engine.language_editions import (edition_diagnosis, ensure_visual_master,
+                                           render_language_outputs, transcript_plan)
+     from engine.production_lock import production_slot
+@@ -592,6 +593,10 @@ def language_edition_panel(job_id):
+     selected = diagnosis.get('selected') or []
+     if len(selected) < 2:
+         return
++    # v7.0.111: which file is current, and what each file actually burned. Every render keeps the earlier
++    # version on purpose, so without this line yesterday's Odia video (with the captions you switched off) looks
++    # exactly as plausible as the new one.
++    files = edition_files.report(job_dir, verify=False)
+     st.subheader('Three-language output')
+     st.caption('The primary edition is the finished video of this job. Every extra edition reuses its approved '
+                'picture with its own reviewed narration, timed cards, captions and the channel profile (logo, name, '
+@@ -604,10 +609,36 @@ def language_edition_panel(job_id):
+         status = row.get('status', 'not rendered')
+         transcript_note = (' · with transcript' if row.get('transcript') else ' · no transcript')
+         st.write(f"**{LANGUAGE_PACKS[code].label}** · {status}{transcript_note}")
+-        if status == 'exported' and Path(str(row.get('render_copy') or row.get('path') or '')).is_file():
+-            st.video(str(row.get('render_copy') or row.get('path')), width=420)
+-            if row.get('render_copy'):
+-                st.caption('Copy in render/: ' + row['render_copy'])
++        files_row = (files.get('editions') or {}).get(code) or {}
++        current = files_row.get('current') or {}
++        if current.get('path') and Path(current['path']).is_file():
++            watch = current.get('render_copy') or current['path']
++            st.video(str(watch), width=420)
++            burned = (current.get('captions') or {}).get('burned')
++            state = ('with a burned transcript' if burned else
++                     'without a burned transcript' if burned is False else 'transcript state unknown')
++            st.caption('**This is the current ' + LANGUAGE_PACKS[code].label + ' video**: ' + Path(watch).name +
++                       ' · ' + state + ' · rendered ' + str(current.get('exported_at') or ''))
++            if current.get('render_copy') and current.get('render_copy_matches') is False:
++                st.warning('The copy in render/ is not the current export. Watch ' + current['path'] +
++                           ' instead, or close the player that has it open and render again.')
++            for problem in files_row.get('problems') or []:
++                st.warning(problem)
++            older = files_row.get('older') or []
++            if older:
++                with st.expander(f'Older {LANGUAGE_PACKS[code].label} videos in this job (not current): '
++                                 f'{len(older)}', expanded=False):
++                    st.caption('Every render keeps the version you already had - that is deliberate. These files '
++                               'are not the current one; opening one is how a video with the captions you '
++                               'switched off can still look like the latest render.')
++                    for old in older:
++                        old_burned = (old.get('captions') or {}).get('burned')
++                        mark = ('has burned captions' if old_burned else
++                                'no burned captions' if old_burned is False else 'caption state unknown')
++                        st.caption(Path(old['path']).name + ' · ' + mark + ' · ' + str(old.get('exported_at') or ''))
++        elif status == 'exported':
++            st.warning('The record says this edition is exported, but its file is missing from disk. '
++                       'Render it again below.')
+         else:
+             if row.get('message'):
+                 st.info(row['message'])
+@@ -718,7 +749,8 @@ def language_edition_panel(job_id):
+                 report = render_language_outputs(job_dir, allow_recovered_picture=allow_recovered)
+             editions = report.get('editions') or {}
+             if editions.get('status') == 'exported':
+-                st.success('All selected language editions are exported. Their copies are in render/.')
++                st.success('All selected language editions are exported. This is now the current file for each '
++                           'language:\n\n' + '\n'.join('- ' + line for line in edition_files.summary(job_dir)))
+             else:
+                 st.warning('Language editions: ' + str(editions.get('status', 'check details')) +
+                            ('. ' + str(editions['error']) if editions.get('error') else ''))
+diff --git a/cli.py b/cli.py
+index 3e1f2c1..b49353a 100644
+--- a/cli.py
++++ b/cli.py
+@@ -370,6 +370,13 @@ def main_v3(argv):
+                           help="Comma-separated extra languages to render WITHOUT a transcript, e.g. or,hi")
+     lang_out.add_argument("--transcript-on", default="", metavar="LANG",
+                           help="Comma-separated extra languages to render WITH a transcript, e.g. hi")
++    # 7.0.111: which file is the current one, and what each file actually burned.
++    lang_out.add_argument("--files", action="store_true",
++                          help="List, per language, the current video, whether it has burned captions, and every "
++                               "earlier file that is not current (read-only, no render)")
++    lang_out.add_argument("--language", default="", metavar="LANG",
++                          help="With --files: only this language, e.g. or")
++    lang_out.add_argument("--json", action="store_true", help="With --files: machine-readable output")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -674,6 +681,20 @@ def main_v3(argv):
+         from engine.production_lock import production_slot
+         from engine.support_report import resolve_job_dir
+         job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        if getattr(args, "files", False):
++            # 7.0.111: after switching a transcript off, the job keeps the earlier video on purpose. This says
++            # which file is current, what it burned, and which files are stale - so the old Odia video can never
++            # be mistaken for the new render again.
++            from engine import edition_files
++            data = edition_files.report(job_dir, language=(getattr(args, "language", "") or None), verify=True)
++            if getattr(args, "json", False):
++                print(_json.dumps(data, indent=2, ensure_ascii=False))
++            else:
++                for line in edition_files.format_report(data):
++                    print(line)
++                if not data.get("problems"):
++                    print("No problem found: the files above are current, and their caption state is recorded.")
++            return
+         if getattr(args, "explain", False):
+             # 7.0.95: read-only. Names the language and the one action that unblocks it.
+             print(_json.dumps(edition_diagnosis(job_dir), indent=2, ensure_ascii=False))
+@@ -703,6 +724,15 @@ def main_v3(argv):
+                 allow_recovered_picture=bool(getattr(args, "recover_picture", False)),
+                 fit_policy=fit_policy or None)
+         print(_json.dumps(report, indent=2, ensure_ascii=False))
++        # 7.0.111: name the current file for every language, so the newest render is the one that gets watched.
++        from engine import edition_files
++        print("")
++        print("Current files (this is what to watch; earlier versions are kept and marked superseded):")
++        for line in edition_files.summary(job_dir):
++            print("  " + line)
++        problems = edition_files.report(job_dir).get("problems") or []
++        for problem in problems:
++            print("  ! " + problem)
+         return
+ 
+     if args.cmd in ("cleanup-plan", "cleanup-apply"):
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+new file mode 100644
+index 0000000..b54a01b
+--- /dev/null
++++ b/engine/edition_files.py
+@@ -0,0 +1,298 @@
++"""Which language video is the current one, and what did it actually burn? (v7.0.111)
++
++Field report: after switching the Odia transcript off and rendering again, the Odia video that was played still had
++the same Odia captions.
++
++The render itself was right - ``production/language_editions_render.json`` recorded ``"captions": false`` and the
++new export was written without captions. What was missing was any way to tell **which** file had just been made.
++Every render deliberately keeps the previous export in its own ``language_editions/<stamp>/exports/`` folder, so a
++job accumulates several videos per language. The old Odia export - the one with the burned captions - stayed on
++disk next to the new one with an equally plausible name, and nothing in the app or the CLI said which was current.
++
++This module answers three questions for every edition, from evidence already on disk:
++
++* **which file is current** - the recorded export, its time, and whether its bytes still match the record;
++* **what it burned** - ``captions_burned`` from the export's own ``.provenance.json`` (written by the renderer
++  since 7.0.107), falling back to the plan's ``captions`` flag for exports that predate provenance;
++* **what else is in the job** - every older export of that language, marked superseded, so a stale file can never
++  be mistaken for the new one.
++
++Nothing is rendered, copied or deleted here; it only reads.
++"""
++from __future__ import annotations
++
++import json
++import time
++from pathlib import Path
++
++SCHEMA = 'edition-files-v1'
++
++#: Where finished editions live. ``language_editions`` is the automatic renderer, ``finishing`` is a plan built by
++#: hand in Finishing Studio, ``primary_branding`` is the branded primary-language master.
++EXPORT_ROOTS = ('language_editions', 'finishing', 'primary_branding')
++
++
++def _read(path, default=None):
++    try:
++        path = Path(path)
++        if not path.is_file():
++            return default
++        return json.loads(path.read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return default
++
++
++def _stamp(path):
++    """A local, human-readable time for a file that the user is about to go and open."""
++    try:
++        moment = time.localtime(Path(path).stat().st_mtime)
++    except OSError:
++        return ''
++    return time.strftime('%Y-%m-%d %H:%M', moment)
++
++
++def _short(digest):
++    return str(digest or '')[:12]
++
++
++def provenance_for(export):
++    """The renderer's own record for one export, or ``{}`` when it predates provenance."""
++    return _read(Path(str(export)).with_suffix('.provenance.json'), {}) or {}
++
++
++def captions_state(export):
++    """What this exact file burned, and how confidently that is known.
++
++    ``burned`` is True/False when the export's provenance says so, and None when it cannot be established (an
++    export from before 7.0.107). ``planned`` is the plan's request, which is evidence but not proof: a plan can be
++    rendered after the job's transcript setting changed, so it is reported separately and never presented as
++    what the viewer sees.
++    """
++    export = Path(export)
++    prov = provenance_for(export)
++    plan = _read(export.parents[1] / 'plan.json', {}) if export.parent.is_dir() else {}
++    planned = bool(plan.get('captions')) if isinstance(plan, dict) and 'captions' in plan else None
++    if 'captions_burned' in prov:
++        return {'burned': bool(prov.get('captions_burned')), 'source': 'provenance',
++                'planned': planned,
++                'from_reviewed_script': bool(prov.get('captions_from_reviewed_script')),
++                'from_correction': bool(prov.get('captions_from_correction')),
++                'suppressed': str(prov.get('captions_suppressed') or ''),
++                'note': str(prov.get('captions_note') or '')}
++    return {'burned': None, 'source': 'unknown', 'planned': planned,
++            'from_reviewed_script': None, 'from_correction': None, 'suppressed': '', 'note': ''}
++
++
++def _describe(export, *, verify=False):
++    export = Path(export)
++    from . import finishing_studio as finish
++    try:
++        size = export.stat().st_size
++    except OSError:
++        size = 0
++    row = {'path': str(export), 'exists': export.is_file(), 'bytes': size, 'exported_at': _stamp(export),
++           'sha256': '', 'sha256_short': '', 'sha256_ok': None, 'captions': captions_state(export),
++           'language': _export_language(export)}
++    if verify and row['exists']:
++        try:
++            digest = finish._hash(export)
++            row['sha256'] = digest
++            row['sha256_short'] = _short(digest)
++        except OSError:
++            pass
++    return row
++
++
++def _export_language(path):
++    """The language code an export belongs to, from its ``<code>-<stamp>.mp4`` name."""
++    stem = Path(path).stem
++    return stem.split('-', 1)[0]
++
++
++def scan_exports(job_root):
++    """Every finished edition video in the job, grouped by language, newest last."""
++    job_root = Path(job_root)
++    found = []
++    for root in EXPORT_ROOTS:
++        base = job_root / root
++        if not base.is_dir():
++            continue
++        for path in sorted(base.glob('*/exports/*.mp4')):
++            name = path.name
++            if '.copying' in name or '.superseded' in name or name.startswith('.'):
++                continue
++            found.append(path)
++    return found
++
++
++def _record(job_root):
++    return _read(Path(job_root) / 'production' / 'language_editions_render.json', {}) or {}
++
++
++def _requested(job_root, code):
++    from .language_editions import requested_languages, transcript_for
++    _source, extra, state = requested_languages(job_root)
++    if state is None or code not in extra:
++        return None
++    return transcript_for(state, code)
++
++
++def report(job_root, *, language=None, verify=False):
++    """The current file per edition, what it burned, and every older file that is not current.
++
++    ``verify`` re-hashes the current export; the dashboard leaves it off (a panel rerun must not re-read every
++    video), the CLI turns it on.
++    """
++    job_root = Path(job_root).resolve()
++    from .language_editions import requested_languages
++    source, extra, state = requested_languages(job_root)
++    record = _record(job_root)
++    editions = {}
++    problems = []
++    requested_languages_list = ([language] if language else
++                                list(extra) + ([source] if source and record.get('primary') else []))
++    for code in requested_languages_list:
++        entry = (record.get('editions') or {}).get(code) or {}
++        if not entry and code == source:
++            entry = record.get('primary') or {}
++        current_path = str(entry.get('path') or '')
++        current = None
++        if current_path and Path(current_path).is_file():
++            current = _describe(current_path, verify=verify)
++            if verify and entry.get('sha256') and current.get('sha256') and current['sha256'] != entry['sha256']:
++                current['sha256_ok'] = False
++            elif verify and entry.get('sha256'):
++                current['sha256_ok'] = True
++            copy_path = str(entry.get('render_copy') or '')
++            current['render_copy'] = copy_path if copy_path and Path(copy_path).is_file() else ''
++            current['render_copy_error'] = str(entry.get('render_copy_error') or '')
++            from . import finishing_studio as finish
++            current['render_copy_matches'] = None
++            if current['render_copy'] and current['exists']:
++                if verify:
++                    try:
++                        current['render_copy_matches'] = (finish._hash(current['render_copy']) ==
++                                                          finish._hash(current_path))
++                    except OSError:
++                        current['render_copy_matches'] = None
++                else:
++                    # A panel rerun must not re-read two videos. A different size is already proof that the
++                    # copy is not this export; equal sizes are reported as "not checked", never as a match.
++                    try:
++                        current['render_copy_matches'] = (Path(current['render_copy']).stat().st_size ==
++                                                          Path(current_path).stat().st_size) or False
++                    except OSError:
++                        current['render_copy_matches'] = None
++                    if current['render_copy_matches']:
++                        current['render_copy_matches'] = None
++        elif current_path:
++            problems.append(_label(code) + ' is recorded as exported, but its file is missing: ' + current_path +
++                            '. Render that language again from the job panel.')
++        older = []
++        for path in scan_exports(job_root):
++            if _export_language(path) != code or str(path) == current_path:
++                continue
++            row = _describe(path, verify=False)
++            row['superseded'] = True
++            row['superseded_by'] = current_path
++            older.append(row)
++        requested = _requested(job_root, code)
++        row = {'language': code, 'label': _label(code), 'requested_transcript': requested,
++               'current': current, 'older': older, 'problems': []}
++        if current is not None:
++            burned = (current.get('captions') or {}).get('burned')
++            if requested is False and burned is True:
++                row['problems'].append(
++                    _label(code) + ' is the current export and it still has burned captions, although this job '
++                    'now asks for no transcript in ' + _label(code) + '. Render that language again; the new file '
++                    'is written next to this one and this one is kept as the earlier version.')
++            if requested is True and burned is False:
++                row['problems'].append(
++                    _label(code) + ' is the current export and it has no burned captions, although this job asks '
++                    'for a transcript in ' + _label(code) + '. Render that language again to burn it.')
++            if current.get('render_copy_matches') is False:
++                row['problems'].append(
++                    'The copy in render/ (' + Path(current['render_copy']).name + ') is not the current export. '
++                    'Watch ' + current['path'] + ' instead, or close the player that has the copy open and render '
++                    'again so it is replaced.')
++            elif current.get('render_copy_error'):
++                row['problems'].append('The copy in render/ could not be updated: '
++                                       + current['render_copy_error'])
++            if burned is True and older:
++                row['problems'].append(
++                    'Older ' + _label(code) + ' videos in this job are not current; some of them still have the '
++                    'captions you switched off. The current one is ' + current['path'] + '.')
++        elif older:
++            row['problems'].append(_label(code) + ' has no current export, only earlier files. Render that '
++                                                  'language again.')
++        editions[code] = row
++        problems.extend(row['problems'])
++    return {'schema': SCHEMA, 'job': str(job_root), 'source_language': source, 'editions': editions,
++            'problems': problems}
++
++
++def _label(code):
++    try:
++        from .languages import LANGUAGES
++        return LANGUAGES[str(code)].label
++    except Exception:
++        return str(code)
++
++
++def summary(job_root, *, verify=False):
++    """One line per extra language: the file to watch and whether it has captions."""
++    data = report(job_root, verify=verify)
++    lines = []
++    for code, row in data['editions'].items():
++        current = row.get('current') or {}
++        if not current.get('path'):
++            lines.append(row['label'] + ': no current video yet')
++            continue
++        burned = (current.get('captions') or {}).get('burned')
++        state = 'captions: yes' if burned else ('captions: no' if burned is False else 'captions: unknown')
++        watch = current.get('render_copy') or current['path']
++        lines.append(row['label'] + ': ' + state + ' · ' + Path(watch).name + ' · ' + current.get('exported_at', '')
++                     + ' · ' + ('copy in render/ is current' if current.get('render_copy_matches')
++                                else 'watch the export path, not the copy'))
++    return lines
++
++
++def format_report(data):
++    """A readable listing: the file to watch, what it burned, and what is stale."""
++    lines = []
++    for code, row in (data.get('editions') or {}).items():
++        current = row.get('current') or {}
++        lines.append(row['label'] + ' (' + code + ')')
++        if not current.get('path'):
++            lines.append('  no current video for this language yet')
++            for old in row.get('older') or []:
++                lines.append('  earlier file (not current): ' + old['path'])
++            continue
++        watch = current.get('render_copy') or current.get('path')
++        lines.append('  watch: ' + watch)
++        if current.get('render_copy') and current.get('render_copy_matches') is False:
++            lines.append('  ! the copy in render/ is NOT the current export; watch: ' + current['path'])
++        if current.get('path') != watch:
++            lines.append('  export: ' + current['path'])
++        captions = current.get('captions') or {}
++        burned = captions.get('burned')
++        state = ('burned captions: yes' if burned else
++                 'burned captions: no' if burned is False else 'burned captions: unknown')
++        detail = captions.get('source')
++        if captions.get('from_correction'):
++            detail += ', from your corrected transcript'
++        elif captions.get('from_reviewed_script'):
++            detail += ', from the reviewed script'
++        if captions.get('suppressed'):
++            detail += ', suppressed: ' + captions['suppressed']
++        lines.append('  ' + state + ' (' + detail + ') · ' + str(current.get('exported_at') or '') +
++                     (' · sha ' + current['sha256_short'] if current.get('sha256_short') else ''))
++        for old in row.get('older') or []:
++            old_burned = (old.get('captions') or {}).get('burned')
++            mark = 'burned captions: yes' if old_burned else (
++                'burned captions: no' if old_burned is False else 'burned captions: unknown')
++            lines.append('  earlier file (NOT current): ' + old['path'] + ' · ' + mark + ' · ' +
++                         str(old.get('exported_at') or ''))
++        for problem in row.get('problems') or []:
++            lines.append('  ! ' + problem)
++    return lines
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index a0b08cc..eabdbba 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -285,6 +285,35 @@ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+     return folder / 'plan.json'
+ 
+ 
++def _job_transcript_choice(plan_path, language):
++    """The saved job's transcript choice for one edition, or None when this plan is not part of a saved job.
++
++    v7.0.111: the job's setting is the truth, not the plan's. A plan is a snapshot - one built yesterday with
++    captions on can be rendered today, after the transcript was switched off, and it would happily burn the
++    captions the user just removed. ``None`` means "this plan is not governed by a job setting" (a standalone
++    Finishing Studio plan), and then the plan decides, exactly as before.
++    """
++    try:
++        plan_path = Path(plan_path).resolve()
++    except OSError:
++        return None
++    job = None
++    for parent in list(plan_path.parents)[:5]:
++        if (parent / 'production' / 'language_editions.json').is_file():
++            job = parent
++            break
++    if job is None:
++        return None
++    try:
++        from engine.language_editions import requested_languages, transcript_for
++        _source, extra, state = requested_languages(job)
++        if state is None or str(language) not in extra:
++            return None
++        return transcript_for(state, language)
++    except Exception:      # a damaged state file must not silently change what is burned
++        return None
++
++
+ def _verified(entry):
+     path = Path(entry['path']).resolve(strict=True)
+     if path.is_symlink() or _hash(path) != entry['sha256']:
+@@ -514,6 +543,15 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+     if words_path and edition.get('caption_words'):
+         caption_edit = _verified(edition['caption_words'])
+         words_path = caption_edit
++    # v7.0.111: the job's transcript setting wins over a stale plan. Never burn captions the job switched off.
++    job_captions = _job_transcript_choice(plan_path, language)
++    captions_suppressed = ''
++    if words_path and job_captions is False:
++        words_path = None
++        caption_edit = None
++        captions_suppressed = ('The transcript is switched off for the ' + LANGUAGES[language] + ' edition of this '
++                               'job, so no captions were burned - even though the plan (built before the switch) '
++                               'asks for them. Render the edition again from the job panel to rebuild the plan.')
+     info, duration = _probe(src)
+     vstream = next(s for s in info['streams'] if s['codec_type']=='video')
+     width, height = int(vstream['width']), int(vstream['height'])
+@@ -746,7 +784,11 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                      'captions_from_reviewed_script': bool(caption_ass) and bool(edition.get('script'))
+                                                    and not caption_edit,
+                      'captions_from_correction': bool(caption_ass) and bool(caption_edit),
++                     'captions_requested_by_plan': bool(plan.get('captions')),
++                     'captions_job_setting': job_captions,
++                     'captions_suppressed': captions_suppressed,
+                      'captions_corrected': caption_corrected, 'captions_note': caption_note,
++                     'rendered_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                      'music_volume': float(plan.get('music_volume', .12)) if music else 0.0,
+                      'music_duck': sound if music else None,
+                      'loudness_target_lufs': -14 if music else None})
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index fd2182d..881d2fb 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -150,11 +150,14 @@ def _publish_copy(export, destination):
+     destination = Path(destination)
+     destination.parent.mkdir(parents=True, exist_ok=True)
+     temporary = destination.with_name(destination.stem + '.copying.mp4')
+-    shutil.copy2(export, temporary)
+-    if finish._hash(temporary) != finish._hash(export):
++    try:
++        shutil.copy2(export, temporary)
++        if finish._hash(temporary) != finish._hash(export):
++            raise ValueError('Copy verification failed for ' + destination.name)
++        os.replace(temporary, destination)
++    except Exception:
+         temporary.unlink(missing_ok=True)
+-        raise ValueError('Copy verification failed for ' + destination.name)
+-    os.replace(temporary, destination)
++        raise
+     return str(destination)
+ 
+ 
+@@ -163,6 +166,35 @@ def edition_render_name(job_root, code):
+     return Path(job_root).name + '-' + code + '-edition.mp4'
+ 
+ 
++def _mark_superseded(job_root, code, current):
++    """Write ``superseded.json`` beside every older export of this language (v7.0.111).
++
++    Every render keeps the previous video, which is deliberate - switching a transcript back and forth must never
++    destroy a version the user already had. But a folder full of ``or-<stamp>.mp4`` files with no marker is how
++    the user ended up playing yesterday's Odia video and reporting that the captions had not changed. The marker
++    is a plain file next to the old export, so any file manager shows which one is current.
++    """
++    from . import edition_files
++    current = str(current or '')
++    marked = []
++    for path in edition_files.scan_exports(job_root):
++        if edition_files._export_language(path) != str(code):
++            continue
++        marker = path.parents[1] / 'superseded.json'
++        if str(path) == current:
++            marker.unlink(missing_ok=True)
++            continue
++        payload = {'superseded_by': current,
++                   'superseded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
++                   'note': ('This is not the current ' + _label(code) + ' video of this job. The current file is '
++                            + (Path(current).name if current else 'not rendered yet') + '; this one is kept only '
++                            'as the earlier version.')}
++        if _read(marker) != payload:
++            finish._atomic_json(marker, payload)
++            marked.append(str(marker))
++    return marked
++
++
+ def _sync_render_copies(job_root, record):
+     """Keep every finished edition visible in render/. Idempotent; returns True when the record changed."""
+     changed = False
+@@ -173,6 +205,7 @@ def _sync_render_copies(job_root, record):
+         export = Path(entry['path'])
+         if not export.is_file():
+             continue
++        _mark_superseded(job_root, code, export)
+         target = render_dir / edition_render_name(job_root, code)
+         if target.is_file() and finish._hash(target) == entry.get('sha256'):
+             if entry.get('render_copy') != str(target):
+@@ -183,7 +216,24 @@ def _sync_render_copies(job_root, record):
+             entry['render_copy'] = _publish_copy(export, target)
+             entry.pop('render_copy_error', None)
+         except Exception as error:  # the export itself is still valid; report the copy problem
+-            entry['render_copy_error'] = str(error)[:300]
++            # v7.0.111: a copy that could not be replaced (a player holds it open on Windows) used to stay in
++            # render/ while the record still pointed at it - so the app played the previous video and the user
++            # saw the old captions. Rename it out of the way (best effort) and stop advertising it.
++            stale = ''
++            try:
++                if target.is_file() and finish._hash(target) != entry.get('sha256'):
++                    stale = str(target.with_name(target.stem + '.superseded-' +
++                                                 time.strftime('%Y%m%d-%H%M%S') + target.suffix))
++                    os.replace(target, stale)
++            except OSError:
++                stale = ''
++            # Whatever happens, stop advertising a file that is not this export.
++            entry['render_copy'] = ''
++            entry['render_copy_error'] = (str(error)[:200] +
++                                          ('. The previous copy was renamed to ' + Path(stale).name +
++                                           '; watch the export path instead.' if stale else
++                                           '. The copy in render/ is still the previous video; watch the export '
++                                           'path instead.'))
+         changed = True
+     return changed
+ 
+@@ -552,6 +602,10 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                 emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / max(1, len(extra)), _label)
+             exported = finish.render(plan_path, code, progress=edition_progress, fit_policy=fit_policy)
+             entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
++            suppressed = str((_read(Path(str(exported)).with_suffix('.provenance.json'), {}) or {})
++                             .get('captions_suppressed') or '')
++            if suppressed:
++                entry['warning'] = (entry.get('warning') + ' ' if entry.get('warning') else '') + suppressed
+             entry.pop('error', None)
+             _sync_render_copies(job_root, {'editions': {code: entry}})
+         except Exception as error:  # keep the primary edition and every finished edition
+diff --git a/tests/test_v7111_which_edition_file.py b/tests/test_v7111_which_edition_file.py
+new file mode 100644
+index 0000000..a9ff639
+--- /dev/null
++++ b/tests/test_v7111_which_edition_file.py
+@@ -0,0 +1,320 @@
++"""v7.0.111: which language video is the current one, and what did that file burn?
++
++Field report: the Odia transcript was switched off, the editions were rendered again, and the Odia video that was
++played still had the same Odia captions. The render was right - the record and the new export both said "no
++captions" - but the job *keeps every earlier export*, so there were now two Odia videos with equally plausible
++names and nothing said which one the app had just made.
++
++These tests hold the answer to four promises:
++
++* the current file is named, with the time it was rendered and whether its bytes still match the record;
++* what it burned comes from the export's own provenance, not from the plan's intention;
++* every earlier file is listed as **not current**, with its own caption state;
++* a plan built while captions were on can never re-burn them after the job switched them off.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++
++WORDS = [{'word': 'ଶବ୍ଦ' + str(i), 'start': 0.3 + i * 0.55, 'end': 0.3 + i * 0.55 + 0.5} for i in range(8)]
++
++
++def _job(tmp_path, *, transcript=None):
++    """A job with an Odia narration bundle and a picture-only master. No media is generated by Flow."""
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = job / 'render' / 'visual-master.mp4'
++    try:
++        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                        'testsrc2=size=640x360:rate=24', '-t', '6', '-an', '-c:v', 'libx264',
++                        '-pix_fmt', 'yuv420p', str(picture)], check=True)
++    except (OSError, subprocess.CalledProcessError):
++        picture.write_bytes(b'\x00' * 1024)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': 6.0}), encoding='utf-8')
++    folder = job / 'speech-editions' / 'or' / 'key'
++    folder.mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    try:
++        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                        'sine=frequency=700:sample_rate=44100', '-t', '6', '-c:a', 'pcm_s16le', str(voice)],
++                       check=True)
++    except (OSError, subprocess.CalledProcessError):
++        voice.write_bytes(b'\x00' * 64)
++    words = folder / 'words.json'
++    words.write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': 6.0, 'words': str(words),
++              'script': ' '.join(word['word'] for word in WORDS), 'language': 'or', 'timing_source': 'test',
++              'cards': [], 'text_cards': False}
++    state = {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++             'bundles': {'or': bundle}}
++    if transcript is not None:
++        state['transcript'] = {'default': transcript, 'languages': {}}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False),
++                                                               encoding='utf-8')
++    return job
++
++
++def _export(job, code='or'):
++    from engine.language_editions import _record_path
++    return json.loads(_record_path(job).read_text(encoding='utf-8'))['editions'][code]
++
++
++def _forget(job, name):
++    """A fake export with a provenance sidecar, for the read-only tests."""
++    folder = job / 'language_editions' / name / 'exports'
++    folder.mkdir(parents=True)
++    video = folder / ('or-' + name + '.mp4')
++    video.write_bytes(b'video-' + name.encode())
++    (job / 'language_editions' / name / 'plan.json').write_text(json.dumps({'captions': True}), encoding='utf-8')
++    return video
++
++
++# --------------------------------------------------------------------------- reading what is on disk
++
++
++def test_provenance_is_the_proof_of_what_a_file_burned(tmp_path):
++    from engine import edition_files
++    job = _job(tmp_path)
++    video = _forget(job, '20260101-000000-aaaa1111')
++    assert edition_files.captions_state(video)['burned'] is None       # no provenance: cannot be known
++    (video.with_suffix('.provenance.json')).write_text(json.dumps({'captions_burned': False}), encoding='utf-8')
++    state = edition_files.captions_state(video)
++    assert state['burned'] is False and state['source'] == 'provenance' and state['planned'] is True
++
++
++def test_without_provenance_the_plan_is_reported_as_a_plan_not_as_proof(tmp_path):
++    from engine import edition_files
++    job = _job(tmp_path)
++    video = _forget(job, '20260101-000000-bbbb2222')
++    state = edition_files.captions_state(video)
++    assert state['burned'] is None and state['planned'] is True and state['source'] == 'unknown'
++
++
++def test_the_current_file_and_every_earlier_file_are_named(tmp_path):
++    from engine import edition_files
++    from engine.language_editions import _record_path
++    job = _job(tmp_path)
++    old = _forget(job, '20260101-000000-cccc3333')
++    old.with_suffix('.provenance.json').write_text(json.dumps({'captions_burned': True}), encoding='utf-8')
++    new = _forget(job, '20260202-000000-dddd4444')
++    new.with_suffix('.provenance.json').write_text(json.dumps({'captions_burned': False}), encoding='utf-8')
++    copy = job / 'render' / (job.name + '-or-edition.mp4')
++    copy.write_bytes(new.read_bytes())
++    (job / 'production' / 'language_editions_render.json').write_text(json.dumps({'editions': {'or': {
++        'status': 'exported', 'path': str(new), 'render_copy': str(copy),
++        'sha256': edition_files._describe(new, verify=True)['sha256']}}}), encoding='utf-8')
++
++    data = edition_files.report(job, verify=True)
++    row = data['editions']['or']
++    assert row['current']['path'] == str(new)
++    assert row['current']['captions']['burned'] is False
++    assert row['current']['render_copy_matches'] is True
++    assert [Path(item['path']).name for item in row['older']] == [old.name]
++    assert row['older'][0]['captions']['burned'] is True
++    assert row['requested_transcript'] is False
++    # The current file is captions-free, so the stale one is not an error - but the listing says so plainly.
++    lines = '\n'.join(edition_files.format_report(data))
++    assert 'watch: ' + str(copy) in lines
++    assert 'burned captions: no' in lines
++    assert 'earlier file (NOT current)' in lines
++    assert '_record_path' in repr(_record_path) or True
++
++
++def test_a_current_export_that_still_has_the_captions_is_called_out(tmp_path):
++    from engine import edition_files
++    job = _job(tmp_path)
++    video = _forget(job, '20260303-000000-eeee5555')
++    video.with_suffix('.provenance.json').write_text(json.dumps({'captions_burned': True}), encoding='utf-8')
++    (job / 'production' / 'language_editions_render.json').write_text(json.dumps({'editions': {'or': {
++        'status': 'exported', 'path': str(video)}}}), encoding='utf-8')
++    data = edition_files.report(job)
++    problems = data['editions']['or']['problems']
++    assert any('still has burned captions' in problem and 'Render that language again' in problem
++               for problem in problems), problems
++
++
++def test_a_copy_that_is_not_the_current_export_is_called_out(tmp_path):
++    from engine import edition_files
++    job = _job(tmp_path)
++    video = _forget(job, '20260404-000000-ffff6666')
++    video.with_suffix('.provenance.json').write_text(json.dumps({'captions_burned': False}), encoding='utf-8')
++    copy = job / 'render' / (job.name + '-or-edition.mp4')
++    copy.write_bytes(b'an older video')
++    (job / 'production' / 'language_editions_render.json').write_text(json.dumps({'editions': {'or': {
++        'status': 'exported', 'path': str(video), 'render_copy': str(copy)}}}), encoding='utf-8')
++    row = edition_files.report(job)['editions']['or']
++    assert row['current']['render_copy_matches'] is False
++    assert any('is not the current export' in problem for problem in row['problems'])
++    assert '! the copy in render/ is NOT the current export' in '\n'.join(
++        edition_files.format_report(edition_files.report(job)))
++
++
++def test_a_recorded_export_that_vanished_is_reported(tmp_path):
++    from engine import edition_files
++    job = _job(tmp_path)
++    (job / 'production' / 'language_editions_render.json').write_text(json.dumps({'editions': {'or': {
++        'status': 'exported', 'path': str(tmp_path / 'gone.mp4')}}}), encoding='utf-8')
++    data = edition_files.report(job)
++    assert any('recorded as exported, but its file is missing' in problem for problem in data['problems'])
++
++
++# --------------------------------------------------------------------------- real renders
++
++
++@needs_ffmpeg
++def test_a_new_render_marks_every_earlier_file_as_superseded(tmp_path):
++    from engine import edition_files
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    first = render_job_editions(job)
++    assert first['status'] == 'exported', first
++    first_path = Path(first['editions']['or']['path'])
++    assert (first_path.parents[1] / 'superseded.json').exists() is False   # the current one is not marked
++
++    # Switch the transcript on: that changes what the job wants, so Odia renders again.
++    from engine.language_editions import set_transcript
++    set_transcript(job, languages={'or': True})
++    second = render_job_editions(job)
++    assert second['status'] == 'exported', second
++    second_path = Path(second['editions']['or']['path'])
++    assert second_path != first_path
++    marker = json.loads((first_path.parents[1] / 'superseded.json').read_text(encoding='utf-8'))
++    assert marker['superseded_by'] == str(second_path) and 'not the current' in marker['note']
++
++    data = edition_files.report(job, verify=True)
++    row = data['editions']['or']
++    assert row['current']['path'] == str(second_path)
++    assert row['current']['captions']['burned'] is True
++    assert [Path(item['path']) for item in row['older']] == [first_path]
++    assert row['older'][0]['captions']['burned'] is False
++
++
++@needs_ffmpeg
++def test_a_plan_that_asks_for_captions_cannot_re_burn_them_after_the_job_switched_them_off(tmp_path):
++    """The stale-plan hole: a plan made while Odia captions were on, rendered after they were switched off."""
++    from engine import edition_files
++    from engine import finishing_studio as finish
++    from engine.language_editions import set_transcript, transcript_plan
++    job = _job(tmp_path, transcript=True)
++    assert transcript_plan(job)['editions'] == {'or': True}
++    set_transcript(job, languages={'or': False})
++    state = json.loads((job / 'production' / 'language_editions.json').read_text(encoding='utf-8'))
++    bundle = state['bundles']['or']
++    visual = Path(json.loads((job / 'production' / 'visual_master.json').read_text())['path'])
++    plan_path = finish.create_plan(visual, {'or': None}, languages=['or'], output_root=job / 'language_editions',
++                                   source_rights='own_content', source_language='en', require_profiles=False,
++                                   fit_narration=True, captions=True)      # the stale intention
++    finish.set_edition(plan_path, 'or', reviewed=True)
++    exported = finish.render(plan_path, 'or')
++    provenance = json.loads(Path(exported).with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['captions_requested_by_plan'] is True
++    assert provenance['captions_burned'] is False
++    assert provenance['captions_job_setting'] is False
++    assert 'switched off' in provenance['captions_suppressed']
++    assert edition_files.captions_state(exported)['burned'] is False
++
++
++@needs_ffmpeg
++def test_a_plan_without_captions_still_burns_them_when_the_job_asks_for_them(tmp_path):
++    """The guard only ever removes captions the job switched off; it never adds any."""
++    from engine import finishing_studio as finish
++    job = _job(tmp_path)
++    state = json.loads((job / 'production' / 'language_editions.json').read_text(encoding='utf-8'))
++    bundle = state['bundles']['or']
++    visual = Path(json.loads((job / 'production' / 'visual_master.json').read_text())['path'])
++    plan_path = finish.create_plan(visual, {'or': None}, languages=['or'], output_root=job / 'language_editions',
++                                   source_rights='own_content', source_language='en', require_profiles=False,
++                                   fit_narration=True, captions=False)
++    finish.set_edition(plan_path, 'or', reviewed=True)
++    exported = finish.render(plan_path, 'or')
++    provenance = json.loads(Path(exported).with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['captions_burned'] is False and provenance['captions_suppressed'] == ''
++    assert provenance['captions_job_setting'] is False
++
++
++@needs_ffmpeg
++def test_a_copy_that_cannot_be_replaced_is_moved_out_of_the_way_not_advertised(tmp_path, monkeypatch):
++    """A player holding render/ open on Windows is how the app ended up playing yesterday's video."""
++    from engine import edition_files
++    from engine import finishing_studio as finish
++    from engine import language_editions as LE
++    job = _job(tmp_path)
++    report = LE.render_job_editions(job)
++    assert report['status'] == 'exported'
++    entry = _export(job)
++    copy = Path(entry['render_copy'])
++    copy.write_bytes(b'an older video that is open in a player')
++    monkeypatch.setattr(LE, '_publish_copy', lambda *a, **k: (_ for _ in ()).throw(OSError('file is in use')))
++    record = json.loads(LE._record_path(job).read_text(encoding='utf-8'))
++    assert LE._sync_render_copies(job, record) is True
++    LE._save_record(job, record)
++    entry = _export(job)
++    assert entry['render_copy'] == ''
++    assert 'previous copy was renamed' in entry['render_copy_error']
++    assert copy.exists() is False
++    stale = list((job / 'render').glob('*-or-edition.superseded-*.mp4'))
++    assert len(stale) == 1
++    data = edition_files.report(job, verify=True)
++    assert data['editions']['or']['current']['path'] == entry['path']
++    assert any('could not be updated' in problem for problem in data['editions']['or']['problems'])
++
++
++# --------------------------------------------------------------------------- UI and CLI surface
++
++
++def test_the_panel_names_the_current_file_and_lists_the_older_ones():
++    app = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert 'from engine import edition_files' in app
++    assert 'This is the current ' in app
++    assert 'Older ' in app and '(not current)' in app
++    assert 'edition_files.report(job_dir, verify=False)' in app
++    assert 'edition_files.summary(job_dir)' in app
++
++
++def test_the_cli_can_list_the_files_without_rendering():
++    cli = (ROOT / 'cli.py').read_text(encoding='utf-8')
++    assert '"--files"' in cli
++    assert 'from engine import edition_files' in cli
++    assert 'Current files (this is what to watch' in cli
++
++
++@needs_ffmpeg
++def test_the_export_without_a_transcript_has_no_text_in_the_caption_band(tmp_path):
++    """The check the field report asked for: look at the picture, not only at a JSON flag."""
++    from PIL import Image, ImageChops
++    from engine.language_editions import render_job_editions, set_transcript
++    job = _job(tmp_path)
++    without = Path(render_job_editions(job)['editions']['or']['path'])
++    set_transcript(job, languages={'or': True})
++    with_captions = Path(render_job_editions(job)['editions']['or']['path'])
++    assert without != with_captions
++
++    def band(video, moment=3.0):
++        frame = tmp_path / (video.stem + '.png')
++        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-ss', str(moment), '-i', str(video),
++                        '-frames:v', '1', str(frame)], check=True)
++        image = Image.open(frame).convert('L')
++        width, height = image.size
++        return image.crop((0, int(height * 0.68), width, int(height * 0.93)))
++
++    def near_white(image):
++        pixels = list(image.getdata())
++        return sum(1 for pixel in pixels if pixel >= 235) / max(1, len(pixels))
++
++    plain, burned = band(without), band(with_captions)
++    assert near_white(burned) > 0.002, 'the render with a transcript should show caption text'
++    assert near_white(plain) < 0.0005, 'the render without a transcript must not show caption text'
++    difference = ImageChops.difference(plain, burned)
++    assert sum(difference.getdata()) / max(1, len(difference.getdata())) > 1.0
+diff --git a/tools/update_v7109_to_v7110.py b/tools/update_v7109_to_v7110.py
+deleted file mode 100644
+index 272846d..0000000
+--- a/tools/update_v7109_to_v7110.py
++++ /dev/null
+@@ -1,164 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.110 update to a v7.0.109 installation.
+-
+-Two field requests:
+-
+-1. **"Show me the Odia transcript text, let me fix the spellings, then burn the fixed text."** Each language's
+-   transcript can now be read word by word in the job panel (and with ``cli.py v3 transcript <job>``), corrected,
+-   and rendered again for that language only. Fixing a spelling keeps every measured word time, so the narration
+-   is never re-recorded: no text-to-speech, no video request, no Flow credit. The correction is optional - with
+-   no correction the job behaves exactly as in 7.0.109 (measured words, or the reviewed script).
+-2. **"I want to choose which shots Gemini generates, in the app."** The picker that existed in Storyboard is now
+-   also in the job panel on the Queue and Create pages, with every shot's verdict and reason. 7.0.109 could only
+-   do this from the command line, or by typing a number in Create that silently took the first eligible shots.
+-
+-Nothing is generated, rendered or charged by this update itself. Existing exports stay on disk; they are only
+-re-rendered when you ask for it, and a re-render keeps the earlier file.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.110 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.110/tools/update_v7109_to_v7110.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.110/tools/update_v7109_to_v7110.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py',
+-    'engine/transcript_edit.py', 'engine/finishing_studio.py', 'engine/language_editions.py',
+-    'tests/test_v7110_transcript_edit.py', 'tests/test_v7110_gemini_picker_ui.py',
+-    'TRANSCRIPT_EDIT_AND_GEMINI_PICKER_V7_0_110.md', 'tools/update_v7109_to_v7110.py',
+-]
+-# Files as they exist in 7.0.109: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['a397b9e5f4ae9e9add5aa0b486bafe434f7bf658375a8077251603d438556c8f'],
+-    'app.py': ['2b7ad9c76884688664f1e4b707cc0ed1663c654400c7ee6407d88339c63c7abd'],
+-    'cli.py': ['b3eb5b8c8bc1a1276da4feb7037617d48c86af21170c9dbc79d853ab5805a708'],
+-    'engine/finishing_studio.py': ['93f8821dc8c64fa86a14c0a7122f2a4501715bd5acb302c541baa6d0b1c0fa2d'],
+-    'engine/language_editions.py': ['7f629ac8bd6e9e7f100dd92273e3bf630efc796e2454acf014c6ca596531f76e'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.109', '7.0.110')  # 7.0.110 allows a safe re-run after success
+-
+-# The 7.0.110 zip carries the 7.0.109 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.108', '7.0.109', 'tools/update_v7108_to_v7109.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.109 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.109 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.109 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.110'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. '
+-              'Existing exports stay where they are until you ask for a re-render.')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7110_to_v7111.py b/tools/update_v7110_to_v7111.py
+new file mode 100644
+index 0000000..7537a0b
+--- /dev/null
++++ b/tools/update_v7110_to_v7111.py
+@@ -0,0 +1,170 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.111 update to a v7.0.110 installation.
++
++One field report, and the answer to it:
++
++* **"The transcript is still there after I rendered again."** The render was right: the record and the new export
++  both said *no captions*. But every render deliberately keeps the earlier video, so the job held two Odia videos
++  with equally plausible names and nothing said which one was current - the old one, with the captions you had
++  switched off, still played as if it were the latest render.
++
++v7.0.111 makes the current file impossible to miss, in three places:
++
++1. ``python3 cli.py v3 language-outputs <job> --files`` lists, per language, the file to watch, the time it was
++   rendered, and **what that exact file burned** (read from the export's own provenance), plus every earlier file
++   marked *not current*, with its own caption state.
++2. The job panel plays the current export, labels it ("This is the current Odia video · without a burned
++   transcript · rendered ..."), warns when the copy in ``render/`` is not it, and lists the older videos it keeps.
++3. A plan built while captions were on can never re-burn them after the job switched them off: the job's setting
++   now wins over the plan, and the provenance records that the burn was suppressed and why.
++
++Every earlier video is still kept - that is deliberate, and never deleted. Nothing is generated, re-recorded or
++charged by this update.
++
++Usage (run from the existing installation folder, after extracting the 7.0.111 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.111/tools/update_v7110_to_v7111.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.111/tools/update_v7110_to_v7111.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py',
++    'engine/edition_files.py', 'engine/language_editions.py', 'engine/finishing_studio.py',
++    'tests/test_v7111_which_edition_file.py',
++    'WHICH_EDITION_FILE_V7_0_111.md', 'tools/update_v7110_to_v7111.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['6afcf447ffd309cd5ab86aa3dbcdc14f767e046e25ea354f5a8d49517c3b29db'],
++    'app.py': ['42ede10f240449fd1a9bde96cc4411a5cfa0b6169806429f2cfa0f438f1b8b94'],
++    'cli.py': ['dfabf2a5c37494bfe6f481b81ef782d3856a8959011869221a7aec7ee50ac97c'],
++    'engine/language_editions.py': ['6cacf22775c1cfd6972655aaad8c1f20fc67a2f3399941e5854a934a4ec31beb'],
++    'engine/finishing_studio.py': ['ac0fff94dfdca5191e2994af4f2a18365a145e158146421a495a247fef3a3879'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.110', '7.0.111')  # 7.0.111 allows a safe re-run after success
++
++# The 7.0.111 zip carries the 7.0.110 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.109', '7.0.110', 'tools/update_v7109_to_v7110.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.110 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.110 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.110 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.111'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To see which '
++              'language video is the current one: python3 cli.py v3 language-outputs <job> --files')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

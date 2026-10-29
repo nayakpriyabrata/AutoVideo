@@ -1,0 +1,1343 @@
+diff --git a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+index 479fc88..972c350 100644
+--- a/RELEASE_MANIFEST.json
++++ b/RELEASE_MANIFEST.json
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.117",
+-  "built_at": "2026-10-28T22:52:29+00:00",
++  "version": "7.0.118",
++  "built_at": "2026-10-29T15:49:45+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -592,6 +592,11 @@
+       "bytes": 4148,
+       "sha256": "9a51d0fa79a5ca79618794f6fb140c27c0fc1b24e8a7ad92f6d5b004eb3d706a"
+     },
++    {
++      "path": "STUDIO_SUBMIT_AND_GEMINI_V7_0_118.md",
++      "bytes": 6128,
++      "sha256": "9a17085053b3ce4fcb67374586d6679782b8e52a360d39f80fd5497be40f7fc7"
++    },
+     {
+       "path": "THREE_LANGUAGE_RENDER_FIX_V7_0_95.md",
+       "bytes": 11935,
+@@ -1035,7 +1040,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "7b35e40ad39ee364d9acdadf65478b1eeb83d096f492dc8655243c35aa71437b"
++      "sha256": "4cc89575ac6c0616189c321827e79b8695532d36ee67227755dc81ec87f8f4c4"
+     },
+     {
+       "path": "VIDEO_APPROVAL_PENDING_V7_0_99.md",
+@@ -1099,8 +1104,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 266740,
+-      "sha256": "6aee28eabf0e07d590771d365ef18cfbe99ab71b26ba37b29f336ff0e041781a"
++      "bytes": 270402,
++      "sha256": "89f839abf87866371babc22c990bbddef001fcee1aab73d9993c9e29ba251445"
+     },
+     {
+       "path": "architecture.md",
+@@ -1214,8 +1219,8 @@
+     },
+     {
+       "path": "cli.py",
+-      "bytes": 118607,
+-      "sha256": "2ad9e2ccce9964efeccbe08c820eb1ac77313c1c0d53464e79103c54a8f33bd2"
++      "bytes": 120103,
++      "sha256": "014887426ae67cf950a1fb782598b82c9e9e8140b5370e80b7dbac593e8673a0"
+     },
+     {
+       "path": "clip_config.yaml",
+@@ -1509,8 +1514,8 @@
+     },
+     {
+       "path": "engine/factory.py",
+-      "bytes": 323211,
+-      "sha256": "68201714056f62c4b1dfc0c88ae6a4163b2b1d2b192ad2e034b6bac106e53ddb"
++      "bytes": 322476,
++      "sha256": "c007d778bfd9407d1217a37678efeb4f7c6b4a7d03fccbacb0f4a380c3bbb228"
+     },
+     {
+       "path": "engine/finishing_studio.py",
+@@ -1864,8 +1869,8 @@
+     },
+     {
+       "path": "engine/providers/gemini_video.py",
+-      "bytes": 14805,
+-      "sha256": "e8f8692ce596e5e9b533b2ccfa0552a3ad3b280f54756cb5602d9338efdc1504"
++      "bytes": 15805,
++      "sha256": "a496b149ee24fe333243fb81083c4db8ecf79c2d7a010284b620a1373fc890d2"
+     },
+     {
+       "path": "engine/providers/gemini_web.py",
+@@ -2047,6 +2052,11 @@
+       "bytes": 11414,
+       "sha256": "585cdce98b54ec9c84ebbfaa5d95db0a65af694cadfc160963704cc870fa08e5"
+     },
++    {
++      "path": "engine/self_check.py",
++      "bytes": 5197,
++      "sha256": "b5bf917f9b08501a4d9dfd395e34c447f25a1373d5945d4cd40a7195aeb399c7"
++    },
+     {
+       "path": "engine/source_inbox.py",
+       "bytes": 7391,
+@@ -2079,8 +2089,8 @@
+     },
+     {
+       "path": "engine/studio_config.py",
+-      "bytes": 12283,
+-      "sha256": "c3d5b51dc7a771976213cf67b47eaab69ea7c8c873d435bcabb05f62bcf7c0dd"
++      "bytes": 13738,
++      "sha256": "f2130ea53850e17b8e03781a8f7e8e005fff1e23b4e96e4af9e0b9c3f3696d83"
+     },
+     {
+       "path": "engine/studio_review.py",
+@@ -2832,6 +2842,11 @@
+       "bytes": 9382,
+       "sha256": "9b5219dd93dba5a6a287b6bee7169269dd75b480bc06239ed03156df846ca65b"
+     },
++    {
++      "path": "tests/test_v7118_studio_create_and_gemini_ui.py",
++      "bytes": 9324,
++      "sha256": "2d504e8ce7f882b87670babd42f0720fd2b7271d58adeb0214820b7baa24c41a"
++    },
+     {
+       "path": "tests/test_v711_verified_flow_prompts.py",
+       "bytes": 5502,
+@@ -3393,9 +3408,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v7116_to_v7117.py",
+-      "bytes": 9010,
+-      "sha256": "ad7b85f627f015e0f7bff8b61dab74431529524fb19f15de45b3187d4dd21014"
++      "path": "tools/update_v7117_to_v7118.py",
++      "bytes": 10288,
++      "sha256": "09d508e0dbdaf4f13b73b4a4ffb552544bd99b9fe95a21fb877cd77b052f4332"
+     },
+     {
+       "path": "topics.csv",
+diff --git a/STUDIO_SUBMIT_AND_GEMINI_V7_0_118.md b/STUDIO_SUBMIT_AND_GEMINI_V7_0_118.md
+new file mode 100644
+index 0000000..9c77165
+--- /dev/null
++++ b/STUDIO_SUBMIT_AND_GEMINI_V7_0_118.md
+@@ -0,0 +1,104 @@
++# v7.0.118 · Create production works again, and the Gemini video shots are where you can see them
++
++Two things came from the same session: the app refused to create the job at all, and you could not find the
++Gemini video option.
++
++Your terminal, verbatim:
++
++```
++TypeError: Factory.create_job() got an unexpected keyword argument 'flow_auto_approve_video_requests'
++  at app.py:1396
++```
++
++That traceback was the whole story, and it was not your typing.
++
++## 1. Every "Create production" submit has been broken since v7.0.106
++
++`engine/studio_config.py` grew a setting called `flow_auto_approve_video_requests` in v7.0.106 (the "approve each
++saved Flow video request once" rule). The Studio form sends its **entire** configuration to
++`Factory.create_job(...)`, and `create_job()` never learned that one keyword.
++
++* The command line passes its arguments one at a time, so `python3 cli.py v3 create ...` kept working.
++* The app failed - always, on every submit, for every video - and only after the form had been filled in:
++  `Create plan only`, three languages, 360 s, Storyboard Economy, Flow approval `once`, one card per video.
++  Nothing about that configuration was wrong.
++
++v7.0.118:
++
++* `create_job()` accepts `flow_auto_approve_video_requests`, saves it in the job's `settings.json` **and reads it
++  back**, so switching it off really does switch automatic approval off. Before this, the key sat in the config
++  and never reached the engine.
++* The two 76-name key lists inside `_settings()` were also the same list pasted twice. They are now one
++  `SETTING_KEYS` tuple, so a new setting cannot be honoured on one path and silently ignored on the other - the
++  exact shape of this bug.
++* If the app and the engine ever disagree again, you get a sentence instead of a `TypeError`:
++  *"This installation mixes two releases: engine/studio_config.py sends X, but engine/factory.py create_job()
++  does not accept it. Nothing was created. Repair: ... then check with `python3 cli.py v3 self-check`."*
++* **New: `python3 cli.py v3 self-check`** (read-only, seconds, no browser, no credits). It checks the VERSION file,
++  the engine imports, the Studio ↔ `create_job()` keyword agreement, and the render/edition modules, and prints
++  either `All checks passed.` or the file that is out of step and its repair.
++* **New: `python3 cli.py v3 create --no-auto-approve-flow-videos`** for the same choice from the terminal.
++* The Create page shows a red banner at the top, before you type anything, if the folder holds two releases.
++
++## 2. The Gemini video option was in the app - inside a collapsed cleanup expander
++
++It lived under `Gemini video and project cleanup`, collapsed, in the middle of a long page. It read as a cleanup
++setting, so it was invisible in practice.
++
++It is now a visible section of Create:
++
++```
++3b · AI video shots · Flow or Gemini Web
++   Gemini Web AI video shots (0-4)
++   Approve each saved Flow video request once, automatically   [x]
++```
++
++with a plain sentence about where the *exact* shots are chosen. That picker already existed - the job panel's
++**Gemini Web video shots** section - and it now:
++
++* can change the cap of a job that was already created (`Gemini Web shots this job may use (0-4)` + a save button,
++  or `python3 cli.py v3 gemini-shots <job> --count 2`). Until now a job created with 0 stayed at 0 forever, and the
++  panel only told you to "raise it in Create", which an existing job cannot do.
++* says the truth for a brand-new plan-only job: *"This job has no storyboard yet, so there are no shots to choose
++  between. Run it ... each shot then appears here with why it is - or is not - eligible for Gemini."*
++  Previously it claimed every Flow shot already had an accepted take - a state that did not exist.
++* still never offers a shot that already has a video or a pending Flow request, so nothing can be generated twice.
++
++After creating a job, the success message now says where the shots are picked, and that nothing is sent to Gemini
++before that choice is saved.
++
++## What was verified
++
++* The real Streamlit page, driven by Streamlit's own `AppTest`: topic typed, "Create plan only" ticked,
++  **Create production** clicked -> `Job created: 20261029-...`, no exception, the section and both widgets present,
++  the picker panel rendered.
++* `python3 cli.py v3 self-check` -> `All checks passed.`
++* 16 new tests in `tests/test_v7118_studio_create_and_gemini_ui.py`: the keyword parity itself, the setting
++  surviving into `settings.json` and changing `auto_allowed()`, a simulated mixed install naming the key and the
++  repair, the visible section (and the absence of the collapsed one), the honest empty-storyboard message, the
++  per-job cap change through the panel and the CLI, and the CLI switches.
++* Full suite: the same 55 pre-existing FFmpeg failures (`drawtext`/`subtitles` missing from the sandbox build) as
++  v7.0.117, with 16 more passing tests.
++
++## What this release does **not** do
++
++* Nothing was rendered, re-recorded, resubmitted or charged. No job was created or changed by the update.
++* Your 3-language job still has to be created again after updating - the attempt that failed created nothing.
++* Whether the Odia file still shows two cards at once is still answered by
++  `python3 cli.py v3 language-outputs <job> --card-audit` from v7.0.117, before spending a render.
++
++## Install
++
++1. Stop the dashboard.
++2. Extract `AutoVideoAI-v7.0.118-Studio-Submit-And-Gemini.zip` beside your installation
++   (`.../Auto/AutoVideoAI-v7`), then from inside the installation folder:
++   ```
++   python3 ../AutoVideoAI-v7.0.118-Studio-Submit-And-Gemini/tools/update_v7117_to_v7118.py . --apply
++   ```
++   (dry run first without `--apply`). The updater only replaces the code files listed in it, keeps a backup in
++   `code-update-backups/`, and never touches `outputs/`, saved jobs, Flow journals, browser profiles or
++   `music_library/`. It refuses to overwrite a file you edited.
++3. Restart the dashboard, then run `python3 cli.py v3 self-check`.
++
++If you prefer a clean folder, unzip the release and copy your `outputs/`, `config/user_settings.yaml` and browser
++profiles, as with every previous release.
+diff --git a/VERSION b/VERSION
+index fab5cd9..b602674 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.117
+\ No newline at end of file
++7.0.118
+\ No newline at end of file
+diff --git a/app.py b/app.py
+index 76c0fd5..ab5d612 100644
+--- a/app.py
++++ b/app.py
+@@ -773,7 +773,7 @@ def gemini_shot_panel(job_id, *, expanded=False):
+     were taken silently. This panel lists every shot with its verdict, saves the user's choice, and submits
+     nothing - a shot with an accepted take or an existing Flow request is never offered.
+     """
+-    from engine.providers.gemini_video import choose_shots, gemini_shot_plan
++    from engine.providers.gemini_video import choose_shots, gemini_shot_plan, set_count
+     from engine.production_lock import production_slot
+     job_dir = Path(F.pm.job_dir(job_id))
+     manifest = F.pm.load_manifest(job_id)
+@@ -784,11 +784,24 @@ def gemini_shot_panel(job_id, *, expanded=False):
+               f' · {len(plan["eligible"])} eligible'
+     with st.expander(heading, expanded=expanded):
+         st.caption(f'This job sends up to **{cap}** shot(s) to Gemini Web instead of Flow '
+-                   f'(Create · "Use Gemini Web for up to this many AI video shots"). '
++                   '(Create · "Gemini Web AI video shots (0-4)" in step 3b). '
+                    + (f'Choice: {plan["source"]}. ' if cap else
+-                      'The cap is 0, so every shot goes to Flow. Raise it in Create to offer shots here. ')
++                      'The cap is 0, so every shot goes to Flow. Set it below, or in Create · "Gemini Web AI video shots (0-4)". ')
+                    + 'A shot with an accepted take or an existing Flow request is never offered, so nothing can '
+                      'be generated twice.')
++        # 7.0.118: the cap can be changed for an existing job here, not only when it is created.
++        cap_choice = st.number_input('Gemini Web shots this job may use (0-4)', min_value=0, max_value=4,
++                                     value=int(cap), key=f'gemini-cap-{job_id}')
++        if int(cap_choice) != int(cap):
++            if st.button('Save the Gemini cap for this job', key=f'gemini-cap-save-{job_id}'):
++                try:
++                    with production_slot(job_dir):
++                        set_count(job_dir, int(cap_choice))
++                    st.success('This job may now use Gemini Web for up to ' + str(int(cap_choice))
++                               + ' shot(s). Saved in its settings.json; nothing was submitted.')
++                    st.rerun()
++                except ValueError as error:
++                    st.error(str(error))
+         eligible = plan['eligible']
+         if eligible:
+             picked = st.multiselect('Shots for Gemini (maximum 4)', options=eligible,
+@@ -811,8 +824,19 @@ def gemini_shot_panel(job_id, *, expanded=False):
+                 st.success('Choice cleared; the first eligible shots are used again.')
+                 st.rerun()
+         else:
+-            st.info('No shot is eligible for Gemini in this job: every Flow shot has an accepted take or a '
+-                    'pending request of its own.')
++            # 7.0.118: a plan-only job has no storyboard yet. Saying "every Flow shot has an accepted take"
++            # there described a state that did not exist, and hid the picker behind a false explanation.
++            if not plan['shots']:
++                st.info('This job has no storyboard yet, so there are no shots to choose between. '
++                        'Run it (`python3 cli.py v3 resume ' + job_id + '`) or open Storyboard until the shots '
++                        'exist; each shot then appears here with why it is - or is not - eligible for Gemini.')
++            elif not cap:
++                st.info('The Gemini cap is 0 for this job, so every shot goes to Flow. Raise '
++                        '"Gemini Web AI video shots (0-4)" in Create (or run '
++                        '`python3 cli.py v3 gemini-shots ' + job_id + ' --count 2`) and the shots appear here.')
++            else:
++                st.info('No shot is eligible for Gemini in this job: every Flow shot has an accepted take or a '
++                        'pending request of its own.')
+         rows = [{'shot': row['shot_id'], 'chosen': row['shot_id'] in chosen,
+                  'eligible': row['eligible'], 'why': row['reason'], 'prompt': row['prompt'][:90]}
+                 for row in plan['shots']]
+@@ -867,6 +891,17 @@ if queued_resume:
+ 
+ if page == "STUDIO":
+     st.title("Create a Reel or long video")
++    # 7.0.118: say up front when app.py and engine/ are from different releases, instead of letting
++    # "Create production" die with a TypeError nobody can act on.
++    try:
++        from engine import self_check as _install_check
++        _install_failures = [row for row in _install_check.rows() if not row['ok']]
++        if _install_failures:
++            st.error('This installation mixes two releases, so Create production would fail: '
++                     + ' '.join(row['check'] + ' - ' + row['detail'] + '.' for row in _install_failures)
++                     + ' Repair: ' + _install_failures[0]['repair'] + '.')
++    except Exception:
++        pass
+     st.caption("Create multi-scene Reels/Shorts or long videos here. Mini Reels is the separate single-generation workflow. Saved jobs continue in Queue & Resume.")
+     st.subheader("1 · Video setup")
+     topic = st.text_input("Topic / idea", key="studio-topic", placeholder="What would you like to create?", on_change=invalidate_script_review)
+@@ -1215,14 +1250,21 @@ if page == "STUDIO":
+                         use_prepared_batch=st.checkbox('I reviewed these voices, translations and cards; reuse this exact batch',key='studio-use-batch-'+batch_path.name)
+                 else:st.info('Batch checkpoint: '+str(phase or 'preparing')+'. Retry the same action to reuse saved narration.')
+             except Exception as error:st.error(str(error))
+-    with st.expander('Gemini video and project cleanup', expanded=False):
+-        gemini_video_count = st.number_input('Use Gemini Web for up to this many AI video shots', min_value=0, max_value=4, value=0,
+-            help='Zero uses existing providers. Requests approximately 10 seconds per shot; duration and quota depend on Gemini. Resume recovers unfinished requests without resubmission. '
+-                 'Which shots get it is your choice: once the storyboard exists, open the job (Queue or Storyboard) and use '
+-                 '"Gemini Web video shots" to tick specific shots, or run `python3 cli.py v3 gemini-shots <job> --choose shot_003,shot_007`.')
+-        if gemini_video_count:
+-            st.caption('Finished the storyboard? Pick the exact ' + str(int(gemini_video_count)) +
+-                       ' shot(s) for Gemini in the job panel ("Gemini Web video shots"), not just the first ones.')
++    # 7.0.118: this control used to sit inside a collapsed expander labelled "Gemini video and project
++    # cleanup", so it read as a cleanup option and was easy to miss. It is now a visible section.
++    st.subheader('3b · AI video shots · Flow or Gemini Web')
++    gemini_video_count = st.number_input('Gemini Web AI video shots (0-4)', min_value=0, max_value=4, value=0,
++        key='studio-gemini-video-count',
++        help='Zero sends every shot to Flow. Above zero, up to this many of this job\'s Flow shots are requested from your signed-in Gemini Web session instead (about 10 seconds per shot; '
++             'duration and quota depend on Gemini; Resume recovers an unfinished request without resubmitting it).')
++    st.caption('**Which** shots get Gemini is your choice: after the storyboard exists the job panel shows '
++               '"Gemini Web video shots" with every shot and why it is eligible - tick up to 4, not just the first ones, '
++               'and save. Command line: `python3 cli.py v3 gemini-shots <job> --choose shot_003,shot_007`.')
++    flow_auto_approve_video_requests = st.checkbox('Approve each saved Flow video request once, automatically', value=True,
++        key='studio-flow-auto-approve',
++        help='v7.0.106: each saved video request is approved exactly once - never "Always approve", never a second click, and manual approval mode always wins. '
++             'Untick to approve every card by hand. Turning this off is saved in the job settings.json as flow_auto_approve_video_requests = false.')
++    with st.expander('Gemini project cleanup · optional', expanded=False):
+         flow_auto_cleanup_images = st.checkbox('Delete captured image-only Flow projects automatically', value=False,
+             help='After this job finishes, deletes isolated image-only Flow projects whose downloaded image and request record are verified locally. Video, mixed, pending and changed projects are retained. Off by default because deletion removes the Flow copy.')
+     with st.expander('Characters and recovery preferences · optional', expanded=False):
+@@ -1360,6 +1402,7 @@ if page == "STUDIO":
+                         "flow_pause_on_unresolved_request": flow_pause_on_unresolved_request,
+                         "gemini_chat_cleanup": gemini_cleanup,
+                         "speech_cards_enabled": bool(studio_voice_on and (speech_cards_enabled or use_prepared_batch)), "gemini_video_count": int(gemini_video_count),
++                        "flow_auto_approve_video_requests": bool(flow_auto_approve_video_requests),
+                         "flow_auto_cleanup_images": flow_auto_cleanup_images,
+                         "background_music": "off" if studio_audio_mode == "Silent" else background_music,
+                         "background_music_path": music_path.strip() or chosen_music, "music_volume": music_volume,
+@@ -1418,6 +1461,10 @@ if page == "STUDIO":
+                                sort_keys=False, allow_unicode=True)
+             st.session_state.job_id = job_id
+             st.success(f"Job created: `{job_id}`")
++            if int(gemini_video_count):
++                st.info('Gemini Web is set for up to ' + str(int(gemini_video_count)) + ' shot(s). Once the storyboard '
++                        'exists, the job panel below shows **Gemini Web video shots** - tick the exact shots you want '
++                        'and save. Nothing is sent to Gemini before that choice is saved or the storyboard is ready.')
+             if plan_only:
+                 st.info(f"Resume from QUEUE or run: python3 cli.py v3 resume {job_id}")
+             else:
+diff --git a/cli.py b/cli.py
+index 5e10230..884dba9 100644
+--- a/cli.py
++++ b/cli.py
+@@ -241,6 +241,11 @@ def main_v3(argv):
+     c.add_argument("--no-flow-reuse-project-media", dest="flow_reuse_project_media", action="store_false", default=True,
+                    help="disable frame/media reuse for a reused Flow project")
+     c.add_argument("--dry-run", action="store_true")
++    c.add_argument("--auto-approve-flow-videos", dest="flow_auto_approve_video_requests",
++                   action=argparse.BooleanOptionalAction, default=None,
++                   help="v7.0.106 default: each saved Flow video request is approved exactly once, automatically. "
++                        "--no-auto-approve-flow-videos approves every card by hand (saved in the job settings.json). "
++                        "Manual approval mode always wins and \"Always approve\" is never used")
+     c.add_argument("--plan-only", action="store_true", help="Create the job configuration only; run v3 resume to execute it")
+ 
+     cc = sub.add_parser("create-config", help="Create + run from a simple commented YAML file")
+@@ -461,6 +466,8 @@ def main_v3(argv):
+                     help="Comma-separated shot ids to hand to Gemini, e.g. shot_003,shot_007 (max 4)")
+     gs.add_argument("--clear", action="store_true",
+                     help="Forget the saved choice and go back to the first N eligible shots")
++    gs.add_argument("--count", type=int, default=None, metavar="0-4",
++                    help="change how many shots this saved job may hand to Gemini Web (0-4); saved in its settings.json")
+     gs.add_argument("--json", action="store_true", help="Print the full plan as JSON")
+ 
+     tn = sub.add_parser("tune", help="Adjust music ducking, fades and the edition narration fit of a saved job")
+@@ -485,6 +492,8 @@ def main_v3(argv):
+ 
+     sub.add_parser("queue", help="List jobs")
+     sub.add_parser("doctor", help="Diagnose Flow browser setup (no browser launched)")
++    sub.add_parser("self-check", help="Check this folder is one consistent release: VERSION, imports, "
++                   "and that the Studio form and Factory.create_job() agree on every setting (read-only)")
+     sub.add_parser("env-doctor", help="Check environment-file discovery and provider variables (values hidden)")
+     sub.add_parser("browser-test", help="Launch bundled Chromium with progressive "
+                    "flag sets and report what works (takes a few minutes)")
+@@ -1008,6 +1017,7 @@ def main_v3(argv):
+                             flow_video_recovery_wait_seconds=args.flow_video_recovery_wait_seconds,
+                             flow_reuse_project_media=args.flow_reuse_project_media,
+                             flow_reuse_mode=args.flow_reuse_mode,
++                            flow_auto_approve_video_requests=args.flow_auto_approve_video_requests,
+                             flow_pause_on_unresolved_request=args.flow_pause_on_unresolved_request)
+         print("JOB:", job)
+         if args.plan_only:
+@@ -1431,6 +1441,10 @@ def main_v3(argv):
+         shots = list(getattr(manifest, "shots", []) or [])
+         cap = int((f._settings(args.job_id) or {}).get("gemini_video_count", 0) or 0)
+         try:
++            if args.count is not None:
++                from engine.providers.gemini_video import set_count
++                print("Gemini cap for this job: " + str(set_count(job_dir, args.count)) + " shot(s) (settings.json).")
++                cap = int(args.count)
+             if args.clear:
+                 plan = choose_shots(job_dir, shots, [])
+                 print("Saved Gemini choice cleared; the job will use its first eligible shots.")
+@@ -1521,6 +1535,12 @@ def main_v3(argv):
+         from engine.project.database import JobDB
+         for j in JobDB().list():
+             print(f"{j['job_id'][:44]} {j['status']:10s} {j['profile']:16s} +{j['accepted_shots']}/-{j['rejected_shots']} est={j['est_credits']}")
++    elif args.cmd == "self-check":
++        from engine.self_check import format_report, rows
++        report = rows()
++        print(format_report(report))
++        if any(not row["ok"] for row in report):
++            raise SystemExit(1)
+     elif args.cmd == "doctor":
+         from engine.providers.flow_browser import doctor_report
+         print(doctor_report())
+diff --git a/engine/factory.py b/engine/factory.py
+index 9390395..8510623 100644
+--- a/engine/factory.py
++++ b/engine/factory.py
+@@ -149,6 +149,36 @@ class FlowFrameBatchPending(RuntimeError):
+         super().__init__(f"Flow frame recovery needs attention: {len(report['unresolved'])} frame(s). Other independent frames were processed; no media was substituted.")
+ 
+ 
++# v7.0.118: ONE list, read in both places (global user settings and per-job overrides).
++# The same 76 names were pasted twice, so a new setting could be honoured in one path and
++# silently ignored in the other - the class of bug behind the flow_auto_approve TypeError.
++SETTING_KEYS = (
++    "cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds",
++    "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes",
++    "max_flow_scenes", "frame_source", "flow_video_mode", "flow_approval",
++    "max_generation_credits", "flow_approval_cards", "shot_max_seconds", "flow_frame_retries",
++    "network_wait_seconds", "flow_capacity_wait_seconds", "flow_capacity_retries", "flow_project_url",
++    "flow_video_retries", "flow_video_ready_grace_seconds", "flow_video_recovery_wait_seconds", "flow_reuse_project_media",
++    "flow_reuse_mode", "flow_image_workers", "flow_pause_on_unresolved_request", "flow_auto_approve_video_requests",
++    "flow_local_closing_fallback", "flow_continue_unresolved_frames", "flow_replace_unresolved_images", "flow_image_replacement_limit",
++    "flow_image_replacement_policy_version", "gemini_chat_cleanup", "script_provider", "script_model",
++    "script_quality", "tts_model", "tts_voice", "tts_style",
++    "caption_provider", "caption_model", "caption_local_model", "caption_align_script",
++    "max_tts_speedup", "auto_retime_script", "render_quality", "production_mode",
++    "dynamic_video_scenes", "stock_scenes", "stock_source", "caption_display",
++    "background_music", "music_mood", "channel_name", "channel_logo",
++    "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled",
++    "text_card_style", "caption_template", "background_music_path", "music_volume",
++    "sound_effects_enabled", "ambience_enabled", "destination", "approved_plan_path",
++    "narration_input_path", "character_id", "narration_runtime_policy", "external_video_shots",
++    "external_video_mode", "speech_cards_enabled", "gemini_video_count", "flow_auto_cleanup_images",
++)
++
++
++def job_setting_keys() -> set:
++    """Keys ``_settings()`` reads back from ``<job>/settings.json``."""
++    return set(SETTING_KEYS) | {"budgets", "tts_provider", "monthly_credits", "images_per_shot"}
++
+ class Factory:
+     def _pause_pending_flow(self, m, shot_id, error, project_url=""):
+         from .automatic_recovery import can_recover
+@@ -273,6 +303,10 @@ class Factory:
+                    flow_reuse_mode: str = "exact",
+                    flow_image_workers: int = 1,
+                    flow_pause_on_unresolved_request: bool | None = None,
++                   # v7.0.118: engine/studio_config.DEFAULTS carried this key since v7.0.106 but
++                   # create_job() never accepted it, so every Streamlit "Create production" submit
++                   # died here with `TypeError: create_job() got an unexpected keyword argument`.
++                   flow_auto_approve_video_requests: bool | None = None,
+                    gemini_chat_cleanup: str = "keep",
+                    script_provider: str = "auto", script_model: str = "auto",
+                    script_quality: str = "publish", tts_model: str = "",
+@@ -315,6 +349,13 @@ class Factory:
+                 "1", "true", "yes", "on"}
+         else:
+             flow_pause_on_unresolved_request = bool(flow_pause_on_unresolved_request)
++        if flow_auto_approve_video_requests is not None:
++            if isinstance(flow_auto_approve_video_requests, str):
++                flow_auto_approve_video_requests = flow_auto_approve_video_requests.strip().lower() in {
++                    "1", "true", "yes", "on"}
++            elif type(flow_auto_approve_video_requests) is not bool:
++                raise ValueError("flow_auto_approve_video_requests must be true or false "
++                                 "(job settings.json; python3 cli.py v3 create --no-auto-approve-flow-videos)")
+         language = language_pack(language).code
+         if voice == 'en-IN-PrabhatNeural' and language != 'en':
+             voice = default_voice(language)
+@@ -377,6 +418,8 @@ class Factory:
+                     "flow_reuse_mode": str(flow_reuse_mode or "exact"),
+                     "flow_image_workers": max(1, min(3, int(flow_image_workers or 1))),
+                     "flow_pause_on_unresolved_request": bool(flow_pause_on_unresolved_request),
++                    "flow_auto_approve_video_requests": (None if flow_auto_approve_video_requests is None
++                                                         else bool(flow_auto_approve_video_requests)),
+                     "gemini_chat_cleanup": str(gemini_chat_cleanup or "keep"),
+                     "script_provider": str(script_provider or "auto"),
+                     "script_model": str(script_model or "auto"),
+@@ -450,6 +493,7 @@ class Factory:
+                     "flow_video_recovery_wait_seconds": 180, "flow_reuse_project_media": True,
+                     "flow_reuse_mode": "exact", "flow_image_workers": 1,
+                     "flow_pause_on_unresolved_request": False,
++                    "flow_auto_approve_video_requests": None,
+                     "flow_local_closing_fallback": False, "flow_continue_unresolved_frames": False,
+                     "flow_replace_unresolved_images": False, "flow_image_replacement_limit": 30,
+                     "gemini_chat_cleanup": "keep",
+@@ -475,24 +519,7 @@ class Factory:
+                 merged["tts_provider"] = g.get("tts_provider", "auto")
+                 merged["monthly_credits"] = g.get("monthly_credits")
+                 merged["images_per_shot"] = int(g.get("images_per_shot", 2) or 0)
+-                for key in ("cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds", "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes", "max_flow_scenes", "frame_source", "flow_video_mode",
+-                            "flow_approval", "max_generation_credits", "flow_approval_cards", "shot_max_seconds",
+-                            "flow_frame_retries", "network_wait_seconds",
+-                            "flow_capacity_wait_seconds", "flow_capacity_retries",
+-                            "flow_project_url", "flow_video_retries", "flow_video_ready_grace_seconds",
+-                            "flow_video_recovery_wait_seconds", "flow_reuse_project_media",
+-                            "flow_reuse_mode", "flow_image_workers", "flow_pause_on_unresolved_request",
+-                            "flow_local_closing_fallback", "flow_continue_unresolved_frames",
+-                            "flow_replace_unresolved_images", "flow_image_replacement_limit", "flow_image_replacement_policy_version",
+-                            "gemini_chat_cleanup", "script_provider", "script_model", "script_quality",
+-                            "tts_model", "tts_voice", "tts_style", "caption_provider",
+-                            "caption_model", "caption_local_model", "caption_align_script",
+-                            "max_tts_speedup", "auto_retime_script", "render_quality",
+-                            "production_mode", "dynamic_video_scenes", "stock_scenes", "stock_source",
+-                            "caption_display", "background_music", "music_mood", "channel_name", "channel_logo",
+-                            "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled", "text_card_style", "caption_template",
+-                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled", "destination",
+-                            "approved_plan_path", "narration_input_path", "character_id", "narration_runtime_policy", "external_video_shots", "external_video_mode", "speech_cards_enabled", "gemini_video_count", "flow_auto_cleanup_images"):
++                for key in SETTING_KEYS:
+                     if key in g:
+                         merged[key] = g[key]
+         except Exception:
+@@ -504,24 +531,7 @@ class Factory:
+             merged["tts_provider"] = j.get("tts_provider", merged["tts_provider"])
+             if "images_per_shot" in j:
+                 merged["images_per_shot"] = int(j["images_per_shot"] or 0)
+-            for key in ("cartoon_provider", "movieflow_mode", "movieflow_project_url", "movieflow_wait_seconds", "movieflow_recovery_wait_seconds", "video_share", "stock_share", "flow_scenes", "max_flow_scenes", "frame_source", "flow_video_mode",
+-                        "flow_approval", "max_generation_credits", "flow_approval_cards", "shot_max_seconds",
+-                        "flow_frame_retries", "network_wait_seconds",
+-                        "flow_capacity_wait_seconds", "flow_capacity_retries",
+-                        "flow_project_url", "flow_video_retries", "flow_video_ready_grace_seconds",
+-                        "flow_video_recovery_wait_seconds", "flow_reuse_project_media",
+-                        "flow_reuse_mode", "flow_image_workers", "flow_pause_on_unresolved_request",
+-                            "flow_local_closing_fallback", "flow_continue_unresolved_frames",
+-                            "flow_replace_unresolved_images", "flow_image_replacement_limit", "flow_image_replacement_policy_version",
+-                        "gemini_chat_cleanup", "script_provider", "script_model", "script_quality",
+-                        "tts_model", "tts_voice", "tts_style", "caption_provider",
+-                        "caption_model", "caption_local_model", "caption_align_script",
+-                        "max_tts_speedup", "auto_retime_script", "render_quality",
+-                        "production_mode", "dynamic_video_scenes", "stock_scenes", "stock_source",
+-                        "caption_display", "background_music", "music_mood", "channel_name", "channel_logo",
+-                        "graphics_overlays", "watermark", "voiceover_enabled", "text_cards_enabled", "text_card_style", "caption_template",
+-                            "background_music_path", "music_volume", "sound_effects_enabled", "ambience_enabled", "destination",
+-                            "approved_plan_path", "narration_input_path", "character_id", "narration_runtime_policy", "external_video_shots", "external_video_mode", "speech_cards_enabled", "gemini_video_count", "flow_auto_cleanup_images"):
++            for key in SETTING_KEYS:
+                 if key in j and not (key in PRESENTATION_KEYS and j[key] is None):
+                     merged[key] = j[key]
+             # 7.0.107: the mix/narration-fit overrides written by `cli.py v3 tune`.
+diff --git a/engine/providers/gemini_video.py b/engine/providers/gemini_video.py
+index f5ec3ee..a6eadeb 100644
+--- a/engine/providers/gemini_video.py
++++ b/engine/providers/gemini_video.py
+@@ -73,6 +73,27 @@ def gemini_shot_plan(root, shots, count):
+             'selection_saved': target.is_file()}
+ 
+ 
++def set_count(root, count):
++    """Change how many shots an already-created job may hand to Gemini Web (0-4).
++
++    v7.0.118: the cap could only be set when the job was created, so a saved job that said 0 kept saying
++    "the cap is 0" with no way to change it from the app or the CLI.
++    """
++    if type(count) is not int or not 0 <= count <= 4:
++        raise ValueError('Gemini video cap must be zero to four (0-4), not ' + repr(count))
++    path = Path(root) / 'settings.json'
++    if not path.is_file():
++        raise ValueError('No settings.json in this job folder: ' + str(path)
++                         + '. Repair: open the job in Queue once, or create it again from Create.')
++    try:
++        settings = json.loads(path.read_text(encoding='utf-8')) or {}
++    except ValueError as error:
++        raise ValueError('settings.json is not readable JSON (' + str(path) + '): ' + str(error)) from error
++    settings['gemini_video_count'] = int(count)
++    save(path, settings)
++    return int(count)
++
++
+ def choose_shots(root, shots, ids, *, save_choice=True):
+     """Save exactly which shots go to Gemini Web (0-4), and say why any choice is refused.
+ 
+diff --git a/engine/self_check.py b/engine/self_check.py
+new file mode 100644
+index 0000000..3a7c398
+--- /dev/null
++++ b/engine/self_check.py
+@@ -0,0 +1,111 @@
++"""Install self-check: is this folder one consistent release? (v7.0.118)
++
++The user's Streamlit app died on `TypeError: Factory.create_job() got an unexpected keyword
++argument 'flow_auto_approve_video_requests'`. Nothing in the product could answer the only
++question that mattered: *are app.py and engine/ from the same zip?*  This module answers it,
++names the file, and prints the exact repair.
++
++Every check is read-only: no browser, no Flow, no credits, no job created.
++"""
++import inspect
++import json
++import os
++
++REPAIR = ('install the complete zip for this version over this folder so app.py and engine/ come '
++          'from the same release')
++
++
++def _version():
++    try:
++        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'VERSION'),
++                  encoding='utf-8') as handle:
++            return handle.read().strip()
++    except OSError:
++        return ''
++
++
++def _studio_keys():
++    """The keyword arguments the Studio form sends to Factory.create_job()."""
++    from . import studio_config
++    cfg = dict(studio_config.DEFAULTS)
++    cfg.update({"topic": "self-check", "production_mode": "youtube_pro",
++                "production_mode_engine": "youtube_pro", "theme": "motivational",
++                "duration": 60, "profile": "FLOW_BALANCED", "language": "en",
++                "aspect": "16:9", "video_type": "faceless_youtube"})
++    return studio_config.config_to_factory_kwargs(cfg)
++
++
++def create_job_mismatch():
++    """Keys the Studio sends that ``Factory.create_job`` does not accept; sorted list."""
++    from .factory import Factory
++    accepted = set(inspect.signature(Factory.create_job).parameters)
++    return sorted(key for key in _studio_keys() if key not in accepted)
++
++
++def job_settings_keys(job_dir):
++    """Keys a real job's settings.json carries that this engine no longer reads back.
++
++    A half-installed engine can create a job and then ignore one of its settings; this names it
++    instead of letting the setting disappear silently.
++    """
++    try:
++        with open(os.path.join(str(job_dir), 'settings.json'), encoding='utf-8') as handle:
++            saved = json.load(handle)
++    except (OSError, ValueError):
++        return []
++    from .factory import job_setting_keys
++    known = job_setting_keys()
++    return sorted(key for key in saved if key not in known)
++
++
++def rows():
++    """Every check as ``{'check', 'ok', 'detail', 'repair'}``."""
++    out = []
++    version = _version()
++    out.append({'check': 'VERSION file', 'ok': bool(version),
++                'detail': version or 'VERSION is missing or empty',
++                'repair': 'install the complete zip for this version (VERSION sits next to app.py)'})
++    try:
++        from . import factory  # noqa: F401
++        from . import studio_config  # noqa: F401
++        import_ok, import_detail = True, 'engine.factory and engine.studio_config import'
++    except Exception as error:  # pragma: no cover - broken install
++        import_ok, import_detail = False, f'{type(error).__name__}: {error}'
++    out.append({'check': 'engine imports', 'ok': import_ok, 'detail': import_detail,
++                'repair': REPAIR + '; then run `python3 cli.py v3 self-check`'})
++    if import_ok:
++        try:
++            missing = create_job_mismatch()
++            detail = ('the Studio form and Factory.create_job() agree on every setting'
++                      if not missing else
++                      'this Studio sends ' + ', '.join(missing) + ' but engine/factory.py '
++                      'create_job() does not accept it/them, so Create production fails with a TypeError')
++            out.append({'check': 'Studio ↔ create_job keywords', 'ok': not missing,
++                        'detail': detail,
++                        'repair': (REPAIR + '; the mismatch is between app.py/engine/studio_config.py '
++                                   'and engine/factory.py')})
++        except Exception as error:  # pragma: no cover
++            out.append({'check': 'Studio ↔ create_job keywords', 'ok': False,
++                        'detail': f'{type(error).__name__}: {error}', 'repair': REPAIR})
++    try:
++        from . import production, speech_cards, edition_files  # noqa: F401
++        card_ok, card_detail = True, 'engine.production, engine.speech_cards, engine.edition_files import'
++    except Exception as error:  # pragma: no cover - broken install
++        card_ok, card_detail = False, f'{type(error).__name__}: {error}'
++    out.append({'check': 'render/edition modules', 'ok': card_ok, 'detail': card_detail,
++                'repair': REPAIR})
++    return out
++
++
++def format_report(report=None):
++    report = rows() if report is None else report
++    lines = ['AutoVideoAI self-check · version ' + (_version() or 'unknown')]
++    for row in report:
++        lines.append(('OK   ' if row['ok'] else 'FAIL ') + row['check'] + ' · ' + row['detail'])
++        if not row['ok']:
++            lines.append('     repair: ' + row['repair'])
++    failed = [row for row in report if not row['ok']]
++    lines.append('')
++    lines.append('All checks passed.' if not failed else
++                 str(len(failed)) + ' check(s) failed; nothing was created or generated.')
++    return '\n'.join(lines)
+diff --git a/engine/studio_config.py b/engine/studio_config.py
+index 23f6b0b..cc3b472 100644
+--- a/engine/studio_config.py
++++ b/engine/studio_config.py
+@@ -232,6 +232,30 @@ def load_video_config(path: str) -> dict:
+     return cfg
+ 
+ 
++def _version_text():
++    try:
++        return (Path(__file__).resolve().parent.parent / 'VERSION').read_text(encoding='utf-8').strip() or 'unknown'
++    except OSError:
++        return 'unknown'
++
++
++def _unaccepted_factory_kwargs(keys):
++    """Which of these keyword arguments ``Factory.create_job`` does not accept (v7.0.118).
++
++    ``DEFAULTS`` grew ``flow_auto_approve_video_requests`` in v7.0.106 but ``create_job`` never
++    learned it, so every "Create production" submit died with a bare
++    ``TypeError: create_job() got an unexpected keyword argument``. A mismatch is still an error -
++    it means this folder holds two different releases - but now it names the key and the repair.
++    """
++    try:
++        import inspect
++        from .factory import Factory
++        accepted = set(inspect.signature(Factory.create_job).parameters)
++    except Exception:
++        return []
++    return sorted(key for key in keys if key not in accepted)
++
++
+ def config_to_factory_kwargs(cfg: dict) -> dict:
+     skip = {"topic", "duration", "video_type", "aspect", "theme", "max_credits", "max_retries",
+             "plan_only", "config_source", "production_mode_engine"}
+@@ -240,4 +264,12 @@ def config_to_factory_kwargs(cfg: dict) -> dict:
+     out["production_mode"] = cfg["production_mode_engine"]
+     out["budgets"] = {"MAX_CREDITS_PER_VIDEO": int(cfg["max_credits"]),
+                       "MAX_RETRIES_PER_SHOT": int(cfg["max_retries"])}
++    rejected = _unaccepted_factory_kwargs(out)
++    if rejected:
++        raise ValueError(
++            "This installation mixes two releases: engine/studio_config.py sends "
++            + ", ".join(rejected) + ", but engine/factory.py create_job() does not accept it. "
++            "Nothing was created. Repair: install the complete zip for version " + _version_text()
++            + " over this folder (app.py and engine/ must come from the same zip), then check with "
++            "`python3 cli.py v3 self-check`.")
+     return out
+diff --git a/tests/test_v7118_studio_create_and_gemini_ui.py b/tests/test_v7118_studio_create_and_gemini_ui.py
+new file mode 100644
+index 0000000..78fc9ff
+--- /dev/null
++++ b/tests/test_v7118_studio_create_and_gemini_ui.py
+@@ -0,0 +1,193 @@
++"""v7.0.118: "Create production" must not die, and the Gemini shots must be findable.
++
++The field failure was `TypeError: Factory.create_job() got an unexpected keyword argument
++'flow_auto_approve_video_requests'` on submit. `engine/studio_config.DEFAULTS` had grown the key in
++v7.0.106; `create_job()` never learned it, so the Streamlit form - the only caller that sends the
++whole config - was broken for every release from 7.0.106 to 7.0.117 while the CLI kept working.
++"""
++import inspect
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++from engine import self_check, studio_config
++from engine.factory import Factory, job_setting_keys
++from engine.flow_approval_once import auto_allowed
++
++ROOT = Path(__file__).resolve().parent.parent
++
++
++def _studio_cfg(**overrides):
++    cfg = dict(studio_config.DEFAULTS)
++    cfg.update({"topic": "self-check topic", "production_mode": "youtube_pro",
++                "production_mode_engine": "youtube_pro", "theme": "motivational",
++                "duration": 360, "profile": "STORYBOARD_ECONOMY", "language": "en",
++                "aspect": "16:9", "video_type": "faceless_youtube"})
++    cfg.update(overrides)
++    return cfg
++
++
++def test_the_studio_form_sends_only_keywords_create_job_accepts():
++    """The exact regression: every DEFAULTS key reaches create_job as a keyword."""
++    kwargs = studio_config.config_to_factory_kwargs(_studio_cfg())
++    assert 'flow_auto_approve_video_requests' in kwargs
++    accepted = set(inspect.signature(Factory.create_job).parameters)
++    assert sorted(set(kwargs) - accepted) == []
++    assert self_check.create_job_mismatch() == []
++
++
++def test_a_new_studio_default_is_also_a_job_setting_the_engine_reads_back():
++    """The setting must survive into settings.json, or turning it off would do nothing."""
++    assert 'flow_auto_approve_video_requests' in job_setting_keys()
++
++
++@pytest.mark.parametrize('value,allowed', [(True, True), (None, True), (False, False)])
++def test_create_job_saves_the_automatic_approval_choice(tmp_path, monkeypatch, value, allowed):
++    monkeypatch.chdir(tmp_path)
++    factory = Factory()
++    kwargs = {} if value is None else {'flow_auto_approve_video_requests': value}
++    job = factory.create_job('A short test topic', profile='FLOW_ECONOMY', target_seconds=30,
++                             dry_run=True, **kwargs)
++    settings = factory._settings(job)
++    if value is None:
++        assert settings['flow_auto_approve_video_requests'] is None
++    else:
++        assert settings['flow_auto_approve_video_requests'] is value
++    allow, why = auto_allowed(settings)
++    assert allow is allowed, why
++
++
++def test_the_whole_studio_submit_path_creates_a_plan_only_job(tmp_path, monkeypatch):
++    """What the user did: fill the form, ask for "Create plan only", press the button."""
++    monkeypatch.chdir(tmp_path)
++    factory = Factory()
++    cfg = _studio_cfg(plan_only=True, flow_approval='once', flow_auto_approve_video_requests=True,
++                      flow_approval_cards=1, max_credits=300, gemini_video_count=2)
++    kwargs = studio_config.config_to_factory_kwargs(cfg)
++    job = factory.create_job(topic=cfg["topic"], video_type=cfg["video_type"],
++                             aspect=cfg["aspect"], **kwargs)
++    settings = factory._settings(job)
++    assert settings['flow_auto_approve_video_requests'] is True
++    assert settings['flow_approval'] == 'once'
++    assert settings['flow_approval_cards'] == 1
++    assert settings['gemini_video_count'] == 2
++
++
++def test_a_mixed_install_names_the_key_the_file_and_the_repair(tmp_path, monkeypatch):
++    """If app.py and engine/ ever disagree again, say so - do not raise a bare TypeError."""
++    def old_create_job(self, topic, video_type='shorts'):
++        return 'never reached'
++
++    monkeypatch.setattr(Factory, 'create_job', old_create_job)
++    with pytest.raises(ValueError) as error:
++        studio_config.config_to_factory_kwargs(_studio_cfg())
++    text = str(error.value)
++    assert 'flow_auto_approve_video_requests' in text
++    assert 'Nothing was created' in text
++    assert 'python3 cli.py v3 self-check' in text
++    assert not text.startswith('create_job() got an unexpected keyword argument')
++
++
++def test_self_check_turns_a_mixed_install_into_a_failing_row(monkeypatch):
++    def old_create_job(self, topic):
++        return 'never reached'
++
++    monkeypatch.setattr(Factory, 'create_job', old_create_job)
++    report = self_check.rows()
++    row = next(item for item in report if item['check'] == 'Studio ↔ create_job keywords')
++    assert row['ok'] is False
++    assert 'flow_auto_approve_video_requests' in row['detail']
++    assert row['repair']
++    rendered = self_check.format_report(report)
++    assert 'FAIL' in rendered and 'repair:' in rendered
++
++
++def test_self_check_passes_on_this_tree():
++    assert self_check.create_job_mismatch() == []
++
++
++def test_the_gemini_video_control_is_a_visible_section_not_a_collapsed_cleanup_option():
++    source = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert "st.subheader('3b · AI video shots · Flow or Gemini Web')" in source
++    start = source.index("st.subheader('3b · AI video shots")
++    end = source.index("with st.expander('Gemini project cleanup · optional'", start)
++    block = source[start:end]
++    assert "'Gemini Web AI video shots (0-4)'" in block
++    assert 'expanded=False' not in block          # the old control was collapsed
++    assert "st.expander('Gemini video and project cleanup'" not in source
++    assert "key='studio-gemini-video-count'" in block
++    # and the choice is saved in the job, not only in the widget
++    assert '"gemini_video_count": int(gemini_video_count)' in source
++
++
++def test_the_create_success_message_says_where_the_gemini_shots_are_chosen():
++    source = (ROOT / 'app.py').read_text(encoding='utf-8')
++    created = source.index('st.success(f"Job created: `{job_id}`")')
++    following = source[created:created + 900]
++    assert 'Gemini Web is set for up to' in following
++    assert 'Gemini Web video shots' in following
++
++
++def test_the_approval_switch_is_visible_in_create_and_saved_in_the_job():
++    source = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert "Approve each saved Flow video request once, automatically" in source
++    assert '"flow_auto_approve_video_requests": bool(flow_auto_approve_video_requests)' in source
++
++
++def test_cli_has_the_switch_and_the_self_check_command():
++    help_text = subprocess.run([sys.executable, 'cli.py', 'v3', 'create', '--help'],
++                               cwd=str(ROOT), capture_output=True, text=True, timeout=120)
++    assert help_text.returncode == 0, help_text.stderr
++    assert '--no-auto-approve-flow-videos' in help_text.stdout
++    run = subprocess.run([sys.executable, 'cli.py', 'v3', 'self-check'],
++                         cwd=str(ROOT), capture_output=True, text=True, timeout=180)
++    assert run.returncode == 0, run.stdout + run.stderr
++    assert 'All checks passed.' in run.stdout
++    assert 'Studio ↔ create_job keywords' in run.stdout
++
++
++def test_the_gemini_cap_can_be_changed_on_a_saved_job(tmp_path, monkeypatch):
++    """A saved job that said 0 used to stay at 0 with no way to change it."""
++    from engine.providers.gemini_video import set_count
++
++    monkeypatch.chdir(tmp_path)
++    factory = Factory()
++    job = factory.create_job('A saved job with no Gemini shots', profile='FLOW_ECONOMY',
++                             target_seconds=30, dry_run=True)
++    job_dir = Path(factory.pm.job_dir(job))
++    assert factory._settings(job)['gemini_video_count'] == 0
++    assert set_count(job_dir, 3) == 3
++    assert factory._settings(job)['gemini_video_count'] == 3
++    with pytest.raises(ValueError) as error:
++        set_count(job_dir, 5)
++    assert 'zero to four' in str(error.value)
++    assert factory._settings(job)['gemini_video_count'] == 3      # a refused change changes nothing
++
++
++def test_the_picker_panel_offers_the_cap_and_describes_a_job_without_a_storyboard(tmp_path, monkeypatch):
++    source = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert "'Gemini Web shots this job may use (0-4)'" in source
++    assert 'Save the Gemini cap for this job' in source
++    assert 'This job has no storyboard yet, so there are no shots to choose between' in source
++    # the old, false explanation for an empty storyboard must be gone
++    assert "No shot is eligible for Gemini in this job: every Flow shot has an accepted take" in source
++    panel = source[source.index('def gemini_shot_panel'):source.index('def graphics_audit_panel')]
++    no_shots = panel.index("if not plan['shots']:")
++    all_ineligible = panel.index('No shot is eligible for Gemini in this job')
++    assert no_shots < all_ineligible
++
++
++def test_cli_changes_the_cap_of_a_saved_job(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    factory = Factory()
++    job = factory.create_job('A job for the cli cap', profile='FLOW_ECONOMY', target_seconds=30,
++                             dry_run=True)
++    run = subprocess.run([sys.executable, str(ROOT / 'cli.py'), 'v3', 'gemini-shots', job,
++                          '--count', '2'], cwd=str(tmp_path), capture_output=True, text=True,
++                         timeout=180)
++    assert run.returncode == 0, run.stdout + run.stderr
++    assert 'Gemini cap for this job: 2 shot(s)' in run.stdout
++    assert factory._settings(job)['gemini_video_count'] == 2
+diff --git a/tools/update_v7116_to_v7117.py b/tools/update_v7116_to_v7117.py
+deleted file mode 100644
+index d422339..0000000
+--- a/tools/update_v7116_to_v7117.py
++++ /dev/null
+@@ -1,172 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.117 update to a v7.0.116 installation.
+-
+-The field sequence that produced this release: v7.0.116 made an edition draw one card at a time, and the Odia video
+-that came back was rendered by 7.0.115 - its record had no card audit at all. Nothing said so. A missing field looked
+-exactly like "checked, fine", and the only way to find out was another hour-long render.
+-
+-v7.0.117 makes that question answerable in seconds, before a render:
+-
+-1. ``python3 cli.py v3 language-outputs <job> --card-audit`` - read-only. It lists, per language, the job's copied
+-   cards and the edition's own drafted cards, every pair that would share the screen (with the overlap in seconds),
+-   and exactly what a render will draw. It encodes nothing, writes nothing into the job, spends no Flow credit and
+-   uses no voice.
+-2. The file listing says **"cards: not recorded - this file was rendered before 7.0.116"** instead of staying
+-   silent, and "cards: one at a time" when the file does carry the record. Silence is never shown as a pass again.
+-
+-Nothing is rendered, re-recorded or charged by this update. To see the one-card fix in a video, that language still
+-has to be rendered again - after ``--card-audit`` says it is worth doing.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.117 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.117/tools/update_v7116_to_v7117.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.117/tools/update_v7116_to_v7117.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'cli.py',
+-    'engine/edition_files.py', 'engine/card_audit.py', 'engine/render/card_slots.py',
+-    'tests/test_v7117_card_audit.py',
+-    'CARD_AUDIT_V7_0_117.md', 'tools/update_v7116_to_v7117.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['879aad20f466cd8f29e3dbda4ee951bcaf030a89417701485108111d64b5203a'],
+-    'cli.py': ['cbd9087bad41fed7630111bd3aa2b06c1e35fcc90d1e92825d74d74099bd1d16'],
+-    'engine/edition_files.py': ['965ef0e6b4b90fa63f551982d5c6de80e3411502ddf85643b8300e2ce0607280'],
+-    'engine/render/card_slots.py': ['1ca496fa8b072bdc3c78238cf8cd4ded25627550a7b91d4d462be3a23a565543'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.116', '7.0.117')  # 7.0.117 allows a safe re-run after success
+-
+-# The 7.0.117 zip carries the 7.0.116 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.115', '7.0.116', 'tools/update_v7115_to_v7116.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.116 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.116 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.116 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.117'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-        if destination.exists() and not allowed and sha(destination) != expected[name]:
+-            # v7.0.117: a file this release introduces (engine/card_audit.py) must not overwrite a different file
+-            # that already sits at that path - the same promise as for an edited file, applied to a new one.
+-            raise ValueError('A different file already exists where this update installs ' + name +
+-                             '; preserved it and changed nothing. Move it aside and run the update again.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. Before spending a '
+-              'render on the one-card fix, ask whether this job needs it: python3 cli.py v3 language-outputs <job> '
+-              '--card-audit   (read-only, seconds - it names every card that would share the screen and what a '
+-              'render will draw)')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7117_to_v7118.py b/tools/update_v7117_to_v7118.py
+new file mode 100644
+index 0000000..35b9b0a
+--- /dev/null
++++ b/tools/update_v7117_to_v7118.py
+@@ -0,0 +1,188 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.118 update to a v7.0.117 installation.
++
++The field sequence that produced this release: a 3-language job (English/Hindi/Odia, 360 s, Storyboard Economy,
++"Create plan only", Flow approval "once") died on the final submit of the Create page with
++
++    TypeError: Factory.create_job() got an unexpected keyword argument 'flow_auto_approve_video_requests'
++
++and the Gemini video option could not be found in the app at all.
++
++1. Every "Create production" submit since v7.0.106 was broken. ``engine/studio_config.DEFAULTS`` had carried
++   ``flow_auto_approve_video_requests`` since v7.0.106, and the Studio form sends the whole config to
++   ``Factory.create_job()`` - which never learned the keyword. The CLI passes its arguments one by one, so it kept
++   working; only the app failed, and it failed *after* the form was filled in.
++   - ``create_job()`` now accepts the keyword, saves it in the job's ``settings.json`` and reads it back, so
++     unticking the switch really does turn automatic approval off.
++   - ``python3 cli.py v3 self-check`` answers "is this folder one consistent release?" in seconds: VERSION,
++     engine imports, the Studio <-> ``create_job()`` keyword agreement, and the render/edition modules. A mismatch
++     now names the setting, the file and the repair instead of raising a bare TypeError.
++   - ``python3 cli.py v3 create --no-auto-approve-flow-videos`` writes the same choice from the command line.
++
++2. The Gemini video shots were in the app, inside a collapsed expander called "Gemini video and project
++   cleanup" - it read as a cleanup option. It is now a visible section, **3b · AI video shots · Flow or
++   Gemini Web**, with the shot count, the approval switch and a plain explanation of where the *exact* shots are
++   picked. The job panel's "Gemini Web video shots" picker can also change the cap of an existing job
++   (``--count 0-4`` on the CLI), and a job with no storyboard now says so instead of claiming every shot already
++   has a video.
++
++Nothing is rendered, re-recorded or charged by this update. No job is created. This release only makes the Create
++button work and the Gemini choice findable.
++
++Usage (run from the existing installation folder, after extracting the 7.0.118 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.118/tools/update_v7117_to_v7118.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.118/tools/update_v7117_to_v7118.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py',
++    'engine/factory.py', 'engine/studio_config.py', 'engine/self_check.py',
++    'engine/providers/gemini_video.py',
++    'tests/test_v7118_studio_create_and_gemini_ui.py',
++    'STUDIO_SUBMIT_AND_GEMINI_V7_0_118.md', 'tools/update_v7117_to_v7118.py',
++]
++# Files as they exist in 7.0.117: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['7b35e40ad39ee364d9acdadf65478b1eeb83d096f492dc8655243c35aa71437b'],
++    'app.py': ['6aee28eabf0e07d590771d365ef18cfbe99ab71b26ba37b29f336ff0e041781a'],
++    'cli.py': ['2ad9e2ccce9964efeccbe08c820eb1ac77313c1c0d53464e79103c54a8f33bd2'],
++    'engine/factory.py': ['68201714056f62c4b1dfc0c88ae6a4163b2b1d2b192ad2e034b6bac106e53ddb'],
++    'engine/studio_config.py': ['c3d5b51dc7a771976213cf67b47eaab69ea7c8c873d435bcabb05f62bcf7c0dd'],
++    'engine/providers/gemini_video.py': ['e8f8692ce596e5e9b533b2ccfa0552a3ad3b280f54756cb5602d9338efdc1504'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.117', '7.0.118')  # 7.0.118 allows a safe re-run after success
++
++# The 7.0.118 zip carries the 7.0.117 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.116', '7.0.117', 'tools/update_v7116_to_v7117.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.117 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.117 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.117 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.118'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++        if destination.exists() and not allowed and sha(destination) != expected[name]:
++            # A file this release introduces (engine/self_check.py) must not overwrite a different file that
++            # already sits at that path - the same promise as for an edited file, applied to a new one.
++            raise ValueError('A different file already exists where this update installs ' + name +
++                             '; preserved it and changed nothing. Move it aside and run the update again.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
++        print('    python3 cli.py v3 self-check')
++        print('It prints PASSED for every check or names the file that is out of step. "Create production" works '
++              'again; nothing was rendered and no Flow credit was spent. The Gemini video shots are now the visible '
++              'section "3b · AI video shots · Flow or Gemini Web" in Create, and the exact shots are ticked in the '
++              'job panel section "Gemini Web video shots".')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

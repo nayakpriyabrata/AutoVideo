@@ -1,0 +1,1541 @@
+diff --git a/CAST_AND_EVERY_BATCH_V7_0_122.md b/CAST_AND_EVERY_BATCH_V7_0_122.md
+new file mode 100644
+index 0000000..7bcb87c
+--- /dev/null
++++ b/CAST_AND_EVERY_BATCH_V7_0_122.md
+@@ -0,0 +1,104 @@
++# v7.0.122 · Your chosen character actually appears, and every prepared narration is offered
++
++Two reports from the same page, straight after v7.0.121 was installed:
++
++> *"its only showing for the video which is have an activie job already"*
++> *"I think another problem is its not picking the selected charecter for the video generation"*
++
++Both were real. The first was the batch picker; the second was the cast, all the way from Create to the prompt.
++
++## 1 · The character you pick is now the character in the video
++
++The cast could be chosen in Create, but only inside a collapsed expander called **"Characters and recovery
++preferences · optional"** - after step 4, below the button that starts TTS. A saved character could therefore
++sit in Character Library while a video was planned without it. Worse, a job made from a prepared narration
++batch passed **no** `character_ids` at all, so its storyboard invented a new person every time.
++
++What changed:
++
++* **The cast is a visible step of Create.** It sits right under *1 · Video setup* with the character cards,
++  before the script, the branding and the narration. Under it the page says which character the video will
++  show, or, when the box is empty, *"the storyboard will invent a new person"* - the sentence that was missing.
++* **The narration remembers it.** *4 · Review language scripts → all TTS* records the selected characters in
++  `batch.json` (`request.character_ids`), and `resume` keeps them, so a batch cannot lose the cast.
++* **The picker asks for it, and writes it into the job.** *Run your prepared voices* now has a third control:
++
++  ```
++  Character in this video · optional (up to three)   [ Mira the presenter ]
++  The video will show: Mira the presenter. Their saved photos travel with the job and are reused at Resume.
++  ```
++
++  The box is pre-filled with the character saved with that narration. Leaving it empty is allowed - and the
++  caption says what that means. The success notice repeats the choice: `… voices attached; cast: Mira the
++  presenter`.
++* **A job can still be given its character afterwards.** Queue & Resume now has a **Cast · who appears in the
++  video** panel. While the job has no storyboard it lists your saved characters and **Save the cast for this
++  job** writes exactly the snapshots Create writes, so the next *Resume / continue job* plans that character.
++  It refuses once scenes exist - those scenes were compiled for a cast, and changing it quietly is worse than
++  saying no. Nothing on this panel generates, records or spends anything.
++* **Command line:** `python3 cli.py v3 use-voices <batch> --create-job --rights own_content --cast <id>` and a
++  new `python3 cli.py v3 cast <job>` (`--set <id[,id]>` to choose, no `--set` to read).
++
++From the snapshot to the prompt, unchanged and now actually reached: `assign_cast` writes the character into
++every shot's subject (`Mira the presenter, preserve face and wardrobe from the attached original character
++photo`), and every frame request carries their saved photos.
++
++## 2 · Every prepared narration is offered, not just the newest one
++
++The picker was built from `usable_now`, which deliberately hides a batch **as soon as a job holds its voices** -
++right for "what is still waiting", wrong for "what can I run". On top of that, the batch list only read
++finished batches inside the *Active* job (`list_speech_batches(..., include_finished=[active job])`), so a batch
++that lived in another saved job never appeared at all. With one unused batch in the installation, the list
++looked as if only that one existed.
++
++Now:
++
++* **Batch to run** lists every finished narration of the installation: the ones no job holds yet first, newest
++  first, then the ones whose voices a job already holds.
++* Each line says where its voices live: `voices in job 20261022-143856-…` or `not part of any job yet`, plus
++  time, topic, languages and `voices 3/3`.
++* Choosing a batch a job already holds warns first: *"Creating a job from them makes a second video with the
++  same narration; that job is not changed and nothing is generated until you press Resume."* - a second video
++  is allowed, silently duplicating is not.
++* `python3 cli.py v3 use-voices --list` prints the same full list and a final line naming every batch a job can
++  be made from.
++
++The to-do list further down the page keeps its v7.0.97 behaviour: it still shows only the Active job's batches
++and the stopped TTS runs separated out. The picker is the one place that must see everything.
++
++## Nothing else moves
++
++No voice is recorded again, nothing is re-rendered, no Flow credit is spent and no saved job, batch, journal or
++browser profile is deleted by this release. The cast of an existing job is only changed when you press
++**Save the cast for this job**, and only before its storyboard exists.
++
++## Verified
++
++* 13 new tests in `tests/test_v7122_cast_and_every_batch.py`: the visible Create step and its caption, the batch
++  recording the cast (and a resume keeping it), the job made from those voices holding `cast_snapshot.json` and
++  `character_snapshot.json`, `--cast` and `v3 cast`, a missing character refused before a job exists, a job with
++  scenes refusing a new cast, the picker listing a batch a job already holds (after the unused ones) and a
++  finished batch inside another job, the shot prompt carrying the identity, and the real Streamlit page creating
++  a job with the character chosen in the panel and saving a cast from the job panel.
++* Full suite on the unzipped release compared with a pristine v7.0.121 checkout: identical failure set.
++  v7.0.121: 55 failed, 1775 passed, 95 skipped, 11 errors. v7.0.122: 55 failed, 1789 passed, 95 skipped,
++  11 errors - the sorted FAILED/ERROR node-id lists are identical (`diff` empty) and the 14 extra passes
++  are this release's new tests. All 55+11 are the long-standing sandbox failures (this FFmpeg build has no
++  `drawtext`/`subtitles`) and the browser-shim tests.
++* Updater: dry run, `--apply`, backup, self-check, idempotent re-run, edited-file guard, chain guard from 7.0.120.
++* The patch `AutoVideoAI-v7.0.121-to-v7.0.122.patch` applied to a pristine 7.0.121 tree reproduces the release
++  tree exactly.
++
++## Install
++
++Stop the dashboard, extract the zip beside your installation, then from inside the installation folder:
++
++```
++# Windows Explorer names the extracted folder after the zip; `unzip` names it AutoVideoAI-v7.0.122.
++python3 ../AutoVideoAI-v7.0.122-Cast-And-Every-Batch/tools/update_v7121_to_v7122.py . --apply
++python3 cli.py v3 self-check
++```
++
++Then: **Queue & Resume** → *Run your prepared voices* → pick the batch → **Character in this video** → rights →
++**Create the job from these voices** → **Resume / continue job**. A job that has not planned its scenes yet can
++also be given its character from the **Cast** panel on the same page.
+diff --git a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+index 5061e39..7757d35 100644
+--- a/RELEASE_MANIFEST.json
++++ b/RELEASE_MANIFEST.json
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.121",
+-  "built_at": "2026-10-31T05:16:35+00:00",
++  "version": "7.0.122",
++  "built_at": "2026-10-31T08:57:14+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -92,6 +92,11 @@
+       "bytes": 1385,
+       "sha256": "89b75a62ebd645bf302a6563e32d7fb5b1a5583abe4f70e9616c3b98c2b9be62"
+     },
++    {
++      "path": "CAST_AND_EVERY_BATCH_V7_0_122.md",
++      "bytes": 6834,
++      "sha256": "f4f79ce58f6195597d8c6f166ef6914550d32a822c5489b159b8bf8949d37d67"
++    },
+     {
+       "path": "CAST_AND_FLOW_MUSIC_V7_0_17.md",
+       "bytes": 5573,
+@@ -1055,7 +1060,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "5d2e777ff57c1caa665fc56700bf39be4461e43efd3377c850717639909d8f46"
++      "sha256": "d23aa1959198e16b50aba707f58ca64ff041aa93dae581d02b91e774eb21b4c2"
+     },
+     {
+       "path": "VIDEO_APPROVAL_PENDING_V7_0_99.md",
+@@ -1119,8 +1124,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 286381,
+-      "sha256": "03b28c3ef8d8bfb51c55b54d4b6c5ab9684092894e6b4f7608a270cd65a9d536"
++      "bytes": 294725,
++      "sha256": "88b59855b94a3766076b63c0ca6ff58c01840bcd5987ef1c440c6879508b1b7e"
+     },
+     {
+       "path": "architecture.md",
+@@ -1234,8 +1239,8 @@
+     },
+     {
+       "path": "cli.py",
+-      "bytes": 125114,
+-      "sha256": "a78b716c67a0487bf59d4163a584c00287d5402e32cad95f6566b2f062dbf0f1"
++      "bytes": 128343,
++      "sha256": "0ddbeb11895d9229be33fa22c052e40b42cf4d244cbeb3eed7ac91748d088c93"
+     },
+     {
+       "path": "clip_config.yaml",
+@@ -1414,8 +1419,8 @@
+     },
+     {
+       "path": "engine/batch_actions.py",
+-      "bytes": 10654,
+-      "sha256": "dc19b2172f2e5192a553a59ae9dd71f48875796824d1261fc2655d482fdff91c"
++      "bytes": 12025,
++      "sha256": "60a13f336458bcdeb4233407b4ce32b738c96afc51b83708c2200d7e7c54e3d7"
+     },
+     {
+       "path": "engine/brand_logo.py",
+@@ -1449,8 +1454,8 @@
+     },
+     {
+       "path": "engine/cast.py",
+-      "bytes": 10268,
+-      "sha256": "bb6c5dcf0981f4b06a8d11343cf2ad5916239553a1e45db3df75daf09ff162d8"
++      "bytes": 12885,
++      "sha256": "f17589c7059218515eca9e889efcf8f8a3953d8741648701008e49e6c06a9818"
+     },
+     {
+       "path": "engine/channel_branding.py",
+@@ -2089,13 +2094,13 @@
+     },
+     {
+       "path": "engine/speech_batches.py",
+-      "bytes": 14197,
+-      "sha256": "5928bd9c7d4c5707e05c41624ae65f26024bc653fbc57b5db6781bcd8081698b"
++      "bytes": 15230,
++      "sha256": "52be37af9cb2bdebd859e28a5f02fd4dffca2238cd6bd9e1f51f65b9925da898"
+     },
+     {
+       "path": "engine/speech_cards.py",
+-      "bytes": 53369,
+-      "sha256": "169a0826319128106014ac3e60c50b23046fecaa68221df5d5b0429b1cae3f21"
++      "bytes": 53702,
++      "sha256": "8d9561ac7eca8fe6c4cd04e536c617aae58c0a2cee7cba3b7489cdc8090de0c6"
+     },
+     {
+       "path": "engine/stock_video.py",
+@@ -2889,8 +2894,13 @@
+     },
+     {
+       "path": "tests/test_v7121_run_prepared_voices.py",
+-      "bytes": 12488,
+-      "sha256": "51972756d19bcfcf3c9153ef8e670ada23ed44f7da6171d4c91db1e413f5b903"
++      "bytes": 12599,
++      "sha256": "42910c97fe76a5bb06aea7b78680b2296033ebb1a886b3beef594ec28ec99ab2"
++    },
++    {
++      "path": "tests/test_v7122_cast_and_every_batch.py",
++      "bytes": 21116,
++      "sha256": "c42c020427b87355523a3eaaf3142d0403ada0ac71441188212126193e8a68f8"
+     },
+     {
+       "path": "tests/test_v712_migration_cast_music.py",
+@@ -3448,9 +3458,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v7120_to_v7121.py",
+-      "bytes": 9077,
+-      "sha256": "617dc5453052244e1576b43c91b33fb64530ad9be4aac030d322b18765781b01"
++      "path": "tools/update_v7121_to_v7122.py",
++      "bytes": 9548,
++      "sha256": "3fa3a3db812ff5ed6fc2f3517413a783e14e161813affa2f5266d7de6cd13687"
+     },
+     {
+       "path": "topics.csv",
+diff --git a/VERSION b/VERSION
+index 99ab6a3..1101291 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.121
+\ No newline at end of file
++7.0.122
+\ No newline at end of file
+diff --git a/app.py b/app.py
+index 2cca826..9864a93 100644
+--- a/app.py
++++ b/app.py
+@@ -609,6 +609,69 @@ def narration_panel(job_id):
+         st.audio(row['path'])
+ 
+ 
++def cast_panel(job_id):
++    """Which saved character this video shows - and the one repair allowed before planning (v7.0.122).
++
++    A job made from a prepared narration batch held no cast at all, so its storyboard invented a new person
++    while the saved character sat unused in Character Library, and nothing on the page said so. This panel names
++    the cast in plain words and, while the job has no storyboard yet, lets the user set it: exactly the snapshots
++    Create writes, so the next Resume plans that character. Nothing is generated, recorded or spent here.
++    """
++    from engine.cast import job_cast, set_job_cast
++    from engine.content_library import CharacterLibrary
++    job_dir = F.pm.job_dir(job_id)
++    st.subheader('Cast · who appears in the video')
++    notice = st.session_state.pop('cast-notice', '')
++    if notice:
++        st.success(notice)
++    current = job_cast(job_dir)
++    if current:
++        photos = sum(len(row.get('references') or []) for row in current)
++        st.caption('This video shows ' + ', '.join(str(row.get('name') or row['id']) for row in current)
++                   + ' from Character Library, with ' + str(photos) + ' saved photo(s) copied into the job. '
++                   'Every generated shot is prompted with that identity.')
++    else:
++        st.warning('No saved character is set for this job, so its storyboard will invent a new person. If the '
++                   'video should show your character, set it here before you resume.')
++    try:
++        manifest = F.pm.load_manifest(job_id)
++    except Exception:
++        return
++    shots = list(getattr(manifest, 'shots', []) or [])
++    if shots:
++        if not current:
++            st.caption('This job already has its storyboard (' + str(len(shots)) + ' scene(s)), so its cast is '
++                       'fixed - the scenes were planned without one. Choose the character next time in '
++                       '“Run your prepared voices”, or in Create before you press GENERATE.')
++        return
++    saved = CharacterLibrary().list()
++    if not saved:
++        st.caption('Character Library is empty. Save a character identity there (photos + description) and it can '
++                   'be used by any video.')
++        return
++    from engine.job_monitor import is_running
++    known = {character['id']: character for character in saved}
++    remembered = [row['id'] for row in current if row['id'] in known]
++    chosen = st.multiselect('Character for this video · optional (up to three)', list(known), default=remembered,
++                            max_selections=3, key='job-cast-' + job_id,
++                            format_func=lambda identifier: known[identifier]['name'] + ' · ' + identifier,
++                            help='Saved in this job only. The next Resume plans the storyboard with this character '
++                                 'and every frame uses their saved photos. Creating the video still spends credits.')
++    running = is_running(job_dir)
++    if running:
++        st.caption('This job is running now. Stop it, save the cast, then resume so the storyboard is planned with it.')
++    if st.button('Save the cast for this job', key='job-cast-save-' + job_id, disabled=running):
++        try:
++            result = set_job_cast(job_dir, chosen)
++            st.session_state['cast-notice'] = (
++                'Saved. This job will plan its storyboard with ' + ', '.join(result['names'])
++                + '. Nothing was generated; press “Resume / continue job”.' if result['names'] else
++                'Cleared. This job will plan a new generic cast. Nothing was generated.')
++            st.rerun()
++        except Exception as error:
++            st.error(str(error))
++
++
+ def language_edition_panel(job_id):
+     """Language editions of a job: status, exports and an explicit render action.
+ 
+@@ -978,6 +1041,18 @@ if page == "STUDIO":
+     from engine.content_library import CharacterLibrary
+     studio_characters = CharacterLibrary().list()
+     from engine.studio_widgets import cast_picker
++    # v7.0.122: this picker used to sit inside a collapsed "Characters and recovery preferences · optional"
++    # expander after step 4, so a job could be created with no character at all even though one was saved -
++    # and then nobody could tell why the video showed a stranger. The choice is a visible step now, and it is
++    # recorded with the narration batch so a job made from those voices plans the same character.
++    studio_cast = cast_picker(st, 'studio-cast')
++    if studio_cast:
++        st.caption('The video will show '
++                   + ', '.join(character['name'] for character in studio_characters if character['id'] in studio_cast)
++                   + '. Their saved photos are copied into the job and written into every shot prompt.')
++    elif studio_characters:
++        st.caption('Empty: the storyboard will invent a new person. Choose a character above to keep one face '
++                   'across the video.')
+     with st.expander('2 · Review script and cast · optional', expanded=False):
+         draft_topic = topic
+         st.caption('Script topic: ' + (topic or 'Enter your topic above.'))
+@@ -1253,6 +1328,7 @@ if page == "STUDIO":
+                 with production_slot(batch_path):
+                     from engine.render.educational_cards import is_educational
+                     prepare_batch(batch_path,batch_script,language_code,batch_languages,provider=tts_provider_value,
++                        character_ids=studio_cast,
+                         audio_path=narration_input_path.strip() or None,cleanup=draft_cleanup,progress=batch_progress,localized_scripts=reviewed_language_scripts,
+                         text_cards=bool(st.session_state.get('studio-cards-'+studio_audio_mode, studio_voice_on)),
+                         hooks=bool(studio_voice_on and st.session_state.get('studio-hooks-enabled', False)),
+@@ -1305,8 +1381,7 @@ if page == "STUDIO":
+     with st.expander('Gemini project cleanup · optional', expanded=False):
+         flow_auto_cleanup_images = st.checkbox('Delete captured image-only Flow projects automatically', value=False,
+             help='After this job finishes, deletes isolated image-only Flow projects whose downloaded image and request record are verified locally. Video, mixed, pending and changed projects are retained. Off by default because deletion removes the Flow copy.')
+-    with st.expander('Characters and recovery preferences · optional', expanded=False):
+-        studio_cast = cast_picker(st,'studio-cast')
++    with st.expander('Recovery preferences · optional', expanded=False):
+         studio_replace_images = st.checkbox('Regenerate an unresolved image once after 3 recovery retries',value=False,key='studio-replace-images',
+             help='May leave an unused duplicate in Flow. Image-only; maximum 30 replacements for the job, one per image. Original requests retained. Replacement credit approval is capped at zero.')
+         studio_local_close = st.checkbox('Allow saved opening-image guidance when a Flow closing image cannot recover',
+@@ -2096,7 +2171,7 @@ elif page == "QUEUE":
+     # 7.0.83: Create step 4 batches (narration and TTS before a job exists) can be corrected and resumed here.
+     from engine.speech_batches import (list_speech_batches, resume_speech_batch, correct_speech_scripts,
+                                        language_label, partition_for_job, with_attachments, display_label,
+-                                       actionable, usable_now)
++                                       actionable, pickable)
+     from engine.production_lock import production_slot
+     speech_rows = list_speech_batches(
+         [F.pm.job_dir(j['job_id']) for j in jobs],
+@@ -2115,18 +2190,23 @@ elif page == "QUEUE":
+     # every Create step 4 session of the installation looked like the same line of text.
+     job_dirs = [F.pm.job_dir(j['job_id']) for j in jobs]
+     all_rows = with_attachments(own_rows + other_rows, job_dirs)
++    # v7.0.122: the picker below must see every finished narration of the installation - including a finished
++    # batch that lives inside a saved job, which the to-do list hides on purpose (7.0.97 keeps that list scoped
++    # to the Active job). Before this, a batch disappeared from the picker as soon as it was part of a job, so
++    # only the newest Create step 4 session was ever offered.
++    runnable = pickable(with_attachments(
++        list_speech_batches(job_dirs, include_finished=job_dirs), job_dirs))
+     if not active_root:
+         # No Active job: partition_for_job returns everything as "own". A batch is not a job, so nothing here
+         # is the job's own; keep them all as other so they are shown collapsed and labelled.
+         own_rows, other_rows = [], all_rows
+-    newest_key = max((row.get('created_ts') or 0) for row in all_rows) if all_rows else 0
++    newest_key = max([(row.get('created_ts') or 0) for row in all_rows + runnable] or [0])
+     unattached_ready = [row for row in all_rows if row['ready'] and not row['attached']]
+     # v7.0.121: a TTS run that stopped inside a job which already narrates is not "to finish". It is kept and
+     # shown separately, with the reason, instead of asking to be resumed for ever.
+     own_rows = actionable(own_rows)
+     stale_rows = [row for row in all_rows if row.get('stale')]
+     other_rows = [row for row in actionable(other_rows)]
+-    runnable = usable_now(all_rows)
+     own_attention = [row for row in own_rows if not row['ready']]
+     tts_choices = ['auto', 'gemini', 'gemini-lite', 'groq', 'elevenlabs', 'kokoro', 'edge', 'gtts']
+ 
+@@ -2135,18 +2215,52 @@ elif page == "QUEUE":
+     # "how do I resume this so it creates a job and a video?" - so the answer is now the first thing on the page.
+     if runnable:
+         from engine.batch_actions import RIGHTS_DECLARATIONS, create_job_from_batch, measured_seconds
++        from engine.content_library import CharacterLibrary
+         st.subheader('Run your prepared voices')
+-        st.caption('These batches already hold the narration for every selected language. Choosing one creates a '
+-                   'job whose script is exactly that narration, with those voices attached - no voice is recorded '
+-                   'again and no video is generated until the job runs. The first Flow credit is spent only when '
+-                   'you press Resume (or when you tick the start box below).')
++        st.caption('Every finished narration of this installation is here - the ones no job holds yet first, then '
++                   'the ones whose voices a job already holds. Choosing one creates a job whose script is exactly '
++                   'that narration, with those voices attached - no voice is recorded again and no video is '
++                   'generated until the job runs. The first Flow credit is spent only when you press Resume (or '
++                   'when you tick the start box below).')
+         choice = {row['key']: row for row in runnable}
+         picked_key = st.selectbox(
+             'Batch to run', list(choice),
+             format_func=lambda key: display_label(choice[key], newest=bool(choice[key].get('created_ts') == newest_key)),
+             key='queue-run-batch')
+         picked = choice[picked_key]
++        if picked.get('attached'):
++            st.warning('These exact voices are already saved in job ' + ', '.join(picked['attached_to'])
++                       + '. Creating a job from them makes a **second** video with the same narration; that job is '
++                       'not changed and nothing is generated until you press Resume.')
+         seconds = measured_seconds(picked)
++        # v7.0.122: the characters of the video are chosen here and recorded in the job. Without this the
++        # storyboard invented a new person even when a saved character had been picked in Create.
++        saved_characters = CharacterLibrary().list()
++        known = {character['id']: character for character in saved_characters}
++        remembered = [identifier for identifier in picked.get('character_ids') or [] if identifier in known]
++        chosen_cast = []
++        if saved_characters:
++            chosen_cast = st.multiselect(
++                'Character in this video · optional (up to three)', list(known), default=remembered,
++                max_selections=3, key='queue-run-cast-' + picked['key'],
++                format_func=lambda identifier: known[identifier]['name'] + ' · ' + identifier,
++                help='The storyboard writes these saved characters into every shot and each generated frame uses '
++                     'their photos. Empty means a new generic cast.')
++            if chosen_cast:
++                st.caption('The video will show: ' + ', '.join(known[identifier]['name'] for identifier in chosen_cast)
++                           + '. Their saved photos travel with the job and are reused at Resume.')
++            elif remembered:
++                st.caption('This narration was written for ' + ', '.join(known[i]['name'] for i in remembered)
++                           + '; leave them selected to keep that character, or clear the box for a new cast.')
++            elif picked.get('character_ids'):
++                st.caption('The character saved with this narration is no longer in Character Library. Choose '
++                           'another here, or leave empty for a new generic cast.')
++            else:
++                st.caption('No saved character chosen: the storyboard will invent a new person. Pick one above to '
++                           'keep their face and wardrobe in the video.')
++        else:
++            st.caption('No saved characters yet. Character Library → “Save character identity”, then the video '
++                       'made here can use that face.')
+         rights = st.selectbox('How may this narration be used?', list(RIGHTS_DECLARATIONS),
+                               format_func=lambda code: RIGHTS_DECLARATIONS[code], key='queue-run-rights',
+                               help='Your own statement, saved in the approved plan. The app never assumes it.')
+@@ -2156,12 +2270,16 @@ elif page == "QUEUE":
+             try:
+                 with production_slot(Path(picked['path'])):
+                     created = create_job_from_batch(F, picked, declaration=rights,
+-                                                    target_seconds=seconds or None)
++                                                    target_seconds=seconds or None,
++                                                    character_ids=chosen_cast)
+                 st.session_state.job_id = created['job_id']
+                 st.session_state['speech-batch-notice'] = (
+                     'Created job `' + created['job_id'] + '` from this narration (' + str(created['seconds'])
+                     + ' s, ' + ', '.join(language_label(code) for code in created['languages'])
+-                    + ' voices attached).'
++                    + ' voices attached; '
++                    + ('cast: ' + ', '.join(created['characters']) if created.get('characters')
++                       else 'no saved character - a new generic cast')
++                    + ').'
+                     + (' It is starting now; follow the monitor below.' if start_now else
+                        ' Nothing has been generated yet - press “Resume / continue job” below to make the video.'))
+                 if start_now:
+@@ -2204,7 +2322,11 @@ elif page == "QUEUE":
+                 st.session_state['speech-batch-notice'] = (
+                     'Created job `' + created['job_id'] + '` from this narration (' + str(created['seconds'])
+                     + ' s, ' + ', '.join(language_label(code) for code in created['languages'])
+-                    + ' voices attached). Nothing has been generated: its credit cap is 100 Flow credits and the '
++                    + ' voices attached; '
++                    + ('cast: ' + ', '.join(created['characters']) if created.get('characters')
++                       else 'no saved character - pick one in “Run your prepared voices” above if the video should '
++                            'show your character')
++                    + '). Nothing has been generated: its credit cap is 100 Flow credits and the '
+                     'first credit is spent only when you press “Resume / continue job” below.')
+                 st.rerun()
+             except Exception as error:
+@@ -2361,6 +2483,7 @@ elif page == "QUEUE":
+         monitor_job(st.session_state.job_id)
+         gemini_shot_panel(st.session_state.job_id)
+         narration_panel(st.session_state.job_id)
++        cast_panel(st.session_state.job_id)
+         language_edition_panel(st.session_state.job_id)
+         graphics_audit_panel(st.session_state.job_id)
+         from engine.job_monitor import snapshot
+diff --git a/cli.py b/cli.py
+index 39593e4..2bda58b 100644
+--- a/cli.py
++++ b/cli.py
+@@ -484,8 +484,18 @@ def main_v3(argv):
+                     help="how you may use this narration (required with --create-job; saved in the approved plan)")
+     uv.add_argument("--profile", default="STORYBOARD_ECONOMY")
+     uv.add_argument("--seconds", type=int, default=0, help="target duration; default = measured voice length")
++    uv.add_argument("--cast", default="", metavar="ID[,ID]",
++                    help="saved character id(s) for this video (Character Library); default = the cast recorded "
++                         "with the batch, if any. Without a cast the storyboard invents a new person")
+     uv.add_argument("--outputs-root", default="outputs")
+ 
++    ca = sub.add_parser("cast", help="Show or set the saved characters a job's storyboard will use")
++    ca.add_argument("job_id")
++    ca.add_argument("--set", default="", metavar="ID[,ID]",
++                    help="character id(s) from Character Library; empty value clears the cast. Only possible "
++                         "before the storyboard exists")
++    ca.add_argument("--outputs-root", default="outputs")
++
+     tn = sub.add_parser("tune", help="Adjust music ducking, fades and the edition narration fit of a saved job")
+     tn.add_argument("job_id")
+     tn.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
+@@ -1451,9 +1461,9 @@ def main_v3(argv):
+         return
+     elif args.cmd == "use-voices":
+         from engine import narration_assets
+-        from engine.speech_batches import list_speech_batches, with_attachments, usable_now
+-        from engine.batch_actions import (RIGHTS_DECLARATIONS, attach, create_job_from_batch, jobs_using_script,
+-                                          measured_seconds)
++        from engine.speech_batches import list_speech_batches, with_attachments, usable_now, pickable
++        from engine.batch_actions import (RIGHTS_DECLARATIONS, attach, batch_cast, create_job_from_batch,
++                                          jobs_using_script, measured_seconds)
+         job_dirs = [f.pm.job_dir(job["job_id"]) for job in f.db.list(5000)]
+         rows = with_attachments(list_speech_batches(job_dirs), job_dirs)
+         matches = [row for row in rows if not args.batch or args.batch in row["key"]
+@@ -1467,8 +1477,10 @@ def main_v3(argv):
+                       + "  voices " + str(len(row["done"])) + "/" + str(len(row["editions"]))
+                       + ("  · " + row["topic"][:50] if row["topic"] else "")
+                       + ("  · READY" if row["ready"] else "")
+-                      + ("  · in a job" if row["attached"] else "  · not part of a job yet")
+-                      + ("  · stopped run a job no longer needs" if row["stale"] else ""))
++                      + ("  · voices in job " + ", ".join(row["attached_to"]) if row["attached"]
++                         else "  · not part of a job yet")
++                      + ("  · stopped run a job no longer needs" if row["stale"] else "")
++                      + ("  · cast " + ", ".join(batch_cast(row)) if batch_cast(row) else ""))
+                 print("    " + row["path"])
+             if not (args.create_job or args.attach_to):
+                 ready = usable_now(rows)
+@@ -1476,8 +1488,14 @@ def main_v3(argv):
+                 print("Create a job from a batch:  python3 cli.py v3 use-voices <batch> --create-job --rights own_content")
+                 print("  rights: " + " | ".join(code for code in RIGHTS_DECLARATIONS))
+                 print("Attach to a job with this script:  python3 cli.py v3 use-voices <batch> --attach-to <job_id>")
+-                if ready:
+-                    print("Ready and not in a job: " + ", ".join(row["key"] for row in ready))
++                runnable = pickable(rows)
++                if runnable:
++                    print("")
++                    print("Every batch a job can be made from (unused first): "
++                          + ", ".join(row["key"] + (" (voices in a job)" if row["attached"] else "")
++                                      for row in runnable))
++                print("Choose the character for the video:  --cast <character id>   "
++                      "(python3 cli.py v3 cast --help)")
+                 return
+         if not matches:
+             raise SystemExit("No speech batch matches " + repr(args.batch))
+@@ -1494,18 +1512,51 @@ def main_v3(argv):
+         if not args.rights:
+             raise SystemExit("Choose how you may use this narration: --rights "
+                              + " | ".join(RIGHTS_DECLARATIONS))
++        cast = [item.strip() for item in str(getattr(args, "cast", "") or "").split(",") if item.strip()]
+         try:
+             created = create_job_from_batch(f, row, declaration=args.rights, profile=args.profile,
+-                                            target_seconds=args.seconds or None)
++                                            target_seconds=args.seconds or None,
++                                            character_ids=cast or None)
+         except ValueError as error:
+             raise SystemExit("No job was created: " + str(error)) from error
+         print("Created job " + created["job_id"] + " from this narration (" + str(created["seconds"]) + " s, "
+-              + ", ".join(created["languages"]) + " voices attached).")
++              + ", ".join(created["languages"]) + " voices attached; "
++              + ("cast: " + ", ".join(created["characters"]) if created.get("characters")
++                 else "no saved character, so the storyboard will invent a new person") + ").")
+         print("Plan: " + created["plan"])
+         for label in narration_assets.labels(f.pm.job_dir(created["job_id"])):
+             print("  narration: " + label)
+         print("Nothing has been generated. Make the video with: python3 cli.py v3 resume " + created["job_id"])
+         return
++    elif args.cmd == "cast":
++        from engine.cast import job_cast, set_job_cast
++        from engine.content_library import CharacterLibrary
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        if args.set:
++            chosen = [item.strip() for item in args.set.split(",") if item.strip()]
++            try:
++                result = set_job_cast(job_dir, chosen if chosen else [])
++            except ValueError as error:
++                raise SystemExit("Nothing was changed: " + str(error)) from error
++            print("Cast saved for " + args.job_id + ": "
++                  + (", ".join(result["names"]) if result["names"] else "no saved character (a new generic cast)"))
++            print("Nothing was generated. Make or continue the video with: python3 cli.py v3 resume " + args.job_id)
++            return
++        current = job_cast(job_dir)
++        if current:
++            print("Cast of " + args.job_id + ":")
++            for row in current:
++                print("  " + str(row.get("name") or row["id"]) + " · " + str(row["id"]) + " · "
++                      + str(len(row.get("references") or [])) + " saved photo(s)")
++        else:
++            print("No saved character is set for " + args.job_id
++                  + ", so its storyboard invents a new person.")
++        saved = CharacterLibrary().list()
++        if saved:
++            print("Saved characters: " + " | ".join(row["name"] + "=" + row["id"] for row in saved))
++        print("Set it with: python3 cli.py v3 cast " + args.job_id + " --set <character id>")
++        return
+     elif args.cmd == "gemini-shots":
+         from engine.providers.gemini_video import choose_shots, gemini_shot_plan
+         from engine.support_report import resolve_job_dir
+diff --git a/engine/batch_actions.py b/engine/batch_actions.py
+index 5d43aae..3e7f5f0 100644
+--- a/engine/batch_actions.py
++++ b/engine/batch_actions.py
+@@ -180,9 +180,28 @@ def measured_seconds(batch) -> int:
+     return int(round(primary or max(durations)))
+ 
+ 
++def batch_cast(batch) -> list[str]:
++    """The saved characters this narration was written for, if Create recorded them (v7.0.122)."""
++    return [str(identifier) for identifier in (batch.get('character_ids') or []) if str(identifier).strip()]
++
++
+ def create_job_from_batch(factory, batch, *, profile='STORYBOARD_ECONOMY', declaration,
+-                          target_seconds=None, max_credits=100) -> dict:
+-    """Create a saved job whose script is these voices' words, then attach the voices. Generates nothing."""
++                          target_seconds=None, max_credits=100, character_ids=None) -> dict:
++    """Create a saved job whose script is these voices' words, then attach the voices. Generates nothing.
++
++    v7.0.122: the cast is carried too. ``character_ids`` wins; otherwise the characters recorded with the
++    batch are used. Without either, the job's storyboard invents a new person, which is what made a finished
++    video ignore the character saved in Character Library.
++    """
++    cast = list(dict.fromkeys(str(identifier) for identifier in
++                              (character_ids if character_ids is not None else batch_cast(batch))))
++    if cast:
++        from .cast import snapshot_cast
++        try:
++            snapshot_cast(cast)
++        except Exception as error:
++            raise ValueError('These characters cannot be used: ' + str(error)
++                             + ' Open Character Library, re-approve the missing photo, then choose again.')
+     plan_path = plan_for_batch(batch, declaration=declaration)
+     seconds = int(target_seconds or measured_seconds(batch) or 0)
+     if not 10 <= seconds <= 7200:
+@@ -199,9 +218,19 @@ def create_job_from_batch(factory, batch, *, profile='STORYBOARD_ECONOMY', decla
+                 'hooks_enabled': bool(request.get('hooks', False)),
+                 'speech_cards_enabled': False, 'gemini_video_count': 0,
+                 'tts_provider': str(request.get('provider') or 'auto'),
++                'character_ids': cast,
+                 'approved_plan_path': str(plan_path), 'max_credits': int(max_credits)})
+     kwargs = config_to_factory_kwargs(cfg)
+     job_id = factory.create_job(topic=cfg['topic'], video_type=cfg['video_type'],
+                                 aspect=cfg['aspect'], **kwargs)
+     attached = attach(batch, factory.pm.job_dir(job_id), factory=factory)
+-    return {'job_id': job_id, 'plan': str(plan_path), 'seconds': seconds, **attached}
++    return {'job_id': job_id, 'plan': str(plan_path), 'seconds': seconds,
++            'character_ids': cast, 'characters': [_cast_name(identifier) for identifier in cast], **attached}
++
++
++def _cast_name(identifier):
++    from .content_library import CharacterLibrary
++    try:
++        return str(CharacterLibrary().get(identifier)['name'])
++    except Exception:
++        return str(identifier)
+diff --git a/engine/cast.py b/engine/cast.py
+index 07da96e..d39e603 100644
+--- a/engine/cast.py
++++ b/engine/cast.py
+@@ -176,3 +176,54 @@ def propose_speakers(source_url, transcript):
+         raise ValueError('Speaker proposal needs 1–3 identifiable speakers; review manually')
+     if any(t.get('speaker_id') not in {s['speaker_id'] for s in speakers} for t in proposal['turns']):raise ValueError('Unknown speaker in proposal')
+     return proposal
++
++
++def job_cast(job_dir):
++    """The saved characters this job's storyboard will use, from its own snapshot (v7.0.122).
++
++    ``character_snapshot.json`` / ``cast_snapshot.json`` are written by Create when the job is made, so a job
++    always says which saved character it carries - including a job made from a prepared narration batch.
++    """
++    root = Path(job_dir)
++    for name, key in (('cast_snapshot.json', 'characters'), ('character_snapshot.json', None)):
++        data = read(root / name)
++        if not isinstance(data, dict):
++            continue
++        rows = (data.get(key) if key else [data]) or []
++        rows = [row for row in rows if isinstance(row, dict) and row.get('id')]
++        if rows:
++            return rows
++    return []
++
++
++def set_job_cast(job_dir, ids):
++    """Choose the saved characters of a job that has not planned its scenes yet (v7.0.122).
++
++    A job made from a prepared narration batch holds no cast, so its storyboard invents a new person even
++    though the user saved a character. Writing the same snapshots Create writes means the next Resume plans
++    that exact character. A job whose storyboard already exists keeps the identity its shots were planned
++    with - its shots carry the reference photos they were compiled for, so changing the cast now would be a
++    silently different video.
++    """
++    root = Path(job_dir)
++    if not root.is_dir():
++        raise ValueError('This job folder does not exist: ' + str(root))
++    manifest = read(root / 'production_manifest.json', {}) or {}
++    shots = [shot for shot in (manifest.get('shots') or []) if isinstance(shot, dict)]
++    if shots:
++        raise ValueError('This job already has a storyboard (' + str(len(shots)) + ' scene(s)), so its cast is '
++                         'fixed. Nothing was changed. Choose the character when you create the next video; '
++                         'this job keeps the identity its scenes were planned with.')
++    wanted = list(dict.fromkeys(str(identifier) for identifier in (ids or [])))
++    cast = snapshot_cast(wanted) if wanted else []
++    if cast:
++        save(root / 'character_snapshot.json', cast[0])
++        save(root / 'cast_snapshot.json', {'characters': cast})
++    else:
++        for name in ('character_snapshot.json', 'cast_snapshot.json'):
++            path = root / name
++            if path.is_file():
++                path.unlink()
++    return {'ids': [character['id'] for character in cast],
++            'names': [str(character.get('name') or character['id']) for character in cast],
++            'photos': sum(len(character.get('references') or []) for character in cast)}
+diff --git a/engine/speech_batches.py b/engine/speech_batches.py
+index cee5f90..d61c12a 100644
+--- a/engine/speech_batches.py
++++ b/engine/speech_batches.py
+@@ -58,6 +58,8 @@ def _row(folder: Path, origin: str) -> dict | None:
+         'error': state.get('error', ''),
+         'scripts': scripts,
+         'request': request,
++        # v7.0.122: the saved characters this narration was written for, recorded when the batch was made.
++        'character_ids': [str(identifier) for identifier in (request.get('character_ids') or [])],
+         # v7.0.119: a batch used to be listed as "Create step 4 · English, Hindi, Odia · ready" with nothing
+         # that told one session apart from another. Topic, exact time and where its voices ended up do.
+         'topic': str(request.get('topic') or '').strip(),
+@@ -231,6 +233,18 @@ def usable_now(rows) -> list[dict]:
+     return sorted(ready, key=lambda row: -(row.get('created_ts') or 0))
+ 
+ 
++def pickable(rows) -> list[dict]:
++    """Every ready batch a job can be made from, newest first, unused ones before copies (v7.0.122).
++
++    ``usable_now`` answers "what is still waiting for a job" and hides a batch as soon as one job holds its
++    voices. That is the wrong question for the picker: a finished narration whose voices were already copied
++    into one job is still prepared narration you may want for a second video, and hiding it made the picker
++    look as if only the newest session existed. They are listed after the unused ones, never instead of them.
++    """
++    ready = [row for row in rows or [] if row.get('ready') and not row.get('stale')]
++    return sorted(ready, key=lambda row: (bool(row.get('attached')), -(row.get('created_ts') or 0)))
++
++
+ def display_label(row, *, newest=False) -> str:
+     """One identifying line for a batch: time, topic, languages, state, and whether a job holds it."""
+     parts = [row.get('origin') or 'Create step 4', row.get('created') or 'time not recorded']
+@@ -304,7 +318,8 @@ def resume_speech_batch(folder, *, provider=None, progress=None) -> dict:
+         provider=chosen, audio_path=audio_path, cleanup=request.get('cleanup', 'delete-after-read'),
+         progress=progress, localized_scripts=scripts, text_cards=request.get('text_cards', True),
+         educational=request.get('educational', False), topic=request.get('topic', ''),
+-        card_provider=request.get('card_provider', 'gemini-web'), hooks=request.get('hooks', False))
++        card_provider=request.get('card_provider', 'gemini-web'), hooks=request.get('hooks', False),
++        character_ids=request.get('character_ids') or None)
+ 
+ 
+ def language_label(code: str) -> str:
+diff --git a/engine/speech_cards.py b/engine/speech_cards.py
+index 8cf327c..dea2d05 100644
+--- a/engine/speech_cards.py
++++ b/engine/speech_cards.py
+@@ -726,7 +726,8 @@ def foreign_script_words(text, language):
+ 
+ 
+ def prepare_batch(root,source_script,source_language,languages,*,provider='auto',audio_path=None,cleanup='delete-after-read',progress=None,localized_scripts=None,
+-                  text_cards=True,educational=False,topic='',card_provider='gemini-web',hooks=False,draft_cards=True):
++                  text_cards=True,educational=False,topic='',card_provider='gemini-web',hooks=False,draft_cards=True,
++                  character_ids=None):
+     """Voices for every language first. Card and hook drafts (Gemini Web) follow only when draft_cards is True.
+ 
+     7.0.86: draft_cards=False stops after the voices (phase voices_ready). The cards can be drafted later with
+@@ -753,9 +754,12 @@ def prepare_batch(root,source_script,source_language,languages,*,provider='auto'
+         if any(not scripts[x] for x in editions):raise ValueError('Every selected language needs a reviewed localized script before TTS')
+         if scripts.get(source_language)!=source_script.strip():raise ValueError('Reviewed master script changed; prepare the language scripts again')
+     scripts_hash=hashlib.sha256(json.dumps(scripts,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
++    # v7.0.122: the cast chosen in Create travels with the narration, so a job made from these voices later
++    # plans the same saved character instead of inventing a new person.
++    cast=[str(identifier) for identifier in (character_ids or []) if str(identifier).strip()]
+     request={'provider':provider,'audio_path':str(audio_path) if audio_path else '','cleanup':cleanup,'text_cards':bool(text_cards),
+              'educational':bool(educational),'topic':str(topic or ''),'card_provider':str(card_provider or 'gemini-web'),'hooks':bool(hooks),
+-             'draft_cards':bool(draft_cards)}
++             'draft_cards':bool(draft_cards),'character_ids':cast}
+     state={'source_language':source_language,'source_script':source_script,'editions':editions,'scripts':scripts,'scripts_sha256':scripts_hash,
+            'request':request,'error':'','bundles':{},'phase':'tts'}
+     # v7.0.119: record when the batch was made (kept when a later resume re-prepares it), so Jobs & Recovery can
+diff --git a/tests/test_v7121_run_prepared_voices.py b/tests/test_v7121_run_prepared_voices.py
+index 8da45d4..f956197 100644
+--- a/tests/test_v7121_run_prepared_voices.py
++++ b/tests/test_v7121_run_prepared_voices.py
+@@ -165,7 +165,8 @@ def test_abandoned_runs_are_excluded_from_the_to_finish_count():
+     assert 'own_rows = actionable(own_rows)' in block
+     assert 'other_rows = [row for row in actionable(other_rows)]' in block
+     assert 'stale_rows = [row for row in all_rows if row.get(\'stale\')]' in block
+-    assert 'runnable = usable_now(all_rows)' in block
++    # v7.0.122 widened the picker to every finished narration (`pickable`); the to-do list is unchanged.
++    assert 'runnable = pickable(with_attachments(' in block
+ 
+ 
+ def test_the_cli_offers_the_same_path(install):
+diff --git a/tests/test_v7122_cast_and_every_batch.py b/tests/test_v7122_cast_and_every_batch.py
+new file mode 100644
+index 0000000..3f3a644
+--- /dev/null
++++ b/tests/test_v7122_cast_and_every_batch.py
+@@ -0,0 +1,372 @@
++"""v7.0.122: the video keeps the character you chose, and every prepared narration is offered.
++
++Two field reports, right after v7.0.121 was installed:
++
++* "its only showing for the video which is have an active job already" - the *Run your prepared voices* picker
++  was built from `usable_now`, which hides a batch the moment a job holds its voices, and the batch list itself
++  only read finished batches inside the Active job. So a second prepared narration was invisible and the picker
++  looked as if only the newest Create step 4 session existed.
++* "its not picking the selected character for the video generation" - the cast was chosen in Create inside a
++  collapsed "Characters and recovery preferences · optional" expander, was never recorded with the narration
++  batch, and `create_job_from_batch` passed no `character_ids` at all. A job made from prepared voices
++  therefore planned a brand-new person, whatever was selected.
++
++So: the cast is a visible step of Create, it travels with the batch, the picker asks for it and writes it into
++the job, a job without a storyboard can still be given one, and the picker lists every finished narration.
++"""
++import hashlib
++import json
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++from engine.cast import job_cast, set_job_cast
++from engine.content_library import CharacterLibrary
++from engine.speech_batches import list_speech_batches, pickable, with_attachments
++
++ROOT = Path(__file__).resolve().parent.parent
++APP = (ROOT / 'app.py').read_text(encoding='utf-8')
++CLI = (ROOT / 'cli.py').read_text(encoding='utf-8')
++WORDS = [{'word': word, 'start': index * 1.0, 'end': index * 1.0 + 0.9}
++         for index, word in enumerate('small daily habits beat big plans'.split())]
++
++
++def _voices(folder: Path, languages, duration=61.5) -> dict:
++    bundles = {}
++    for code in languages:
++        lang = folder / code / 'k1'
++        lang.mkdir(parents=True, exist_ok=True)
++        audio = lang / 'voice.mp3'
++        audio.write_bytes(b'ID3' + folder.name.encode() + b'\0' * 6000)
++        (lang / 'words.json').write_text(json.dumps(WORDS))
++        bundles[code] = {'language': code, 'audio': str(audio), 'words': str(lang / 'words.json'),
++                         'audio_sha256': hashlib.sha256(audio.read_bytes()).hexdigest(),
++                         'duration': duration, 'timing_source': 'measured'}
++    return bundles
++
++
++def make_batch(folder: Path, script: str, *, topic='Small habits', languages=('en', 'hi', 'or'),
++               character_ids=None, origin='Create step 4'):
++    folder.mkdir(parents=True, exist_ok=True)
++    (folder / 'batch.json').write_text(json.dumps({
++        'source_language': 'en', 'source_script': script, 'editions': list(languages),
++        'scripts': {code: script for code in languages},
++        'request': {'provider': 'gemini', 'topic': topic, 'character_ids': list(character_ids or [])},
++        'error': '', 'bundles': _voices(folder, languages), 'phase': 'ready_for_review'}))
++    from engine.speech_batches import _row
++    return _row(folder, origin)
++
++
++def make_job(root: Path, job_id: str, *, shots=0, status='created', script=''):
++    job = root / 'outputs' / job_id
++    for name in ('production', 'narration', 'logs'):
++        (job / name).mkdir(parents=True, exist_ok=True)
++    (job / 'narration' / 'voice.mp3').write_bytes(b'ID3' + b'\0' * 6000)
++    if script:
++        (job / 'script.json').write_text(json.dumps({'narration': script}))
++    (job / 'production_manifest.json').write_text(json.dumps(
++        {'job_id': job_id, 'topic': 'a topic', 'language': 'en', 'status': status,
++         'shots': [{'shot_id': 'shot_%03d' % (index + 1), 'status': 'planned'} for index in range(shots)]}))
++    from engine.project.database import JobDB
++    JobDB().upsert(job_id, topic='a topic', status=status, video_type='faceless_youtube',
++                   target_seconds=300, aspect='16:9', profile='STORYBOARD_ECONOMY',
++                   preset='cinematic_realism', dry_run=0)
++    return job
++
++
++def add_character(*, name='Mira the presenter', identifier=None):
++    """A saved character with one real PNG reference, exactly as Character Library stores it."""
++    from PIL import Image
++    photo = Path('character-photo.png').resolve()
++    if not photo.is_file():
++        Image.new('RGB', (48, 48), (200, 120, 90)).save(photo)
++    created = CharacterLibrary().create(
++        name, 'Original fictional presenter with a round face, short hair and a navy jacket.',
++        reference_files=[str(photo)], original_confirmed=True)
++    return created
++
++
++@pytest.fixture()
++def install(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setenv('AUTOVIDEO_SHARED_ROOT', str(tmp_path))
++    (tmp_path / 'speech_preparation').mkdir()
++    (tmp_path / 'outputs').mkdir()
++    (tmp_path / 'data' / 'content').mkdir(parents=True)
++    (tmp_path / 'config').symlink_to(ROOT / 'config')
++    (tmp_path / 'assets').symlink_to(ROOT / 'assets')
++    return tmp_path
++
++
++def run_cli(install, *arguments):
++    return subprocess.run([sys.executable, str(ROOT / 'cli.py'), 'v3', *arguments], cwd=str(install),
++                          capture_output=True, text=True, timeout=300,
++                          env={**os.environ, 'AUTOVIDEO_SHARED_ROOT': str(install), 'PYTHONPATH': str(ROOT)})
++
++
++# ---------------------------------------------------------------------------------------------------------
++# 1. the narration remembers the character it was written for
++# ---------------------------------------------------------------------------------------------------------
++def test_a_prepared_batch_records_the_character_chosen_in_create(install):
++    from engine import speech_cards
++    character = add_character()
++
++    def fake_prepare_edition(root, script, language, **options):
++        folder = Path(root) / language / 'offline'
++        folder.mkdir(parents=True, exist_ok=True)
++        audio = folder / 'voice.mp3'
++        audio.write_bytes(b'ID3' + language.encode() + b'\0' * 100)
++        (folder / 'words.json').write_text(json.dumps(WORDS))
++        return {'language': language, 'audio': str(audio), 'words': str(folder / 'words.json'),
++                'duration': 12.0, 'timing_source': 'measured',
++                'audio_sha256': hashlib.sha256(audio.read_bytes()).hexdigest()}
++
++    original = speech_cards.prepare_edition
++    speech_cards.prepare_edition = fake_prepare_edition
++    try:
++        speech_cards.prepare_batch(Path('speech_preparation/made-in-create'), 'small daily habits beat big plans.',
++                                   'en', ['en', 'hi', 'or'], provider='gemini',
++                                   localized_scripts={'en': 'small daily habits beat big plans.',
++                                                      'hi': 'small daily habits beat big plans.',
++                                                      'or': 'small daily habits beat big plans.'},
++                                   text_cards=False, draft_cards=False, character_ids=[character['id']])
++    finally:
++        speech_cards.prepare_edition = original
++    saved = json.loads(Path('speech_preparation/made-in-create/batch.json').read_text(encoding='utf-8'))
++    assert saved['request']['character_ids'] == [character['id']]
++    assert saved['phase'] == 'voices_ready'
++    row = next(row for row in list_speech_batches([]) if row['key'] == 'made-in-create')
++    assert row['character_ids'] == [character['id']]
++    # Create passes the visible picker into the batch, so a resumed batch keeps it too
++    assert 'character_ids=studio_cast' in APP
++    assert 'character_ids=request.get(\'character_ids\') or None' in open(
++        ROOT / 'engine' / 'speech_batches.py', encoding='utf-8').read()
++
++
++# ---------------------------------------------------------------------------------------------------------
++# 2. the job made from those voices keeps the character
++# ---------------------------------------------------------------------------------------------------------
++def test_a_job_made_from_prepared_voices_keeps_the_character(install):
++    character = add_character()
++    make_batch(install / 'speech_preparation' / 'ready-cast', 'small daily habits beat big plans.',
++               character_ids=[character['id']])
++    created = run_cli(install, 'use-voices', 'ready-cast', '--create-job', '--rights', 'own_content',
++                      '--seconds', '120')
++    assert created.returncode == 0, created.stdout + created.stderr
++    assert 'Mira the presenter' in created.stdout
++    job_id = created.stdout.split('Created job ')[1].split(' from')[0]
++    folder = install / 'outputs' / job_id
++    assert job_cast(folder)[0]['id'] == character['id']
++    assert json.loads((folder / 'character_snapshot.json').read_text(encoding='utf-8'))['name'] == 'Mira the presenter'
++    # and the same job says so on demand
++    listing = run_cli(install, 'cast', job_id)
++    assert listing.returncode == 0, listing.stdout + listing.stderr
++    assert 'Mira the presenter' in listing.stdout
++    assert '1 saved photo(s)' in listing.stdout
++
++
++def test_the_cast_can_be_chosen_on_the_command_line(install):
++    character = add_character()
++    make_batch(install / 'speech_preparation' / 'ready-plain', 'small daily habits beat big plans.')
++    created = run_cli(install, 'use-voices', 'ready-plain', '--create-job', '--rights', 'own_content',
++                      '--seconds', '120', '--cast', character['id'])
++    assert created.returncode == 0, created.stdout + created.stderr
++    job_id = created.stdout.split('Created job ')[1].split(' from')[0]
++    assert job_cast(install / 'outputs' / job_id)[0]['id'] == character['id']
++    assert '--cast' in CLI and 'batch_cast' in CLI
++
++
++def test_a_missing_character_is_refused_before_any_job_exists(install):
++    make_batch(install / 'speech_preparation' / 'ready-bad', 'small daily habits beat big plans.')
++    created = run_cli(install, 'use-voices', 'ready-bad', '--create-job', '--rights', 'own_content',
++                      '--cast', 'no-such-character')
++    assert created.returncode != 0
++    assert 'No job was created' in (created.stdout + created.stderr)
++    assert 'Character Library' in (created.stdout + created.stderr)
++    assert not [path for path in (install / 'outputs').iterdir() if (path / 'production_manifest.json').is_file()]
++
++
++# ---------------------------------------------------------------------------------------------------------
++# 3. a job that has not planned its scenes can still be given the character
++# ---------------------------------------------------------------------------------------------------------
++def test_a_job_without_a_storyboard_can_be_given_its_character(install):
++    character = add_character()
++    job = make_job(install, '20261031-150000-no-cast-yet')
++    assert job_cast(job) == []
++    result = set_job_cast(job, [character['id']])
++    assert result['names'] == ['Mira the presenter']
++    assert job_cast(job)[0]['id'] == character['id']
++    assert (job / 'cast_snapshot.json').is_file() and (job / 'character_snapshot.json').is_file()
++    # clearing is a choice too, not a broken state
++    assert set_job_cast(job, [])['names'] == []
++    assert job_cast(job) == []
++
++
++def test_a_job_with_a_storyboard_keeps_the_cast_it_was_planned_with(install):
++    character = add_character()
++    job = make_job(install, '20261031-150100-already-planned', shots=3, status='generating')
++    with pytest.raises(ValueError) as error:
++        set_job_cast(job, [character['id']])
++    message = str(error.value)
++    assert 'already has a storyboard' in message and '3 scene(s)' in message
++    assert 'Nothing was changed' in message
++    assert job_cast(job) == []
++    refused = run_cli(install, 'cast', job.name, '--set', character['id'])
++    assert refused.returncode != 0
++    assert 'Nothing was changed' in (refused.stdout + refused.stderr)
++
++
++# ---------------------------------------------------------------------------------------------------------
++# 4. every prepared narration is offered, not only the newest one
++# ---------------------------------------------------------------------------------------------------------
++def test_the_picker_offers_a_batch_whose_voices_a_job_already_holds(install):
++    older = make_batch(install / 'speech_preparation' / 'used_by_a_job', 'an older narration')
++    os.utime(older['path'] + '/batch.json', (1_600_000_000, 1_600_000_000))
++    newer = make_batch(install / 'speech_preparation' / 'still_unused', 'a newer narration', topic='Newer')
++    job = make_job(install, '20261031-160000-holds-voices', script='an older narration')
++    from engine.batch_actions import attach
++    rows = with_attachments(list_speech_batches([job], include_finished=[job]), [job])
++    attach(next(row for row in rows if row['key'] == 'used_by_a_job'), job)
++    rows = with_attachments(list_speech_batches([job], include_finished=[job]), [job])
++    used = next(row for row in rows if row['key'] == 'used_by_a_job')
++    assert used['attached'] is True and used['attached_to'] == [job.name]
++    # the unused one is offered first, but the used one is still offered - it can make a second video
++    assert [row['key'] for row in pickable(rows)] == ['still_unused', 'used_by_a_job']
++
++
++def test_a_finished_batch_inside_another_job_is_listed(install):
++    other = make_job(install, '20261031-160100-other-job')
++    inside = make_batch(other, 'narration of another job', origin='Job ' + other.name)
++    rows = with_attachments(list_speech_batches([other], include_finished=[other]), [other])
++    assert inside['key'] in [row['key'] for row in pickable(rows)]
++
++
++# ---------------------------------------------------------------------------------------------------------
++# 5. what the pages actually render
++# ---------------------------------------------------------------------------------------------------------
++def test_the_queue_panel_offers_the_whole_list_and_the_character():
++    queue = APP[APP.index('elif page == "QUEUE":'):APP.index('elif page == "FLOW SESSION":')]
++    assert 'runnable = pickable(with_attachments(' in queue
++    assert 'include_finished=job_dirs' in queue
++    assert "'Character in this video · optional (up to three)'" in queue
++    assert 'character_ids=chosen_cast' in queue
++    assert 'The video will show: ' in queue
++    assert 'No saved character chosen: the storyboard will invent a new person.' in queue
++    assert 'This narration was written for ' in queue
++    # the cast choice is above the rights statement and the button that spends nothing yet
++    assert queue.index("'Character in this video") < queue.index("'Create the job from these voices'")
++
++
++def test_the_cast_is_a_visible_step_of_create_not_a_hidden_expander():
++    studio = APP[APP.index('# ================= STUDIO ================='):APP.index("elif page == 'MUSIC VIDEO'")]
++    assert studio.count("cast_picker(st, 'studio-cast')") == 1
++    picker = studio.index("studio_cast = cast_picker(st, 'studio-cast')")
++    step_four = studio.index("with st.expander('4 · Review language scripts")
++    assert picker < step_four
++    # the old hidden copy, inside the collapsed "Characters and recovery preferences" expander, is gone
++    assert "with st.expander('Characters and recovery preferences" not in studio
++    assert "Recovery preferences · optional" in studio
++    assert 'Empty: the storyboard will invent a new person. Choose a character above' in studio
++    # the panel that explains the cast of a saved job, and its one repair
++    assert 'def cast_panel(job_id):' in APP
++    assert 'cast_panel(st.session_state.job_id)' in APP
++    assert "'Cast · who appears in the video'" in APP
++    assert "'Save the cast for this job'" in APP
++
++
++def test_the_page_creates_the_job_with_the_chosen_character(install):
++    """The real page: choose a saved character in the top panel and the created job carries it."""
++    character = add_character()
++    make_batch(install / 'speech_preparation' / 'ready1', 'small daily habits beat big plans.', topic='Small habits')
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert 'Run your prepared voices' in [item.value for item in at.subheader]
++    picker = next(item for item in at.multiselect if item.label.startswith('Character in this video'))
++    picker.select(character['id'])
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert any('The video will show: Mira the presenter' in item.value for item in at.caption)
++    at.button(key='queue-run-create').click()
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    created = at.session_state['job_id']
++    folder = install / 'outputs' / created
++    assert job_cast(folder)[0]['id'] == character['id']
++    notice = next(item.value for item in at.success if item.value.startswith('Created job'))
++    assert 'cast: Mira the presenter' in notice
++
++
++def test_the_saved_job_panel_sets_the_cast_before_planning(install):
++    character = add_character()
++    job = make_job(install, '20261031-170000-just-created')
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['job_id'] = job.name
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert 'Cast · who appears in the video' in [item.value for item in at.subheader]
++    assert any('No saved character is set for this job' in item.value for item in at.warning)
++    at.multiselect(key='job-cast-' + job.name).select(character['id'])
++    at.button(key='job-cast-save-' + job.name).click()
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert job_cast(job)[0]['id'] == character['id']
++    assert any('press “Resume / continue job”' in item.value for item in at.success)
++
++
++def test_the_planned_shots_carry_the_character_identity(install):
++    """From the job's snapshot to the shot: the character is what the prompt is built from."""
++    character = add_character()
++    from engine.cast import assign_cast, snapshot_cast
++    from engine.project.manifest import Shot
++    cast = snapshot_cast([character['id']])
++    shots = [Shot(shot_id='shot_001', narration='Small daily habits beat big plans.',
++                  visual_goal='A calm presenter talks to camera.')]
++    assign_cast(shots, cast, ())
++    assert shots[0].character_ids == [character['id']]
++    assert shots[0].subject.startswith('Mira the presenter (')
++    assert 'preserve face and wardrobe' in shots[0].subject
++    # a job made from prepared voices therefore plans the same person, not a stranger
++    assert "'character_ids': cast" in (ROOT / 'engine' / 'batch_actions.py').read_text(encoding='utf-8')
++
++
++def test_the_page_lists_a_batch_a_job_already_holds(install):
++    """The reported bug: only the newest session appeared in the picker. Now both do, and the used one says so."""
++    make_batch(install / 'speech_preparation' / 'older_used', 'an older narration', topic='Older')
++    make_batch(install / 'speech_preparation' / 'newer_free', 'a newer narration', topic='Newer')
++    job = make_job(install, '20261031-180000-holds-voices', script='an older narration')
++    from engine.batch_actions import attach
++    from engine.speech_batches import list_speech_batches
++    rows = with_attachments(list_speech_batches([job], include_finished=[job]), [job])
++    attach(next(row for row in rows if row['key'] == 'older_used'), job)
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    picker = at.selectbox(key='queue-run-batch')
++    labels = list(picker.options)
++    assert any('"Newer"' in label for label in labels) and any('"Older"' in label for label in labels), labels
++    # the unused batch is offered first, the one a job already holds after it
++    newer = next(index for index, label in enumerate(labels) if 'not part of any job yet' in label)
++    older = next(index for index, label in enumerate(labels) if 'voices in job ' + job.name in label)
++    assert newer < older
++    picker.select_index(older)
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    warnings = [item.value for item in at.warning]
++    assert any('already saved in job ' + job.name in text for text in warnings), warnings
++    assert any('second' in text and 'nothing is generated' in text for text in warnings), warnings
+diff --git a/tools/update_v7120_to_v7121.py b/tools/update_v7120_to_v7121.py
+deleted file mode 100644
+index 03a16aa..0000000
+--- a/tools/update_v7120_to_v7121.py
++++ /dev/null
+@@ -1,170 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.121 update to a v7.0.120 installation.
+-
+-Field questions after v7.0.120: "still need to know how to resume this so that it will create a job and
+-corresponding video" and "why is it still showing the tts for the completed jobs?".
+-
+-1. **Run your prepared voices** is now the first thing on Queue & Resume: pick a batch, state your rights, press
+-   one primary button. The job is created from that batch's own narration word for word, the voices are copied
+-   into it and the page opens it with SCRIPT/VOICE checked - nothing is generated until Resume, and the
+-   optional "start as soon as it is created" box says that it spends Flow credits. The same path exists as
+-   ``python3 cli.py v3 use-voices --list`` / ``--create-job --rights ...`` / ``--attach-to <job>``.
+-
+-2. A Create step 4 batch that stopped during TTS *inside* a job that has since narrated and moved on is no
+-   longer listed as work to finish. It is kept, named and explained under "Stopped TTS runs a job no longer
+-   needs" (nothing is deleted), so an abandoned 22-October run stops looking like the next step.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.121 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.121-Run-Voices/tools/update_v7120_to_v7121.py .            # dry run
+-    python3 ../AutoVideoAI-v7.0.121-Run-Voices/tools/update_v7120_to_v7121.py . --apply    # install
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals, browser
+-profiles and ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py', 'engine/speech_batches.py',
+-    'tests/test_v7121_run_prepared_voices.py',
+-    'RUN_VOICES_V7_0_121.md', 'tools/update_v7120_to_v7121.py',
+-]
+-# Files as they exist in 7.0.120: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['0ae5c71d2591953e1108cc9138b3cdc69c2848565c6bc878cb26c2214ab5f435'],
+-    'app.py': ['ca1b39162415c5f576bb0ffc2560792b9d3f77381a2ff6d244e15a86f5e4ace9'],
+-    'cli.py': ['014887426ae67cf950a1fb782598b82c9e9e8140b5370e80b7dbac593e8673a0'],
+-    'engine/speech_batches.py': ['b4347b00362b46afe39f7cd6d2f7bc4a654e5d906b1dbd0daba3fcdf24e99ef4'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.120', '7.0.121')  # 7.0.121 allows a safe re-run after success
+-
+-# The 7.0.121 zip carries the 7.0.120 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.119', '7.0.120', 'tools/update_v7119_to_v7120.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.120 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.120 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.120 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.121'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-        if destination.exists() and not allowed and sha(destination) != expected[name]:
+-            # A file this release introduces (engine/batch_actions.py) must not overwrite a different file that
+-            # already sits at that path - the same promise as for an edited file, applied to a new one.
+-            raise ValueError('A different file already exists where this update installs ' + name +
+-                             '; preserved it and changed nothing. Move it aside and run the update again.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
+-        print('    python3 cli.py v3 self-check')
+-        print('Then open Jobs & Recovery > Queue & Resume: "Run your prepared voices" is the first panel. Pick a '
+-              'batch, state how the narration may be used and press "Create the job from these voices" - nothing '
+-              'is generated until you press Resume (or tick the start box, which says it spends credits). From a '
+-              'terminal: python3 cli.py v3 use-voices --list, then --create-job --rights own_content. Stopped TTS '
+-              'runs a finished job no longer needs are listed separately and are never deleted.')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7121_to_v7122.py b/tools/update_v7121_to_v7122.py
+new file mode 100644
+index 0000000..abdfc52
+--- /dev/null
++++ b/tools/update_v7121_to_v7122.py
+@@ -0,0 +1,175 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.122 update to a v7.0.121 installation.
++
++Two reports on the same page after v7.0.121: "its only showing for the video which is have an activie job
++already" and "its not picking the selected charecter for the video generation".
++
++1. **The cast is carried, and visible.** Create shows the character choice as its own step (it used to hide
++   inside a collapsed "Characters and recovery preferences · optional" expander), the narration batch records
++   the chosen characters, *Run your prepared voices* asks for the character and writes it into the new job, a
++   job without a storyboard can be given one from the new **Cast** panel in Queue & Resume, and the CLI gained
++   ``v3 use-voices --cast`` plus ``v3 cast <job>``.
++
++2. **Every prepared narration is offered.** The batch picker used to hide a batch as soon as a job held its
++   voices and only read finished batches inside the Active job, so only the newest Create step 4 session ever
++   appeared. It now lists them all - unused first - and says where each one's voices live.
++
++Usage (run from the existing installation folder, after extracting the 7.0.122 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.122-Cast-And-Every-Batch/tools/update_v7121_to_v7122.py .            # dry run
++    python3 ../AutoVideoAI-v7.0.122-Cast-And-Every-Batch/tools/update_v7121_to_v7122.py . --apply    # install
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals, browser
++profiles and ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py', 'engine/cast.py', 'engine/batch_actions.py',
++    'engine/speech_batches.py', 'engine/speech_cards.py',
++    'tests/test_v7121_run_prepared_voices.py', 'tests/test_v7122_cast_and_every_batch.py',
++    'CAST_AND_EVERY_BATCH_V7_0_122.md', 'tools/update_v7121_to_v7122.py',
++]
++# Files as they exist in 7.0.121: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['5d2e777ff57c1caa665fc56700bf39be4461e43efd3377c850717639909d8f46'],
++    'app.py': ['03b28c3ef8d8bfb51c55b54d4b6c5ab9684092894e6b4f7608a270cd65a9d536'],
++    'cli.py': ['a78b716c67a0487bf59d4163a584c00287d5402e32cad95f6566b2f062dbf0f1'],
++    'engine/cast.py': ['bb6c5dcf0981f4b06a8d11343cf2ad5916239553a1e45db3df75daf09ff162d8'],
++    'engine/batch_actions.py': ['dc19b2172f2e5192a553a59ae9dd71f48875796824d1261fc2655d482fdff91c'],
++    'engine/speech_batches.py': ['5928bd9c7d4c5707e05c41624ae65f26024bc653fbc57b5db6781bcd8081698b'],
++    'engine/speech_cards.py': ['169a0826319128106014ac3e60c50b23046fecaa68221df5d5b0429b1cae3f21'],
++    'tests/test_v7121_run_prepared_voices.py': ['51972756d19bcfcf3c9153ef8e670ada23ed44f7da6171d4c91db1e413f5b903'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.121', '7.0.122')  # 7.0.122 allows a safe re-run after success
++
++# An older installation must walk the zips one at a time; this one knows the step before it.
++EARLIER_STEPS = [
++    ('7.0.120', '7.0.121', 'tools/update_v7120_to_v7121.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.121 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.121 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.121 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.122'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++        if destination.exists() and not allowed and sha(destination) != expected[name]:
++            # A file this release introduces must not overwrite a different file that already sits at that path.
++            raise ValueError('A different file already exists where this update installs ' + name +
++                             '; preserved it and changed nothing. Move it aside and run the update again.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
++        print('    python3 cli.py v3 self-check')
++        print('Then open Jobs & Recovery > Queue & Resume. "Run your prepared voices" lists every finished '
++              'narration; choose the batch, choose the character in "Character in this video", state the rights '
++              'and press "Create the job from these voices". A saved job that has not planned its scenes can be '
++              'given its character in the "Cast" panel on the same page. Command line: python3 cli.py v3 '
++              'use-voices --list, then --create-job --rights own_content [--cast <character id>], and '
++              'python3 cli.py v3 cast <job> [--set <character id>].')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

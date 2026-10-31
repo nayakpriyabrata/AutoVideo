@@ -1,0 +1,1044 @@
+diff --git a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+index b46e4de..5061e39 100644
+--- a/RELEASE_MANIFEST.json
++++ b/RELEASE_MANIFEST.json
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.120",
+-  "built_at": "2026-10-31T04:09:44+00:00",
++  "version": "7.0.121",
++  "built_at": "2026-10-31T05:16:35+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -567,6 +567,11 @@
+       "bytes": 4793,
+       "sha256": "075914f317071e049dad392a7c5c8044339a41ec46b12bcdd114427eff0ec188"
+     },
++    {
++      "path": "RUN_VOICES_V7_0_121.md",
++      "bytes": 5049,
++      "sha256": "0b6b9f64d794f81b25df8ccb873fa2a5511fd6c5613ffa619a3ada1ed5e6a18a"
++    },
+     {
+       "path": "SAFE_CLEANUP_V7_0_23.md",
+       "bytes": 3847,
+@@ -1050,7 +1055,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "0ae5c71d2591953e1108cc9138b3cdc69c2848565c6bc878cb26c2214ab5f435"
++      "sha256": "5d2e777ff57c1caa665fc56700bf39be4461e43efd3377c850717639909d8f46"
+     },
+     {
+       "path": "VIDEO_APPROVAL_PENDING_V7_0_99.md",
+@@ -1114,8 +1119,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 281850,
+-      "sha256": "ca1b39162415c5f576bb0ffc2560792b9d3f77381a2ff6d244e15a86f5e4ace9"
++      "bytes": 286381,
++      "sha256": "03b28c3ef8d8bfb51c55b54d4b6c5ab9684092894e6b4f7608a270cd65a9d536"
+     },
+     {
+       "path": "architecture.md",
+@@ -1229,8 +1234,8 @@
+     },
+     {
+       "path": "cli.py",
+-      "bytes": 120103,
+-      "sha256": "014887426ae67cf950a1fb782598b82c9e9e8140b5370e80b7dbac593e8673a0"
++      "bytes": 125114,
++      "sha256": "a78b716c67a0487bf59d4163a584c00287d5402e32cad95f6566b2f062dbf0f1"
+     },
+     {
+       "path": "clip_config.yaml",
+@@ -2084,8 +2089,8 @@
+     },
+     {
+       "path": "engine/speech_batches.py",
+-      "bytes": 11472,
+-      "sha256": "b4347b00362b46afe39f7cd6d2f7bc4a654e5d906b1dbd0daba3fcdf24e99ef4"
++      "bytes": 14197,
++      "sha256": "5928bd9c7d4c5707e05c41624ae65f26024bc653fbc57b5db6781bcd8081698b"
+     },
+     {
+       "path": "engine/speech_cards.py",
+@@ -2882,6 +2887,11 @@
+       "bytes": 12488,
+       "sha256": "519d5f4472435ce6fdaf2ffa852a2a7307aebc304ebce572a54e9fbedad9fb9d"
+     },
++    {
++      "path": "tests/test_v7121_run_prepared_voices.py",
++      "bytes": 12488,
++      "sha256": "51972756d19bcfcf3c9153ef8e670ada23ed44f7da6171d4c91db1e413f5b903"
++    },
+     {
+       "path": "tests/test_v712_migration_cast_music.py",
+       "bytes": 12069,
+@@ -3438,9 +3448,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v7119_to_v7120.py",
+-      "bytes": 9495,
+-      "sha256": "5003664a325b7168f36ab5ca13bb8c83e62cc131a2f6580480b840bb90812f11"
++      "path": "tools/update_v7120_to_v7121.py",
++      "bytes": 9077,
++      "sha256": "617dc5453052244e1576b43c91b33fb64530ad9be4aac030d322b18765781b01"
+     },
+     {
+       "path": "topics.csv",
+diff --git a/RUN_VOICES_V7_0_121.md b/RUN_VOICES_V7_0_121.md
+new file mode 100644
+index 0000000..e181e04
+--- /dev/null
++++ b/RUN_VOICES_V7_0_121.md
+@@ -0,0 +1,86 @@
++# v7.0.121 · One obvious way to run prepared voices, and TTS runs a finished job no longer needs
++
++Two questions from the same page:
++
++> *"still need to know how to resume this so that it will create a job and corresponding video"*
++> *"why is it still showing the tts for the completed jobs?"*
++
++## 1 · The answer is now the first thing on Queue & Resume
++
++v7.0.120 added **Use these voices** inside each finished batch, but the batches themselves were inside a
++collapsed list, so the way to a video was three levels down. Queue & Resume now opens with:
++
++```
++Run your prepared voices
++  Batch to run            [ 2026-10-31 10:21 · English, Hindi, Odia · voices 3/3 · not part of any job yet · newest ]
++  How may this narration be used?   [ I wrote this narration or own it ]
++  [ ] Start it as soon as it is created (Flow spends credits as it generates)
++  [ Create the job from these voices ]
++```
++
++One selectbox picks the batch (newest first, identified by its time, topic and languages), one statement of
++your rights, one button:
++
++* the job is created **from that batch's own narration**, word for word, so its script *is* your voice;
++* all three voices are copied into the job;
++* the page switches to the new job with `SCRIPT ✓ · VOICE ✓`, the narration you can play, and
++  **Nothing has been generated yet - press "Resume / continue job" below to make the video.**
++
++If you would rather do it in one step, tick **Start it as soon as it is created** - that is the only thing that
++spends Flow credits, and the label says so. The same thing exists on the command line:
++
++```
++python3 cli.py v3 use-voices --list
++python3 cli.py v3 use-voices <batch> --create-job --rights own_content
++python3 cli.py v3 resume <job>
++```
++
++`v3 use-voices` also accepts `--attach-to <job_id>` for a saved job that already approved the same script, and
++`--seconds N` when the measured narration length is not the length you want (for example when the approved
++voices are shorter than the target video).
++
++## 2 · Why a finished job still showed a "tts" line
++
++It was real, and it was not your current work. Those entries are **Create step 4 batches that stopped during
++TTS** (2 of 3 languages) and live *inside* a job folder. The job went on to narrate another way - its voices
++were attached from a Create step 4 batch, or it recorded them itself - and reached generating/rendered. The
++abandoned run was still listed exactly like unfinished work, so it kept asking to be resumed although nothing
++about it was needed.
++
++Now each such batch is judged against the job it belongs to (`engine/speech_batches.job_stage`):
++
++* if the job has already narrated, planned scenes or moved past narration, the batch is **not** counted as
++  "to finish" and is listed under
++  **`Stopped TTS runs a job no longer needs · N · kept, nothing deleted`** with the reason spelled out:
++  *"This job is already past narration (status "generating", 2 scene(s) planned). Its narration is already
++  saved (English · Hindi · Odia). This stopped TTS run is not needed to resume the job; it is kept here,
++  nothing was deleted. Use "Resume / continue job" on the job itself."*
++* if the job has *not* narrated yet, the batch stays in the normal list, because finishing it really is the
++  next step.
++* nothing is deleted, moved or rewritten. It is still openable ("Inspect this stopped batch") and its voices
++  can still be resumed deliberately.
++
++The same distinction is in `python3 cli.py v3 use-voices --list`, which prints
++`· stopped run a job no longer needs` for those rows.
++
++## Verified
++
++* 9 new tests (`tests/test_v7121_run_prepared_voices.py`): the stale judgement for a job past narration, a job
++  that has not narrated yet, and a finished batch; stale rows leaving the to-do list while staying in the
++  inventory; newest-first ordering; the page creating and opening the job from the top panel (real Streamlit
++  run, `SCRIPT ✓ · VOICE ✓`, the "nothing generated yet" line); the CLI list / refusal without a rights
++  statement / create with one.
++* Full suite on the unzipped release, compared with a pristine v7.0.120 checkout: identical failure set, no new breakage. v7.0.120: 46 failed, 1776 passed, 94 skipped, 11 errors. v7.0.121: 46 failed, 1785 passed, 94 skipped, 11 errors. Same 57 FAILED/ERROR node ids on both sides (`diff` of the sorted lists is empty) - the 9 extra passes are this release's new tests. The 46+11 are the long-standing FFmpeg/`drawtext` and browser-shim tests that cannot run in a headless sandbox.
++
++## Install
++
++Stop the dashboard, extract `AutoVideoAI-v7.0.121-Run-Voices.zip` beside your installation, then from inside it:
++
++```
++python3 ../AutoVideoAI-v7.0.121-Run-Voices/tools/update_v7120_to_v7121.py . --apply
++python3 cli.py v3 self-check
++```
++
++The updater replaces only the code files it lists, keeps a backup in `code-update-backups/`, refuses to
++overwrite a file you edited, and never touches `outputs/`, saved jobs, speech batches, Flow journals, browser
++profiles or `music_library/`. No voice is recorded and no Flow credit is spent by this release.
+diff --git a/VERSION b/VERSION
+index 84013c0..99ab6a3 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.120
+\ No newline at end of file
++7.0.121
+\ No newline at end of file
+diff --git a/app.py b/app.py
+index fff537e..2cca826 100644
+--- a/app.py
++++ b/app.py
+@@ -2095,7 +2095,8 @@ elif page == "QUEUE":
+             st.rerun()
+     # 7.0.83: Create step 4 batches (narration and TTS before a job exists) can be corrected and resumed here.
+     from engine.speech_batches import (list_speech_batches, resume_speech_batch, correct_speech_scripts,
+-                                       language_label, partition_for_job, with_attachments, display_label)
++                                       language_label, partition_for_job, with_attachments, display_label,
++                                       actionable, usable_now)
+     from engine.production_lock import production_slot
+     speech_rows = list_speech_batches(
+         [F.pm.job_dir(j['job_id']) for j in jobs],
+@@ -2120,9 +2121,57 @@ elif page == "QUEUE":
+         own_rows, other_rows = [], all_rows
+     newest_key = max((row.get('created_ts') or 0) for row in all_rows) if all_rows else 0
+     unattached_ready = [row for row in all_rows if row['ready'] and not row['attached']]
++    # v7.0.121: a TTS run that stopped inside a job which already narrates is not "to finish". It is kept and
++    # shown separately, with the reason, instead of asking to be resumed for ever.
++    own_rows = actionable(own_rows)
++    stale_rows = [row for row in all_rows if row.get('stale')]
++    other_rows = [row for row in actionable(other_rows)]
++    runnable = usable_now(all_rows)
+     own_attention = [row for row in own_rows if not row['ready']]
+     tts_choices = ['auto', 'gemini', 'gemini-lite', 'groq', 'elevenlabs', 'kokoro', 'edge', 'gtts']
+ 
++    # v7.0.121: one unmistakable way from prepared voices to a running video, at the top of Queue & Resume.
++    # The buttons inside a batch were correct but buried in a collapsed list; the question they answered was
++    # "how do I resume this so it creates a job and a video?" - so the answer is now the first thing on the page.
++    if runnable:
++        from engine.batch_actions import RIGHTS_DECLARATIONS, create_job_from_batch, measured_seconds
++        st.subheader('Run your prepared voices')
++        st.caption('These batches already hold the narration for every selected language. Choosing one creates a '
++                   'job whose script is exactly that narration, with those voices attached - no voice is recorded '
++                   'again and no video is generated until the job runs. The first Flow credit is spent only when '
++                   'you press Resume (or when you tick the start box below).')
++        choice = {row['key']: row for row in runnable}
++        picked_key = st.selectbox(
++            'Batch to run', list(choice),
++            format_func=lambda key: display_label(choice[key], newest=bool(choice[key].get('created_ts') == newest_key)),
++            key='queue-run-batch')
++        picked = choice[picked_key]
++        seconds = measured_seconds(picked)
++        rights = st.selectbox('How may this narration be used?', list(RIGHTS_DECLARATIONS),
++                              format_func=lambda code: RIGHTS_DECLARATIONS[code], key='queue-run-rights',
++                              help='Your own statement, saved in the approved plan. The app never assumes it.')
++        start_now = st.checkbox('Start it as soon as it is created (Flow spends credits as it generates)',
++                                value=False, key='queue-run-start')
++        if st.button('Create the job from these voices', type='primary', key='queue-run-create'):
++            try:
++                with production_slot(Path(picked['path'])):
++                    created = create_job_from_batch(F, picked, declaration=rights,
++                                                    target_seconds=seconds or None)
++                st.session_state.job_id = created['job_id']
++                st.session_state['speech-batch-notice'] = (
++                    'Created job `' + created['job_id'] + '` from this narration (' + str(created['seconds'])
++                    + ' s, ' + ', '.join(language_label(code) for code in created['languages'])
++                    + ' voices attached).'
++                    + (' It is starting now; follow the monitor below.' if start_now else
++                       ' Nothing has been generated yet - press “Resume / continue job” below to make the video.'))
++                if start_now:
++                    from engine.job_monitor import start as start_monitor
++                    start_monitor(F, created['job_id'])
++                st.rerun()
++            except Exception as error:
++                st.error('No job was created: ' + str(error))
++        st.divider()
++
+     def use_voices_controls(row):
+         """v7.0.120: go from "my voices are ready" to "a job is using them".
+ 
+@@ -2285,6 +2334,20 @@ elif page == "QUEUE":
+                     with st.expander(display_label(row, newest=bool(row.get('created_ts') == newest_key)),
+                                      expanded=bool(row.get('created_ts') == newest_key)):
+                         speech_batch_controls(row)
++        if stale_rows:
++            # v7.0.121: an abandoned TTS run inside a job that already narrates is not a to-do. It is kept,
++            # named and explained - never silently resumed, never deleted.
++            with st.expander('Stopped TTS runs a job no longer needs · ' + str(len(stale_rows))
++                             + ' · kept, nothing deleted', expanded=False):
++                st.caption('These batches stopped before they finished, and the job they belong to has since '
++                           'narrated another way (its voices were attached from Create step 4, or it recorded '
++                           'them itself). They are listed so nothing disappears, not because anything is left '
++                           'to do: resume the job, not the batch.')
++                for row in stale_rows:
++                    st.markdown('**' + display_label(row) + '**')
++                    st.caption(row['stale_reason'])
++                    with st.expander('Inspect this stopped batch', expanded=False):
++                        speech_batch_controls(row)
+     from engine.clip_render_jobs import discover as discover_clip_renders
+     clip_render_jobs = discover_clip_renders((F.pm.root, 'outputs'))
+     if clip_render_jobs:
+diff --git a/cli.py b/cli.py
+index 884dba9..39593e4 100644
+--- a/cli.py
++++ b/cli.py
+@@ -470,6 +470,22 @@ def main_v3(argv):
+                     help="change how many shots this saved job may hand to Gemini Web (0-4); saved in its settings.json")
+     gs.add_argument("--json", action="store_true", help="Print the full plan as JSON")
+ 
++    uv = sub.add_parser("use-voices",
++                        help="Turn a prepared Create step 4 narration batch into a job (or attach its voices to one)")
++    uv.add_argument("batch", nargs="?", default="",
++                    help="batch folder (or part of its name); --list shows them, default = newest ready batch")
++    uv.add_argument("--list", action="store_true", help="List the batches with their time, topic and state")
++    uv.add_argument("--create-job", action="store_true",
++                    help="Create a saved job whose script is exactly this batch's narration and attach the voices. "
++                         "Generates nothing; run `v3 resume <job>` when you want the video")
++    uv.add_argument("--attach-to", default="", metavar="JOB_ID",
++                    help="copy the voices into a saved job whose approved script is the same narration")
++    uv.add_argument("--rights", default="", choices=["", "own_content", "written_permission", "licensed_content"],
++                    help="how you may use this narration (required with --create-job; saved in the approved plan)")
++    uv.add_argument("--profile", default="STORYBOARD_ECONOMY")
++    uv.add_argument("--seconds", type=int, default=0, help="target duration; default = measured voice length")
++    uv.add_argument("--outputs-root", default="outputs")
++
+     tn = sub.add_parser("tune", help="Adjust music ducking, fades and the edition narration fit of a saved job")
+     tn.add_argument("job_id")
+     tn.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
+@@ -1433,6 +1449,63 @@ def main_v3(argv):
+         print("Fix it with: python3 cli.py v3 transcript " + args.job_id +
+               " --language <code> --set-word 12=correct-spelling   (or --export / --apply)")
+         return
++    elif args.cmd == "use-voices":
++        from engine import narration_assets
++        from engine.speech_batches import list_speech_batches, with_attachments, usable_now
++        from engine.batch_actions import (RIGHTS_DECLARATIONS, attach, create_job_from_batch, jobs_using_script,
++                                          measured_seconds)
++        job_dirs = [f.pm.job_dir(job["job_id"]) for job in f.db.list(5000)]
++        rows = with_attachments(list_speech_batches(job_dirs), job_dirs)
++        matches = [row for row in rows if not args.batch or args.batch in row["key"]
++                   or args.batch in row["path"]]
++        if args.list or not (args.create_job or args.attach_to):
++            if not matches:
++                raise SystemExit("No speech batch matches " + repr(args.batch) + ". Run `python3 cli.py v3 "
++                                 "use-voices --list` to see them.")
++            for row in matches[:40]:
++                print(row["created"] + "  " + ", ".join(row["editions"]) + "  " + row["phase"]
++                      + "  voices " + str(len(row["done"])) + "/" + str(len(row["editions"]))
++                      + ("  · " + row["topic"][:50] if row["topic"] else "")
++                      + ("  · READY" if row["ready"] else "")
++                      + ("  · in a job" if row["attached"] else "  · not part of a job yet")
++                      + ("  · stopped run a job no longer needs" if row["stale"] else ""))
++                print("    " + row["path"])
++            if not (args.create_job or args.attach_to):
++                ready = usable_now(rows)
++                print("")
++                print("Create a job from a batch:  python3 cli.py v3 use-voices <batch> --create-job --rights own_content")
++                print("  rights: " + " | ".join(code for code in RIGHTS_DECLARATIONS))
++                print("Attach to a job with this script:  python3 cli.py v3 use-voices <batch> --attach-to <job_id>")
++                if ready:
++                    print("Ready and not in a job: " + ", ".join(row["key"] for row in ready))
++                return
++        if not matches:
++            raise SystemExit("No speech batch matches " + repr(args.batch))
++        row = matches[0]
++        if args.attach_to:
++            try:
++                result = attach(row, f.pm.job_dir(args.attach_to), factory=f)
++            except ValueError as error:
++                raise SystemExit("Nothing was attached: " + str(error)) from error
++            print("Attached " + ", ".join(result["languages"]) + " voices to " + result["job_id"] + ".")
++            print("Nothing was generated. Run the job when you want the video: python3 cli.py v3 resume "
++                  + result["job_id"])
++            return
++        if not args.rights:
++            raise SystemExit("Choose how you may use this narration: --rights "
++                             + " | ".join(RIGHTS_DECLARATIONS))
++        try:
++            created = create_job_from_batch(f, row, declaration=args.rights, profile=args.profile,
++                                            target_seconds=args.seconds or None)
++        except ValueError as error:
++            raise SystemExit("No job was created: " + str(error)) from error
++        print("Created job " + created["job_id"] + " from this narration (" + str(created["seconds"]) + " s, "
++              + ", ".join(created["languages"]) + " voices attached).")
++        print("Plan: " + created["plan"])
++        for label in narration_assets.labels(f.pm.job_dir(created["job_id"])):
++            print("  narration: " + label)
++        print("Nothing has been generated. Make the video with: python3 cli.py v3 resume " + created["job_id"])
++        return
+     elif args.cmd == "gemini-shots":
+         from engine.providers.gemini_video import choose_shots, gemini_shot_plan
+         from engine.support_report import resolve_job_dir
+diff --git a/engine/speech_batches.py b/engine/speech_batches.py
+index 1db9cd5..cee5f90 100644
+--- a/engine/speech_batches.py
++++ b/engine/speech_batches.py
+@@ -154,6 +154,46 @@ def job_audio_shas(job_dir) -> set:
+     return shas
+ 
+ 
++def job_stage(job_dir) -> dict:
++    """What a saved job already has, so a stopped TTS run can be judged against it (v7.0.121)."""
++    root = Path(job_dir)
++    try:
++        manifest = json.loads((root / 'production_manifest.json').read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        manifest = {}
++    from . import narration_assets
++    voices = narration_assets.voices(root)
++    return {'status': str(manifest.get('status') or ''),
++            'shots': len(manifest.get('shots') or []),
++            'narrated': bool(voices), 'voices': [row['label'] for row in voices],
++            'prepared': (root / 'production' / 'prepared_speech.json').is_file()}
++
++
++def stale_reason(row, job_dirs=()) -> str:
++    """Why this stopped batch is no longer on the way to a video, or '' when it still is.
++
++    A Create step 4 batch that stopped during TTS and lives inside a job is listed for ever otherwise: the
++    job can finish with other voices (or its own narration), and the abandoned run keeps asking to be resumed.
++    Nothing is deleted - the batch is only described truthfully and moved out of the to-do list.
++    """
++    origin = str(row.get('origin') or '')
++    if not origin.startswith('Job ') or row.get('ready'):
++        return ''
++    job_id = origin[4:]
++    folder = next((Path(job) for job in job_dirs if Path(job).name == job_id), None)
++    if folder is None or not folder.is_dir():
++        return ''
++    stage = job_stage(folder)
++    if stage['shots'] or stage['status'] in ('narrated', 'planned', 'generating', 'review', 'rendering', 'done'):
++        narrated = (' Its narration is already saved (' + ' · '.join(stage['voices']) + ').'
++                    if stage['narrated'] else '')
++        return ('This job is already past narration (status "' + (stage['status'] or 'planned') + '", '
++                + str(stage['shots']) + ' scene(s) planned).' + narrated + ' This stopped TTS run is not needed '
++                'to resume the job; it is kept here, nothing was deleted. Use “Resume / continue job” on the job '
++                'itself.')
++    return ''
++
++
+ def with_attachments(rows, job_dirs=()) -> list[dict]:
+     """Say which job (if any) already contains each batch's voices (v7.0.119).
+ 
+@@ -175,9 +215,22 @@ def with_attachments(rows, job_dirs=()) -> list[dict]:
+             attached |= owners.get(sha, set())
+         row['attached_to'] = sorted(attached)
+         row['attached'] = bool(attached)
++        row['stale_reason'] = stale_reason(row, job_dirs)
++        row['stale'] = bool(row['stale_reason'])
+     return rows
+ 
+ 
++def actionable(rows) -> list[dict]:
++    """Batches that are still the way to a video: ready to use, or stopped for a reason worth fixing."""
++    return [row for row in rows or [] if not row.get('stale')]
++
++
++def usable_now(rows) -> list[dict]:
++    """Ready batches whose voices no job holds yet, newest first: the ones a job can be made from."""
++    ready = [row for row in rows or [] if row.get('ready') and not row.get('attached') and not row.get('stale')]
++    return sorted(ready, key=lambda row: -(row.get('created_ts') or 0))
++
++
+ def display_label(row, *, newest=False) -> str:
+     """One identifying line for a batch: time, topic, languages, state, and whether a job holds it."""
+     parts = [row.get('origin') or 'Create step 4', row.get('created') or 'time not recorded']
+diff --git a/tests/test_v7121_run_prepared_voices.py b/tests/test_v7121_run_prepared_voices.py
+new file mode 100644
+index 0000000..8da45d4
+--- /dev/null
++++ b/tests/test_v7121_run_prepared_voices.py
+@@ -0,0 +1,226 @@
++"""v7.0.121: the one obvious way to run prepared voices, and stale TTS runs that stop asking.
++
++Two field questions after v7.0.120:
++
++* "still need to know how to resume this so that it will create a job and corresponding video" - the buttons
++  existed but inside a collapsed batch list, so the answer was three levels down.
++* "why is it still showing the tts for the completed jobs?" - a Create step 4 batch that stopped during TTS
++  *inside* a job was listed for ever, even though that job had already narrated and moved on to generating.
++
++So: a **Run your prepared voices** panel at the top of Queue & Resume (pick a batch, state your rights, create the
++job, optionally start it), `v3 use-voices` on the command line, and abandoned TTS runs judged against the job
++they live in and moved out of the to-do list - kept and explained, never deleted.
++"""
++import hashlib
++import json
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++from engine import narration_assets
++from engine.batch_actions import create_job_from_batch, job_script
++from engine.speech_batches import (actionable, list_speech_batches, stale_reason, usable_now,
++                                   with_attachments)
++
++ROOT = Path(__file__).resolve().parent.parent
++APP = (ROOT / 'app.py').read_text(encoding='utf-8')
++WORDS = [{'word': word, 'start': index * 1.0, 'end': index * 1.0 + 0.9}
++         for index, word in enumerate('small daily habits beat big plans'.split())]
++
++
++def _voices(folder: Path, languages, duration=61.5) -> dict:
++    bundles = {}
++    for code in languages:
++        lang = folder / code / 'k1'
++        lang.mkdir(parents=True, exist_ok=True)
++        audio = lang / 'voice.mp3'
++        # unique bytes per batch: two batches with different narration must not look like the same audio
++        audio.write_bytes(b'ID3' + folder.name.encode() + b'\0' * 6000)
++        (lang / 'words.json').write_text(json.dumps(WORDS))
++        bundles[code] = {'language': code, 'audio': str(audio), 'words': str(lang / 'words.json'),
++                         'audio_sha256': hashlib.sha256(audio.read_bytes()).hexdigest(),
++                         'duration': duration, 'timing_source': 'measured'}
++    return bundles
++
++
++def make_batch(folder: Path, script: str, *, topic='Small habits', done=3, languages=('en', 'hi', 'or'),
++               origin='Create step 4'):
++    folder.mkdir(parents=True, exist_ok=True)
++    bundles = _voices(folder, languages[:done])
++    (folder / 'batch.json').write_text(json.dumps({
++        'source_language': 'en', 'source_script': script, 'editions': list(languages),
++        'scripts': {code: script for code in languages},
++        'request': {'provider': 'gemini', 'topic': topic}, 'error': '', 'bundles': bundles,
++        'phase': 'ready_for_review' if done == len(languages) else 'tts'}))
++    from engine.speech_batches import _row
++    return _row(folder, origin)
++
++
++def make_job(root: Path, job_id: str, *, narration=True, shots=0, status='created', script=''):
++    job = root / 'outputs' / job_id
++    for name in ('production', 'narration', 'logs'):
++        (job / name).mkdir(parents=True, exist_ok=True)
++    if narration:
++        (job / 'narration' / 'voice.mp3').write_bytes(b'ID3' + b'\0' * 6000)
++    if script:
++        (job / 'script.json').write_text(json.dumps({'narration': script}))
++    (job / 'production_manifest.json').write_text(json.dumps(
++        {'job_id': job_id, 'topic': 'a topic', 'language': 'en', 'status': status,
++         'shots': [{'shot_id': 'shot_%03d' % (index + 1), 'status': 'planned'} for index in range(shots)]}))
++    # Queue only scans jobs the database knows about, exactly like the app.
++    from engine.project.database import JobDB
++    JobDB().upsert(job_id, topic='a topic', status=status, video_type='faceless_youtube',
++                   target_seconds=300, aspect='16:9', profile='STORYBOARD_ECONOMY',
++                   preset='cinematic_realism', dry_run=0)
++    return job
++
++
++@pytest.fixture()
++def install(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setenv('AUTOVIDEO_SHARED_ROOT', str(tmp_path))
++    (tmp_path / 'speech_preparation').mkdir()
++    (tmp_path / 'outputs').mkdir()
++    (tmp_path / 'config').symlink_to(ROOT / 'config')
++    (tmp_path / 'assets').symlink_to(ROOT / 'assets')
++    return tmp_path
++
++
++def test_a_stopped_tts_run_inside_a_finished_job_is_not_a_to_do(install):
++    job = make_job(install, '20261022-143856-7-small-daily-habits', narration=True, shots=2, status='generating')
++    row = make_batch(job, 'old master script', done=2, origin='Job ' + job.name)
++    assert row['origin'].startswith('Job ')
++    reason = stale_reason(row, [job])
++    assert 'already past narration' in reason
++    assert 'status "generating"' in reason and '2 scene(s) planned' in reason
++    assert 'not needed to resume the job' in reason
++    assert 'nothing was deleted' in reason
++    assert 'Resume / continue job' in reason
++
++
++def test_a_stopped_run_in_a_job_that_has_not_narrated_yet_still_asks(install):
++    job = make_job(install, '20261031-120000-fresh-job', narration=False, shots=0, status='created')
++    row = make_batch(job, 'a fresh script', done=2, origin='Job ' + job.name)
++    assert stale_reason(row, [job]) == ''
++    rows = with_attachments([row], [job])
++    assert rows[0]['stale'] is False
++    assert actionable(rows) == rows
++
++
++def test_a_finished_batch_inside_a_job_is_never_called_stale(install):
++    job = make_job(install, '20261031-130000-done-job', narration=True, shots=1, status='narrated')
++    row = make_batch(job, 'a script', done=3, origin='Job ' + job.name)
++    assert row['ready'] is True
++    assert stale_reason(row, [job]) == ''
++    assert actionable([row]) == [row]
++
++
++def test_stale_rows_are_marked_and_leave_the_to_do_list(install):
++    good = make_batch(install / 'speech_preparation' / 'good1', 'small daily habits beat big plans.')
++    job = make_job(install, '20261022-143856-7-old-job', narration=True, shots=3, status='done')
++    bad = make_batch(job, 'old master', done=2, origin='Job ' + job.name)
++    rows = with_attachments([good, bad], [job])
++    flagged = next(row for row in rows if row['key'] == bad['key'])
++    assert flagged['stale'] is True and flagged['stale_reason']
++    assert [row['key'] for row in actionable(rows)] == [good['key']]
++    assert [row['key'] for row in usable_now(rows)] == [good['key']]
++
++
++def test_usable_now_prefers_the_newest_ready_unattached_batch(install):
++    older = make_batch(install / 'speech_preparation' / 'a_older', 'older script')
++    os.utime(older['path'] + '/batch.json', (1_600_000_000, 1_600_000_000))
++    newer = make_batch(install / 'speech_preparation' / 'b_newer', 'newer script')
++    rows = with_attachments(list_speech_batches([], include_finished=()), [])
++    ready = usable_now(rows)
++    assert [row['key'] for row in ready] == ['b_newer', 'a_older']
++    # an attached batch is not offered again
++    job = make_job(install, '20261031-140000-attached', narration=True, script='newer script')
++    from engine.batch_actions import attach
++    attach(next(row for row in rows if row['key'] == 'b_newer'), job)
++    rows = with_attachments(list_speech_batches([job], include_finished=[job]), [job])
++    assert [row['key'] for row in usable_now(rows)] == ['a_older']
++
++
++def test_the_queue_puts_the_answer_at_the_top():
++    queue = APP[APP.index('elif page == "QUEUE":'):APP.index('elif page == "FLOW SESSION":')]
++    assert "st.subheader('Run your prepared voices')" in queue
++    assert "st.selectbox(\n            'Batch to run'" in queue or "'Batch to run'" in queue
++    assert "'Create the job from these voices'" in queue
++    assert 'type=\'primary\'' in queue
++    assert 'Start it as soon as it is created (Flow spends credits as it generates)' in queue
++    assert 'Nothing has been generated yet - press “Resume / continue job” below to make the video.' in queue
++    # the answer sits above the batch list, not inside it
++    assert queue.index("st.subheader('Run your prepared voices')") < queue.index('st.expander(title')
++    # and the abandoned runs are separated, with a label nobody can misread
++    assert 'Stopped TTS runs a job no longer needs · ' in queue
++    assert 'kept, nothing deleted' in queue
++
++
++def test_abandoned_runs_are_excluded_from_the_to_finish_count():
++    start = APP.index('elif page == "QUEUE":')
++    block = APP[start:APP.index('def speech_batch_controls', start)]
++    assert 'own_rows = actionable(own_rows)' in block
++    assert 'other_rows = [row for row in actionable(other_rows)]' in block
++    assert 'stale_rows = [row for row in all_rows if row.get(\'stale\')]' in block
++    assert 'runnable = usable_now(all_rows)' in block
++
++
++def test_the_cli_offers_the_same_path(install):
++    batch = make_batch(install / 'speech_preparation' / 'cli_batch', 'small daily habits beat big plans.')
++    run = subprocess.run([sys.executable, str(ROOT / 'cli.py'), 'v3', 'use-voices', '--list'],
++                         cwd=str(install), capture_output=True, text=True, timeout=180,
++                         env={**os.environ, 'AUTOVIDEO_SHARED_ROOT': str(install), 'PYTHONPATH': str(ROOT)})
++    assert run.returncode == 0, run.stdout + run.stderr
++    assert 'Small habits' in run.stdout
++    assert 'use-voices <batch> --create-job --rights own_content' in run.stdout
++    missing = subprocess.run([sys.executable, str(ROOT / 'cli.py'), 'v3', 'use-voices', 'cli_batch',
++                              '--create-job'], cwd=str(install), capture_output=True, text=True, timeout=180,
++                             env={**os.environ, 'AUTOVIDEO_SHARED_ROOT': str(install), 'PYTHONPATH': str(ROOT)})
++    assert missing.returncode != 0
++    assert 'Choose how you may use this narration' in (missing.stdout + missing.stderr)
++    created = subprocess.run([sys.executable, str(ROOT / 'cli.py'), 'v3', 'use-voices', 'cli_batch',
++                              '--create-job', '--rights', 'own_content', '--seconds', '120'],
++                             cwd=str(install), capture_output=True, text=True, timeout=180,
++                             env={**os.environ, 'AUTOVIDEO_SHARED_ROOT': str(install), 'PYTHONPATH': str(ROOT)})
++    assert created.returncode == 0, created.stdout + created.stderr
++    assert 'Nothing has been generated' in created.stdout
++    assert 'python3 cli.py v3 resume' in created.stdout
++    job_id = created.stdout.split('Created job ')[1].split(' from')[0]
++    folder = install / 'outputs' / job_id
++    assert job_script(folder) == 'small daily habits beat big plans.'
++    assert (folder / 'production' / 'prepared_speech.json').is_file()
++    assert narration_assets.labels(folder) == ['English', 'Hindi', 'Odia']
++
++
++def test_the_page_runs_a_batch_from_the_top_panel(install):
++    """The real page: a job with an abandoned TTS run plus a ready batch; create from the top and check it."""
++    make_batch(install / 'speech_preparation' / 'ready1', 'small daily habits beat big plans.',
++               topic='Small habits', done=3)
++    job = make_job(install, '20261022-143856-7-old-job', narration=True, shots=2, status='generating')
++    make_batch(job, 'old master', done=2, origin='Job ' + job.name)
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert 'Run your prepared voices' in [item.value for item in at.subheader]
++    labels = [item.label for item in at.get('expander')]
++    assert any('Stopped TTS runs a job no longer needs' in label for label in labels), labels
++    assert 'Create the job from these voices' in [item.label for item in at.button]
++    at.button(key='queue-run-create').click()
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    created = at.session_state['job_id']
++    assert created and created != '20261022-143856-7-old-job'
++    folder = install / 'outputs' / created
++    assert job_script(folder) == 'small daily habits beat big plans.'
++    assert (folder / 'production' / 'prepared_speech.json').is_file()
++    assert [m.value for m in at.metric][:2] == ['✓', '✓']
++    notice = next(item.value for item in at.success if item.value.startswith('Created job'))
++    assert 'Nothing has been generated yet' in notice
++    assert 'Resume / continue job' in notice
+diff --git a/tools/update_v7119_to_v7120.py b/tools/update_v7119_to_v7120.py
+deleted file mode 100644
+index 3e33e75..0000000
+--- a/tools/update_v7119_to_v7120.py
++++ /dev/null
+@@ -1,179 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.120 update to a v7.0.119 installation.
+-
+-The field report after v7.0.119: "i can see it, but i don't see how to progress from this or run these jobs to
+-continue with these assets."  The batches were readable and playable - and the page offered no way forward.
+-
+-1. **Use these voices** in a finished Create step 4 batch, with two buttons:
+-
+-   * *Create a production from these voices* builds an approved plan from the batch's own master narration, word
+-     for word, creates a job whose script is that narration, copies the English/Hindi/Odia voices into the job
+-     and opens it. The duration comes from the measured English voice. Nothing is generated: the job waits for
+-     an explicit Resume, so no Flow credit is spent by choosing this. The duration and the credit cap (100) are
+-     stated in the confirmation.
+-   * *Attach these voices to a saved job* copies the voices into a job whose approved script is the same
+-     narration. Only such jobs are offered, because the engine reuses prepared narration only when the script and
+-     language match; anything else would be refused at Resume. `production/speech_attachment.json` records which
+-     batch was attached and when.
+-
+-   Both require the user's own rights statement ("I wrote this narration or own it" / written permission /
+-   licensed); the app never assumes it.
+-
+-2. A crash found while wiring this up: the *"Fix the transcript text"* language picker in the three-language panel
+-   handed Streamlit a LanguagePack object instead of its label, so opening any job with a narratable edition
+-   raised "TypeError: bad argument type for built-in operation" and the page stopped rendering.
+-
+-Nothing is rendered, re-recorded, resubmitted or charged by this update, and no saved job or batch is modified
+-until you press one of the new buttons.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.120 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.120-Use-Prepared-Voices/tools/update_v7119_to_v7120.py .            # dry run
+-    python3 ../AutoVideoAI-v7.0.120-Use-Prepared-Voices/tools/update_v7119_to_v7120.py . --apply    # install
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals, browser
+-profiles and ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'engine/batch_actions.py',
+-    'tests/test_v7120_use_prepared_voices.py',
+-    'USE_PREPARED_VOICES_V7_0_120.md', 'tools/update_v7119_to_v7120.py',
+-]
+-# Files as they exist in 7.0.119: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['fc517510036f70b3b560f8b9e820d3918a0de4b3d1125d9463a91c57ee0fc021'],
+-    'app.py': ['051b7f683fdf5fdb05127ffc286b900abdb3a4c86a9b400be312e71c59564b12'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.119', '7.0.120')  # 7.0.120 allows a safe re-run after success
+-
+-# The 7.0.120 zip carries the 7.0.119 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.118', '7.0.119', 'tools/update_v7118_to_v7119.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.119 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.119 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.119 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.120'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-        if destination.exists() and not allowed and sha(destination) != expected[name]:
+-            # A file this release introduces (engine/batch_actions.py) must not overwrite a different file that
+-            # already sits at that path - the same promise as for an edited file, applied to a new one.
+-            raise ValueError('A different file already exists where this update installs ' + name +
+-                             '; preserved it and changed nothing. Move it aside and run the update again.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
+-        print('    python3 cli.py v3 self-check')
+-        print('Then open Jobs & Recovery > Queue & Resume, expand a finished Create step 4 batch and use '
+-              '"Use these voices": it either creates a production whose script is exactly this narration or '
+-              'attaches the voices to a saved job that already approved the same script. Nothing is generated by '
+-              'either button - the first Flow credit is spent when you press Resume.')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7120_to_v7121.py b/tools/update_v7120_to_v7121.py
+new file mode 100644
+index 0000000..03a16aa
+--- /dev/null
++++ b/tools/update_v7120_to_v7121.py
+@@ -0,0 +1,170 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.121 update to a v7.0.120 installation.
++
++Field questions after v7.0.120: "still need to know how to resume this so that it will create a job and
++corresponding video" and "why is it still showing the tts for the completed jobs?".
++
++1. **Run your prepared voices** is now the first thing on Queue & Resume: pick a batch, state your rights, press
++   one primary button. The job is created from that batch's own narration word for word, the voices are copied
++   into it and the page opens it with SCRIPT/VOICE checked - nothing is generated until Resume, and the
++   optional "start as soon as it is created" box says that it spends Flow credits. The same path exists as
++   ``python3 cli.py v3 use-voices --list`` / ``--create-job --rights ...`` / ``--attach-to <job>``.
++
++2. A Create step 4 batch that stopped during TTS *inside* a job that has since narrated and moved on is no
++   longer listed as work to finish. It is kept, named and explained under "Stopped TTS runs a job no longer
++   needs" (nothing is deleted), so an abandoned 22-October run stops looking like the next step.
++
++Usage (run from the existing installation folder, after extracting the 7.0.121 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.121-Run-Voices/tools/update_v7120_to_v7121.py .            # dry run
++    python3 ../AutoVideoAI-v7.0.121-Run-Voices/tools/update_v7120_to_v7121.py . --apply    # install
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals, browser
++profiles and ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py', 'engine/speech_batches.py',
++    'tests/test_v7121_run_prepared_voices.py',
++    'RUN_VOICES_V7_0_121.md', 'tools/update_v7120_to_v7121.py',
++]
++# Files as they exist in 7.0.120: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['0ae5c71d2591953e1108cc9138b3cdc69c2848565c6bc878cb26c2214ab5f435'],
++    'app.py': ['ca1b39162415c5f576bb0ffc2560792b9d3f77381a2ff6d244e15a86f5e4ace9'],
++    'cli.py': ['014887426ae67cf950a1fb782598b82c9e9e8140b5370e80b7dbac593e8673a0'],
++    'engine/speech_batches.py': ['b4347b00362b46afe39f7cd6d2f7bc4a654e5d906b1dbd0daba3fcdf24e99ef4'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.120', '7.0.121')  # 7.0.121 allows a safe re-run after success
++
++# The 7.0.121 zip carries the 7.0.120 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.119', '7.0.120', 'tools/update_v7119_to_v7120.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.120 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.120 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.120 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.121'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++        if destination.exists() and not allowed and sha(destination) != expected[name]:
++            # A file this release introduces (engine/batch_actions.py) must not overwrite a different file that
++            # already sits at that path - the same promise as for an edited file, applied to a new one.
++            raise ValueError('A different file already exists where this update installs ' + name +
++                             '; preserved it and changed nothing. Move it aside and run the update again.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
++        print('    python3 cli.py v3 self-check')
++        print('Then open Jobs & Recovery > Queue & Resume: "Run your prepared voices" is the first panel. Pick a '
++              'batch, state how the narration may be used and press "Create the job from these voices" - nothing '
++              'is generated until you press Resume (or tick the start box, which says it spends credits). From a '
++              'terminal: python3 cli.py v3 use-voices --list, then --create-job --rights own_content. Stopped TTS '
++              'runs a finished job no longer needs are listed separately and are never deleted.')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

@@ -1,0 +1,657 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/APPROVAL_NOT_FINAL_V7_0_101.md b/APPROVAL_NOT_FINAL_V7_0_101.md
+--- a/APPROVAL_NOT_FINAL_V7_0_101.md	1970-01-01 00:00:00.000000000 +0000
++++ b/APPROVAL_NOT_FINAL_V7_0_101.md	2026-10-26 12:55:26.000000000 +0000
+@@ -0,0 +1,93 @@
++# AutoVideoAI 7.0.101 · "no approval click recorded" is not "no video exists"
++
++You are right, and the app was wrong to state it. Two things I said last round were based on reading the chat
++text as the project state:
++
++- *"the card was never approved, so no video exists"* — you approved it **in the Flow UI yourself**, and that
++  click is not visible to the app (only the CLI path writes an approval line to the take ledger).
++- *"wait for the queue"* — that chat turn is written when Flow accepts the request and **stays in the chat
++  afterwards**. In your project it is a leftover while the clip was already finished a minute later.
++
++What actually happened in your terminal is simpler than either: **your recovery command never reached a
++browser.** The traceback was at `load_manifest`, before any `[Flow] …` line, because the job reference was
++`outputs/…` and the app prefixes `outputs/` itself (fixed in 7.0.100). The video was there the whole time.
++
++## Do this now (bare job id — the app adds outputs/ itself)
++
++```
++cd /mnt/c/Users/eiyanpr/Downloads/Auto/AutoVideoAI-v7
++python3 cli.py v3 recover-flow-video 20261022-143856-7-small-daily-habits-tha-9729 \
++    --shot-id shot_014 --wait-seconds 180
++```
++
++Because that clip was created *after* the request was submitted, it counts as a fresh asset, so automatic
++matching should now find it (the earlier `0 fresh candidates` scan ran before it existed). Expect a `[Flow]`
++browser launch, then the download, then QC.
++
++If it reports `no verified match`, the exact video is in the project you screenshotted — click the clip so the
++address bar shows `…/project/37d8cf57-12b4-4a85-9934-5580e90d3781/edit/<asset-id>` and run:
++
++```
++python3 cli.py v3 recover-flow-video 20261022-143856-7-small-daily-habits-tha-9729 \
++    --shot-id shot_014 --asset-url https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781/edit/<asset-id> \
++    --asset-reviewed
++```
++
++(The same box exists in the Queue panel, *"Recover a visually reviewed video if its old fingerprint no longer
++matches"*.) Then Resume — UI is fine, the shot is saved and the manifest knows it.
++
++## What 7.0.101 changes (wording that must not mislead)
++
++| Where | Before | Now |
++|---|---|---|
++| Blocked-Resume message | "that card was never approved and no video exists yet" | "no video exists **until** that card is approved … if you have already approved it in the saved project (the clip, or a queued note, is there), skip this: download the video first, it is free" |
++| Queue panel warning | "Flow is probably still waiting … until that card is approved no video exists" | "no approval click is **recorded** … if you approved it in the Flow UI yourself, this note is stale — the clip may already be in the project, and downloading it costs nothing … run the free download first" |
++| Panel next action | "…so no video exists yet and another wait cannot find one" | "Either Flow is still waiting on the card … or you approved it directly in the Flow UI, where the click is not recorded here … Run the free download first" |
++| `recover-flow-video` with nothing found | "If the saved project says the generation is queued because of high demand, there is nothing to download yet: wait" | "A chat turn that says the generation is queued … is a **snapshot from when it was submitted** and can stay in the chat after the clip is finished … check the project's media grid … download exactly it with `--asset-url … --asset-reviewed`" |
++| Preflight tool | "Flow is probably still waiting on its Approve/Reject card" | same, plus "If you approved it in the browser yourself the click is not recorded here — download the video first (free); only approve if the project has no video" |
++| Approval evidence | "…so Flow is probably still waiting" | "…or the card was approved directly in the browser (that click is not recorded here)" |
++
++The order of advice is now: **download (0 credits) → approve (credits) only if the project really has no video →
++replacement (paid) last.** That is the order it should always have had.
++
++## Tests
++
++`tests/test_v7101_approval_not_final.py` — 8 tests:
++
++- the evidence still flags a missing click but says a browser approval is invisible to it;
++- the blocked message says "no video exists **until** that card is approved", tells a user who already approved
++  to download first, and still lists both commands (approve before recovery in the text, as an option);
++- the preflight keeps `no approval click is recorded` and adds the unrecorded-click explanation and
++  `download the video first (free)`;
++- the queued chat note is described as a snapshot, points at the media grid, and names `--asset-url`;
++- the no-video error says nothing was submitted, names the media grid, and offers `--asset-reviewed`;
++- the panel note carries the "stale" explanation and "run the free download first";
++- the panel's next action says "Either Flow is still waiting … or you approved it directly in the Flow UI"
++  and still hands over the recovery command.
++
++`tests/test_v799_approval_pending.py` was updated for the corrected sentence (the behaviour it pins — a missing
++click is reported — is unchanged).
++
++## Install
++
++1. Stop the dashboard (all tabs).
++2. Extract `AutoVideoAI-v7.0.101-Approval-Not-Final.zip` beside your installation.
++3. From inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.101/tools/update_v7100_to_v7101.py .            # dry run
++   python3 ../AutoVideoAI-v7.0.101/tools/update_v7100_to_v7101.py . --apply    # installs the code
++   ```
++
++   Accepts an installed 7.0.100 (or an already-updated 7.0.101), backs replaced files up under
++   `code-update-backups/v7.0.100-to-v7.0.101-<timestamp>`, and never touches outputs, jobs, Flow journals,
++   browser profiles or Clip Studio folders.
++
++The recovery command above works on the version you already have; install this so the panel stops insisting a
++video is missing while you are looking at it.
++
++## Not verified live
++
++No Flow project was opened and no credit was spent here. I cannot see your project, so I cannot promise the
++automatic match will succeed — only that a fresh clip is what it looks for, and that `--asset-url` downloads
++the exact video you point at.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 12:39:34.000000000 +0000
++++ b/VERSION	2026-10-26 12:55:28.000000000 +0000
+@@ -1 +1 @@
+-7.0.100
++7.0.101
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/app.py b/app.py
+--- a/app.py	2026-10-26 11:54:06.000000000 +0000
++++ b/app.py	2026-10-26 12:54:58.000000000 +0000
+@@ -216,10 +216,11 @@
+             st.info(state["flow_next_action"])
+         if state.get("flow_pending_approval"):
+             # v7.0.99: a saved video request is confirmed by a click, not by a wait.
+-            st.warning("Flow's agent is probably still waiting for an approval click on the saved video request. "
+-                       "Until that card is approved no video exists, so Resume only scans and pauses again. "
+-                       "Approve it in the saved project above, or run the approve command below (it states the "
+-                       "credit cost first and the download afterwards is free).")
++            st.warning("No approval click is recorded for the saved video request. If Flow is still showing that "
++                       "card, no video exists until it is approved. If you approved it in the Flow UI yourself, this "
++                       "note is stale - the clip may already be in the project, and downloading it costs nothing. "
++                       "Either way: run the free download first, and only approve (costs credits) if the project "
++                       "really has no video.")
+         if state.get("flow_saved_project_url") and state.get("flow_saved_project_url") != project_url:
+             st.caption(f"Saved project in the request: {state['flow_saved_project_url']}")
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 12:37:22.000000000 +0000
++++ b/engine/factory.py	2026-10-26 12:54:58.000000000 +0000
+@@ -720,10 +720,12 @@
+             # and waiting again cannot produce one.
+             cost = approval.get("cost")
+             credits = f" ({cost} credits)" if isinstance(cost, int) else ""
+-            next_action = ("Flow's agent is probably still waiting for your approval click" + credits
+-                           + " on the saved request, so no video exists yet and another wait cannot find one. "
+-                           "Approve that card once - in the saved project yourself, or with the command below - "
+-                           "then the download is free and QC still runs.")
++            next_action = ("No approval click is recorded for this request. Either Flow is still waiting on the "
++                           "card" + credits + " - nothing is generated until it is approved - or you approved it "
++                           "directly in the Flow UI, where the click is not recorded here and the video may already "
++                           "be in the project. Run the free download first (it costs no credits): if a clip exists "
++                           "it is saved and QC runs; if nothing is there, approve that one card yourself or with the "
++                           "command below and then download it.")
+         if kind != "image" and not next_action:
+             next_action = ("This is a video request: recover the exact saved video first (0 credits). A new video "
+                            "generation spends credits, so nothing is resubmitted automatically.")
+@@ -4199,10 +4201,13 @@
+             if not result or not result.get("path"):
+                 raise RuntimeError(
+                     f"No downloadable video tile became available in {int(wait_seconds)}s. "
+-                    "The project is unchanged; wait for Flow to finish/reset, then run this recovery again. "
+-                    "If the saved project says the generation is queued because of high demand, there is nothing "
+-                    "to download yet: wait for the clip to appear (waiting costs no credits), then run this "
+-                    "command again.")
++                    "The project is unchanged and nothing was submitted (waiting costs no credits). "
++                    "A chat turn that says the generation is queued because of high demand is a snapshot from "
++                    "when it was submitted and can stay in the chat after the clip is finished, so do not read it "
++                    "as the current state: check the project's media grid for the newest video. If that video is "
++                    "there but automatic matching cannot prove it is this shot, download exactly it with "
++                    "`--asset-url https://flow.google.com/project/<project>/edit/<id> --asset-reviewed`. "
++                    "Otherwise run this recovery again later.")
+             bound = self._remember_flow_project_url(
+                 job_id, result.get("project_url") or provider.current_project_url())
+             associated = self.associate_download(job_id, shot.shot_id, result["path"])
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/flow_pending_approval.py b/engine/flow_pending_approval.py
+--- a/engine/flow_pending_approval.py	2026-10-26 11:55:12.000000000 +0000
++++ b/engine/flow_pending_approval.py	2026-10-26 12:54:58.000000000 +0000
+@@ -75,7 +75,8 @@
+         reason = 'this request was never submitted'
+     elif suspected:
+         reason = ('no approval click is recorded for this submitted video request: Flow is probably still '
+-                  'waiting on its Approve/Reject card')
++                  'waiting on its Approve/Reject card, or the card was approved directly in the browser (that '
++                  'click is not recorded here)');
+     else:
+         reason = 'this request is already downloaded'
+     return {'journal': str(journal), 'target': target, 'shot_id': shot_id_for(journal),
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/flow_resume_safety.py b/engine/flow_resume_safety.py
+--- a/engine/flow_resume_safety.py	2026-10-26 11:54:22.000000000 +0000
++++ b/engine/flow_resume_safety.py	2026-10-26 12:54:58.000000000 +0000
+@@ -138,8 +138,10 @@
+             message += ("Video request(s) " + ', '.join(videos) + " cannot be redone for free: a new Flow video "
+                         "spends credits, so nothing is resubmitted automatically. If the saved project shows an "
+                         "agent turn asking \"Would you like me to kick off this 1 video generation, costing N "
+-                        "credits?\" with Approve/Reject buttons, that card was never approved and no video exists "
+-                        "yet - waiting again cannot produce one. Approve that one card (N credits) in the saved "
++                        "credits?\" with Approve/Reject buttons, no video exists until that card is approved - "
++                        "waiting again cannot produce one. If you have already approved it in the saved project "
++                        "(the clip, or a queued note, is there), skip this: download the video first, it is free. "
++                        "Otherwise approve that one card (N credits) in the saved "
+                         "project, or run `python3 cli.py v3 approve-request " + job + shot_hint + " --confirm-credits N` "
+                         "(it refuses any other cost), and the download after it is free. Otherwise recover the exact "
+                         "saved video (0 credits, QC still runs): "
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v7101_approval_not_final.py b/tests/test_v7101_approval_not_final.py
+--- a/tests/test_v7101_approval_not_final.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7101_approval_not_final.py	2026-10-26 12:55:10.000000000 +0000
+@@ -0,0 +1,113 @@
++"""v7.0.101: "no approval click recorded" must not be read as "no video exists".
++
++Field case (job 20261022-143856-7-small-daily-habits-tha-9729, 2026-10-26): the CLI approve command failed on a
++job-id path, so the operator pressed Approve in the Flow UI by hand. Flow answered in the chat with
++
++    "Your video generation has been scheduled and is waiting in the queue due to high demand."
++
++and the clip was ready about a minute later (the thumbnail was in the project). That chat turn is a snapshot
++from submit time and stays in the chat afterwards.
++
++v7.0.99/v7.0.100 said the opposite of what was true: "no approval click is recorded ... no video exists yet and
++another wait cannot find one", and v7.0.100 told the user to wait when the video was already there. These tests
++pin the corrected wording: a missing click is evidence, not proof, and the free download always comes first.
++
++No browser, no Flow request, no credits.
++"""
++import json
++
++import pytest
++
++from engine import flow_pending_approval as fpa
++from engine.flow_resume_safety import FlowResumeBlocked, check_job
++from tools import flow_resume_preflight as preflight
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++PROJECT = 'https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781'
++
++
++def _job(tmp_path):
++    job = tmp_path / JOB
++    (job / 'flow' / 'shots' / 'shot_014').mkdir(parents=True)
++    (job / 'production_manifest.json').write_text('{"shots": []}')
++    journal = job / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4.flow-request.json'
++    journal.write_text(json.dumps({'kind': 'video', 'scope': 'video_flow_v1', 'phase': 'submitted',
++                                   'status': 'pending', 'project_url': PROJECT}))
++    journal.with_name('take_01.mp4.submit-ledger.jsonl').write_text(
++        json.dumps({'event': 'submitted'}) + '\n')
++    return job
++
++
++def test_the_evidence_admits_a_manual_approval(tmp_path):
++    row = fpa.evidence_for(_job(tmp_path) / 'flow' / 'shots' / 'shot_014' / 'take_01.mp4.flow-request.json')
++    assert row['suspected_pending'] is True           # still worth saying
++    assert 'waiting on its Approve/Reject card' in row['reason']
++    assert 'approved directly in the browser' in row['reason']   # ... but not as a fact
++
++
++def test_the_blocked_message_downloads_first_and_approves_only_if_there_is_nothing(tmp_path):
++    message = str(FlowResumeBlocked(check_job(_job(tmp_path))))
++    assert 'no video exists until that card is approved' in message
++    assert 'If you have already approved it in the saved project' in message
++    assert 'download the video first, it is free' in message
++    # the approve command is still offered, just not as the only move
++    assert 'approve-request' in message and 'recover-flow-video' in message
++    assert message.index('approve-request') < message.index('recover-flow-video')
++
++
++def test_the_preflight_says_the_click_may_be_unrecorded(tmp_path, capsys):
++    argv = __import__('sys').argv
++    __import__('sys').argv = ['flow_resume_preflight.py', str(_job(tmp_path))]
++    try:
++        assert preflight.main() == 3
++    finally:
++        __import__('sys').argv = argv
++    printed = capsys.readouterr().out
++    assert 'no approval click is recorded' in printed
++    assert 'approved it in the browser yourself' in printed
++    assert 'download the ' in printed and 'video first (free)' in printed
++
++
++def test_a_queued_chat_note_is_described_as_a_snapshot_not_the_state():
++    from pathlib import Path
++    source = Path('engine/factory.py').read_text(encoding='utf-8')
++    assert 'is a snapshot from' in source
++    assert 'do not read it' in source
++    assert 'media grid' in source
++    assert '--asset-url' in source
++
++
++def test_the_no_video_error_does_not_say_to_wait_for_the_queue_alone():
++    from pathlib import Path
++    source = Path('engine/factory.py').read_text(encoding='utf-8')
++    start = source.index('No downloadable video tile became available')
++    block = source[start:start + 1200]
++    assert 'nothing was submitted (waiting costs no credits)' in block
++    assert 'check the project' in block
++    assert '--asset-reviewed' in block
++
++
++def test_the_panel_note_offers_the_stale_explanation():
++    from pathlib import Path
++    source = Path('app.py').read_text(encoding='utf-8')
++    assert 'If you approved it in the Flow UI yourself, this ' in source
++    assert 'note is stale' in source
++    assert 'run the free download first' in source
++
++
++def test_the_diagnosis_action_downloads_before_approving(tmp_path):
++    from types import SimpleNamespace
++    from engine.factory import Factory
++    from engine.project.manager import ProjectManager
++
++    job = _job(tmp_path)
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda job_id: str(job),
++                                 load_manifest=lambda job_id: (_ for _ in ()).throw(FileNotFoundError()))
++    diagnosis = Factory.flow_journal_diagnosis(factory, JOB)
++    assert diagnosis['pending_approval'] is True
++    action = diagnosis['next_action']
++    assert 'Either Flow is still waiting' in action
++    assert 'approved it directly in the Flow UI' in action
++    assert 'Run the free download first' in action
++    assert diagnosis['video_recovery_command'].endswith('--wait-seconds 180')
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v799_approval_pending.py b/tests/test_v799_approval_pending.py
+--- a/tests/test_v799_approval_pending.py	2026-10-26 11:54:36.000000000 +0000
++++ b/tests/test_v799_approval_pending.py	2026-10-26 12:55:04.000000000 +0000
+@@ -145,7 +145,7 @@
+     journal = _journal(job)
+     _ledger(journal, 'intent', 'submitted')
+     message = str(FlowResumeBlocked(check_job(job)))
+-    assert 'that card was never approved' in message
++    assert 'no video exists until that card is approved' in message
+     assert f'approve-request {JOB} --shot-id shot_014 --confirm-credits N' in message
+     assert 'the download after it is free' in message
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/flow_resume_preflight.py b/tools/flow_resume_preflight.py
+--- a/tools/flow_resume_preflight.py	2026-10-26 11:54:06.000000000 +0000
++++ b/tools/flow_resume_preflight.py	2026-10-26 12:54:58.000000000 +0000
+@@ -66,9 +66,12 @@
+     approval = evidence_for(job_dir / str(row.get('journal') or ''))
+     if approval.get('suspected_pending'):
+         cost = approval.get('cost')
+-        lines.append('  Approval:     no approval click is recorded for this submitted video request, so Flow is '
+-                     + ('probably still waiting on a card that costs about ' + str(cost) + ' credits'
+-                        if isinstance(cost, int) else 'probably still waiting on its Approve/Reject card'))
++        lines.append('  Approval:     no approval click is recorded for this submitted video request: Flow may '
++                     'still be waiting on '
++                     + ('a card that costs about ' + str(cost) + ' credits'
++                        if isinstance(cost, int) else 'its Approve/Reject card')
++                     + '. If you approved it in the browser yourself the click is not recorded here - download the '
++                       'video first (free); only approve if the project has no video')
+         lines.append('  Approve once: ' + (approve_command(job_dir.name, approval)
+                                             or f'python3 cli.py v3 approve-request {job_dir.name}{shot_flag} '
+                                                '--confirm-credits <credits on the card>'))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7100_to_v7101.py b/tools/update_v7100_to_v7101.py
+--- a/tools/update_v7100_to_v7101.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7100_to_v7101.py	2026-10-26 12:55:50.000000000 +0000
+@@ -0,0 +1,157 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.101 update to a v7.0.100 installation.
++
++Wording that could mislead, corrected:
++
++- "no approval click is recorded" is evidence, not proof: a card approved directly in the Flow UI leaves no
++  trace here, and the clip is often ready seconds later. The blocked-Resume message, the Queue panel, the
++  panel's next action and ``tools/flow_resume_preflight.py`` now say so, and put the free download first;
++- a chat turn that says the generation is "queued due to high demand" is a snapshot from submit time and stays
++  in the chat after the clip is finished, so ``recover-flow-video`` no longer tells the user to wait on it: it
++  points at the project's media grid and at ``--asset-url ... --asset-reviewed``.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.101 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.101/tools/update_v7100_to_v7101.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.101/tools/update_v7100_to_v7101.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['APPROVAL_NOT_FINAL_V7_0_101.md', 'VERSION', 'app.py', 'engine/factory.py',
++           'engine/flow_pending_approval.py', 'engine/flow_resume_safety.py',
++           'tests/test_v7101_approval_not_final.py', 'tests/test_v799_approval_pending.py',
++           'tools/flow_resume_preflight.py', 'tools/update_v7100_to_v7101.py']
++# Files as they exist in 7.0.100: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['25ed9a324442540579e2ffa96084371bb6ab4c0dbc53ea39595ed0901c9dd032'],
++    'app.py': ['6bc71f731bdc4ad9022e9e7a72221c2fa3a543abdb712941fd677163bf05f02f'],
++    'engine/factory.py': ['54ba61da90646058df64607d3d04bfc3e04612c8c6475e06f71396b32adc954d'],
++    'engine/flow_pending_approval.py': ['9debc4229642ea3072664d268ccefe5076c1ed846e5639eab4546942626a92f9'],
++    'engine/flow_resume_safety.py': ['2fd666e332357077aa430f8877401427835334e4ea4984ae4444d151372df1e1'],
++    'tools/flow_resume_preflight.py': ['54171ae7ec9c571450d29ca84e89841f571b23c8e9732d3aa021286fda82ec58'],
++    'tests/test_v799_approval_pending.py': ['221eae57836fd1542bb1c2374405a392398f3ee74a0b66078c26ea03bdbdcf90'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.100', '7.0.101')  # 7.0.101 allows a safe re-run after success
++
++# The 7.0.100 zip carries the 7.0.99 to 7.0.100 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.99', '7.0.100', 'tools/update_v799_to_v7100.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.100 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.100 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.100 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.101 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.101 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.101 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.100-to-v7.0.101-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.101. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v799_to_v7100.py b/tools/update_v799_to_v7100.py
+--- a/tools/update_v799_to_v7100.py	2026-10-26 12:39:34.000000000 +0000
++++ b/tools/update_v799_to_v7100.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,155 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.100 update to a v7.0.99 installation.
+-
+-Every Factory CLI command takes a **bare** job id, because the app prefixes ``outputs/`` itself. Pasting the
+-job folder in produced ``outputs/outputs/<id>/production_manifest.json`` and a bare ``FileNotFoundError``
+-(field case 2026-10-26). v7.0.100:
+-
+-- new ``engine/job_ref``: ``normalize_job_id()`` accepts ``<id>``, ``outputs/<id>``, ``outputs/<id>/``,
+-  ``./outputs/<id>``, ``outputs/outputs/<id>``, Windows-style paths and absolute paths to the job folder;
+-- ``job_lookup_error()`` explains an unknown reference, says commands take the bare id, and lists the jobs
+-  that do exist (or suggests ``--outputs-root``);
+-- ``cli.py`` normalizes the id for every command that takes one, and never blocks an offline command on a
+-  reference it cannot resolve;
+-- ``recover-flow-video`` reports an unreadable production as that message instead of a traceback, and its
+-  "no downloadable video" text names the queued/high-demand case (waiting costs no credits).
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.100 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.100/tools/update_v799_to_v7100.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.100/tools/update_v799_to_v7100.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['JOB_REFERENCE_V7_0_100.md', 'VERSION', 'cli.py', 'engine/factory.py', 'engine/job_ref.py',
+-           'tests/test_v7100_job_reference.py', 'tools/update_v799_to_v7100.py']
+-# Files as they exist in 7.0.99: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['48b53e858c1ae0cf01d436d2388f0a08802e06a6335acffa6e21a8bab9bc66c7'],
+-    'cli.py': ['b3d4632e07a38a37eae5b3b7d95827168c3fdf143a1469e160fc26f6a18f9769'],
+-    'engine/factory.py': ['9ca7468b15abf18ba17a3f029eadf0b180ddad2808bb3c4577684034202b9dc6'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.99', '7.0.100')  # 7.0.100 allows a safe re-run after success
+-
+-# The 7.0.99 zip carries the 7.0.98 to 7.0.99 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.98', '7.0.99', 'tools/update_v798_to_v799.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.99 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.99 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.99 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.100 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.100 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.100 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.99-to-v7.0.100-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.100. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)

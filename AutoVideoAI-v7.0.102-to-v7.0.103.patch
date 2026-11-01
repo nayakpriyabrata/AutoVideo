@@ -1,0 +1,1211 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/FLOW_PROJECT_CONFLICT_V7_0_103.md b/FLOW_PROJECT_CONFLICT_V7_0_103.md
+--- a/FLOW_PROJECT_CONFLICT_V7_0_103.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FLOW_PROJECT_CONFLICT_V7_0_103.md	2026-10-26 23:35:10.000000000 +0000
+@@ -0,0 +1,113 @@
++# AutoVideoAI 7.0.103 · the run stopped (and why), and the two Flow projects that collided
++
++## Your question first: it is **not** running
++
++`status=planned` means *the plan is saved*, not *work is in progress*. The red line is an error that stopped the
++production: the browser closed, and nothing has progressed since 04:46:16.
++
++```
++[04:45:56] [28.00%] ⏭️ [44/45] shot_044 closing frame skipped
++[04:46:12] [Flow][diag] browser launched
++[04:46:16] [Flow] Opening persisted project URL: …/project/37f3495d-…
++Video Flow project must differ from storyboard image project
++```
++
++Nothing was rendered, so the English edition is missing and Hindi/Odia stay `needs_picture` — that is expected
++until a finished video exists; it is not a second failure.
++
++One flag from your log worth acting on: **`Low disk space: 1.9 GB free`**. The final render needs room.
++
++## What "Video Flow project must differ from storyboard image project" means
++
++Storyboard stills and motion videos must live in **two different** Flow projects. A new video is identified by
++its prompt *and* by being fresh in that project's gallery; if both roles share one project, a fresh video cannot
++be told apart from the stills, so generation is refused (no credits spent).
++
++**This one is my fault.** 7.0.99's recovery wrote the project it downloaded from — the *video* project — into the
++job's **stills** binding (`settings.json → flow_project_url` and the database row). The video binding was
++already on that project, so the next run saw both roles on one URL and refused to start. 7.0.103 no longer does
++that; recovery binds the video role only.
++
++## Repair your job (one command, no credits)
++
++Your two bindings currently read:
++
++```
++Stills: 37d8cf57-…   from settings.json flow_project_url
++Video:  37d8cf57-…   from flow_video_project.json
++```
++
++Check it yourself (read-only, no browser):
++
++```
++python3 cli.py v3 flow-projects 20261022-143856-7-small-daily-habits-tha-9729
++```
++
++Then choose one:
++
++- **Let the video production open its own project** (recommended — least assumptions, and the stills project
++  keeps the frames already generated there):
++
++  ```
++  python3 cli.py v3 flow-projects 20261022-143856-7-small-daily-habits-tha-9729 --clear-video --confirm
++  ```
++
++  The binding file is kept as `flow_video_project.json.cleared`; saved request journals keep their own project
++  URLs, so nothing already submitted is redirected.
++
++- **Or rebind the stills to their real storyboard project** (14dbfdef… from your 21:15 run, or a new one):
++
++  ```
++  python3 cli.py v3 flow-projects 20261022-143856-7-small-daily-habits-tha-9729 \
++      --set-stills https://flow.google.com/project/<storyboard-project-id> --confirm
++  ```
++
++Then continue the job: **Resume** in the Queue (or `python3 cli.py v3 resume <job-id>`). The 28 % already done
++(storyboard plan, most closing frames) is reused; it restarts at the video shots.
++
++Before resuming, free some disk: Settings → *Disk cleanup* (worker + Clip Studio panels), or delete an old job
++you no longer need. A 45-shot long-form render can want several GB.
++
++## What 7.0.103 adds
++
++| Piece | Behaviour |
++|---|---|
++| `flow_project_bindings()` / `flow_project_conflict_message()` | name both roles, **which file each value comes from**, whether they collide, and the exact repair commands |
++| the guard | instead of a one-line error it pauses the job (so `planned` can never masquerade as "running"), logs `flow_project_conflict` with the shot, and raises the full explanation — nothing is generated or charged |
++| `recover_flow_video` | binds the **video** role only (`_remember_flow_video_project_url`); it can no longer overwrite the stills binding |
++| `cli.py v3 flow-projects <job>` | read-only report; `--set-stills URL`, `--set-video URL`, `--clear-stills`, `--clear-video`, all requiring `--confirm`, one action per command. Refuses a second video binding without clearing first, and flags stored copies that disagree |
++| `cli.py v3 status <job>` | one honest answer: **RUNNING** (a live process holds the job lock, plus last stage/percent) or **NOT RUNNING** (with the last stage, the event that stopped it and its reason), then both project bindings and a CONFLICT line |
++| Job panel | new *"Flow projects — storyboard images vs video clips"* expander shows both bindings, the explanation and the copy-ready repair commands |
++
++## Tests
++
++`tests/test_v7103_project_conflict.py` — 17 tests: bindings resolved across settings/database/file with their
++sources; a collision detected across sources; the message naming both sources and commands; the old one-line
++error gone and the job paused instead; the recovery no longer touching the stills writer; the CLI read-only by
++default, dry-run without `--confirm`, `--clear-video` freeing the role with a `.cleared` backup, `--set-stills`
++rebinding both copies, `--set-video` refusing a second binding, two actions refused, invalid URL refused,
++`--clear-stills` removing both copies, the OK line, disagreeing copies reported; and the running/stopped probe
++(free lock vs held lock, stop reason, the `planned` explanation).
++
++## Install
++
++1. Stop the dashboard (all tabs).
++2. Extract `AutoVideoAI-v7.0.103-Flow-Project-Conflict.zip` beside your installation.
++3. From inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.103/tools/update_v7102_to_v7103.py .            # dry run
++   python3 ../AutoVideoAI-v7.0.103/tools/update_v7102_to_v7103.py . --apply    # installs the code
++   ```
++
++   Accepts an installed 7.0.102 (or an already-updated 7.0.103). Replaced files are backed up under
++   `code-update-backups/v7.0.102-to-v7.0.103-<timestamp>`; outputs, jobs, Flow journals, browser profiles and
++   Clip Studio folders are never touched.
++
++You can repair the binding without installing anything (edit `settings.json` / move
++`flow_video_project.json`), but `flow-projects` does it safely and prints what it changed.
++
++## Not verified live
++
++No Flow project was opened and no credit was spent here. The classification and repairs are covered by tests;
++which project your stills should live in is your call — I can see the URLs in your logs, not your gallery.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 15:29:14.000000000 +0000
++++ b/VERSION	2026-10-26 23:35:14.000000000 +0000
+@@ -1 +1 @@
+-7.0.102
++7.0.103
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/app.py b/app.py
+--- a/app.py	2026-10-26 12:54:58.000000000 +0000
++++ b/app.py	2026-10-26 23:34:14.000000000 +0000
+@@ -207,6 +207,27 @@
+     project_url = state.get("flow_project_url")
+     if project_url:
+         st.markdown(f"[Open the saved Flow project]({project_url})")
++    # v7.0.103: storyboard images and video clips must live in two different Flow projects. Show both
++    # bindings (and the repair commands) instead of failing later with a one-line error.
++    try:
++        bindings = F.flow_project_bindings(job_id)
++    except Exception:
++        bindings = {}
++    if bindings:
++        with st.expander("Flow projects — storyboard images vs video clips"):
++            st.caption("Stills: " + (bindings.get("stills_project") or "not bound")
++                       + (f" · {bindings['stills_source']}" if bindings.get("stills_source") else ""))
++            st.caption("Video: " + (bindings.get("video_project") or "not bound")
++                       + (f" · {bindings['video_source']}" if bindings.get("video_source") else ""))
++            if bindings.get("conflict"):
++                st.error(F.flow_project_conflict_message(job_id))
++                st.code(f"python3 cli.py v3 flow-projects {job_id} --clear-video --confirm\n"
++                        f"python3 cli.py v3 flow-projects {job_id} "
++                        "--set-stills https://flow.google.com/project/<storyboard-project-id> --confirm",
++                        language="bash")
++            else:
++                st.caption("The two roles use different projects, as they must. Inspect with "
++                           f"`python3 cli.py v3 flow-projects {job_id}`.")
+     if state.get("flow_recovery_state"):
+         # 7.0.96: say why the last resume stopped and what moves the job forward, instead of
+         # leaving the same wait to run again.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/cli.py b/cli.py
+--- a/cli.py	2026-10-26 12:38:58.000000000 +0000
++++ b/cli.py	2026-10-26 23:34:48.000000000 +0000
+@@ -269,6 +269,22 @@
+     ap_.add_argument("--inspect", action="store_true",
+                      help="read-only: report whether a clickable card is visible and what it costs; never clicks")
+ 
++    fps = sub.add_parser(
++        "flow-projects",
++        help="Show the stills and video Flow projects of a job (read-only), or repair them explicitly: "
++             "--set-stills URL, --set-video URL, --clear-stills, --clear-video")
++    fps.add_argument("job_id")
++    fps.add_argument("--set-stills", default="", metavar="URL",
++                     help="bind the storyboard/stills project (also clears the video binding if it is the same URL)")
++    fps.add_argument("--set-video", default="", metavar="URL", help="bind the motion-video project explicitly")
++    fps.add_argument("--clear-stills", action="store_true",
++                     help="remove the stills binding (settings.json flow_project_url and the database row)")
++    fps.add_argument("--clear-video", action="store_true",
++                     help="remove the video binding (flow_video_project.json / settings flow_video_project_url); "
++                          "the next video submission opens its own project")
++    fps.add_argument("--confirm", action="store_true",
++                     help="required for every change; without it the command only prints the bindings")
++
+     fp = sub.add_parser("flow-project", help="Bind/rebind an AutoVideoAI job to an exact Google Flow project URL")
+     fp.add_argument("job_id")
+     fp.add_argument("url")
+@@ -886,6 +902,9 @@
+                 pass
+         finally:
+             b.close()
++    elif args.cmd == "flow-projects":
++        from engine.flow_projects_cli import run_flow_projects
++        raise SystemExit(run_flow_projects(f, args))
+     elif args.cmd == "flow-project":
+         from engine.providers.flow_browser import FlowBrowser
+         url = FlowBrowser.normalize_project_url(args.url)
+@@ -910,6 +929,25 @@
+         row = f.db.get(args.job_id) or {}
+         print(f"{m.job_id}\n  status={m.status} profile={m.profile} shots={len(m.shots)} accepted={m.accepted_count()}"
+               + (f"\n  flow_project={row.get('flow_project')}" if row.get("flow_project") else ""))
++        # v7.0.103: "planned" does not say whether work is in progress; the production lock does.
++        try:
++            from engine.job_activity import describe as describe_activity, job_activity
++            for line in describe_activity(job_activity(f.pm.job_dir(args.job_id))):
++                print('  ' + line if not line.startswith('  ') else line)
++        except Exception as error:
++            print(f"  (activity unknown: {type(error).__name__})")
++        try:
++            bindings = f.flow_project_bindings(args.job_id)
++            if bindings.get('stills_project') or bindings.get('video_project'):
++                print(f"  stills_project={bindings.get('stills_project') or '(not bound)'}"
++                      + (f" · {bindings['stills_source']}" if bindings.get('stills_source') else ''))
++                print(f"  video_project={bindings.get('video_project') or '(not bound)'}"
++                      + (f" · {bindings['video_source']}" if bindings.get('video_source') else ''))
++                if bindings.get('conflict'):
++                    print('  CONFLICT: stills and video share one Flow project; video generation is refused. '
++                          f'Run: python3 cli.py v3 flow-projects {args.job_id}')
++        except Exception:
++            pass
+         for s in m.shots:
+             print(f"  {s.shot_id} {s.status} {s.media_strategy} {s.provider}/{s.model} "
+                   f"est={s.estimated_credits}cr takes={len(s.takes)} retries={s.retry_count}")
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 12:54:58.000000000 +0000
++++ b/engine/factory.py	2026-10-26 23:33:54.000000000 +0000
+@@ -582,6 +582,63 @@
+                 pass
+         return ""
+ 
++    def flow_project_bindings(self, job_id: str, settings: dict | None = None) -> dict:
++        """Where the stills project and the video project come from, and whether they collide.
++
++        v7.0.103: the storyboard images and the motion videos must live in two different Flow projects,
++        because a fresh video is matched to a shot by its prompt and gallery freshness inside one project.
++        When both roles resolved to the same URL the run stopped with a one-line error that named neither
++        project nor the fix.
++        """
++        from .providers.flow_browser import FlowBrowser
++
++        settings = settings if settings is not None else self._settings(job_id)
++        stills_setting = FlowBrowser.normalize_project_url((settings or {}).get("flow_project_url", ""))
++        row = self.db.get(job_id) or {}
++        stills_db = FlowBrowser.normalize_project_url(row.get("flow_project", ""))
++        video_setting = FlowBrowser.normalize_project_url((settings or {}).get("flow_video_project_url", ""))
++        video_file = ""
++        path = os.path.join(self.pm.job_dir(job_id), "flow_video_project.json")
++        if os.path.isfile(path):
++            try:
++                with open(path, encoding="utf-8") as handle:
++                    video_file = FlowBrowser.normalize_project_url(json.load(handle).get("project_url", ""))
++            except (OSError, ValueError, TypeError):
++                video_file = ""
++        stills = stills_setting or stills_db
++        video = video_setting or video_file
++        return {
++            "job_id": job_id,
++            "stills_project": stills,
++            "stills_source": ("settings.json flow_project_url" if stills_setting else
++                              "database flow_project" if stills_db else ""),
++            "stills_candidates": {"settings": stills_setting, "database": stills_db},
++            "video_project": video,
++            "video_source": ("settings.json flow_video_project_url" if video_setting else
++                             "flow_video_project.json" if video_file else ""),
++            "video_candidates": {"settings": video_setting, "file": video_file},
++            "conflict": bool(stills and video and stills == video),
++        }
++
++    def flow_project_conflict_message(self, job_id: str, settings: dict | None = None) -> str:
++        """Explain a stills/video project collision and the exact repair, without guessing."""
++        bindings = self.flow_project_bindings(job_id, settings)
++        project = bindings["stills_project"]
++        return (
++            "The storyboard images and the video clips resolve to the same Flow project ("
++            + project + "), so a new video could not be told apart from the stills in that gallery. "
++            "Nothing was generated or charged for this shot. Both bindings are local files: "
++            "stills = " + (bindings["stills_source"] or "not bound") + "; video = "
++            + (bindings["video_source"] or "not bound") + ". "
++            "Inspect them with `python3 cli.py v3 flow-projects " + job_id + "`. Either point the video "
++            "production at its own project with `python3 cli.py v3 flow-projects " + job_id
++            + " --clear-video` (the next video submission then opens a new one), or rebind the stills to "
++            "their real storyboard project with `python3 cli.py v3 flow-projects " + job_id
++            + " --set-stills https://flow.google.com/project/<storyboard-project-id>`, then resume. "
++            "Until 7.0.103 a recovery that downloaded an already-finished video wrote the video project into "
++            "the stills binding, which is how a job can end up with both roles on one project; 7.0.103 no "
++            "longer does that. No images or credits are touched by either repair command.")
++
+     def _remember_flow_video_project_url(self, job_id: str, url: str | None) -> str:
+         from .providers.flow_browser import FlowBrowser
+         from .flow_project_isolation import persist_project_binding
+@@ -3561,7 +3618,20 @@
+                 video_url = self._flow_video_project_url(m.job_id, settings or {})
+                 still_url = self._flow_project_url(m.job_id, settings or {})
+                 if video_url and still_url and video_url == still_url:
+-                    raise RuntimeError("Video Flow project must differ from storyboard image project")
++                    # v7.0.103: a job that cannot start must not stay "planned" (it looked like it was
++                    # still running). Paused + a logged reason is the honest state, and it is recoverable.
++                    current = self.pm.load_manifest(m.job_id)
++                    current.status = "paused"
++                    self.pm.save_manifest(current)
++                    try:
++                        self.db.upsert(m.job_id, status="paused")
++                    except Exception:
++                        pass
++                    self.pm.log(m.job_id, "flow_project_conflict", {
++                        "shot": s.shot_id, "project": video_url,
++                        "stills_source": self.flow_project_bindings(m.job_id, settings or {})["stills_source"],
++                        "video_source": self.flow_project_bindings(m.job_id, settings or {})["video_source"]})
++                    raise RuntimeError(self.flow_project_conflict_message(m.job_id, settings or {}))
+             compiled = {"prompt": s.compiled_prompt, "negative": s.negative, "reference_paths": cast_photos,
+                         "project": f"AutoVideo-{m.job_id}-video",
+                         "project_url": self._flow_video_project_url(m.job_id, settings or {}),
+@@ -4208,7 +4278,9 @@
+                     "there but automatic matching cannot prove it is this shot, download exactly it with "
+                     "`--asset-url https://flow.google.com/project/<project>/edit/<id> --asset-reviewed`. "
+                     "Otherwise run this recovery again later.")
+-            bound = self._remember_flow_project_url(
++            # v7.0.103: this is a VIDEO download, so bind the video role only. Writing it into the stills
++            # binding made the next production fail with "storyboard and video project are the same".
++            bound = self._remember_flow_video_project_url(
+                 job_id, result.get("project_url") or provider.current_project_url())
+             associated = self.associate_download(job_id, shot.shot_id, result["path"])
+             qc = associated.get("qc", {})
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/flow_projects_cli.py b/engine/flow_projects_cli.py
+--- a/engine/flow_projects_cli.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/flow_projects_cli.py	2026-10-26 23:34:08.000000000 +0000
+@@ -0,0 +1,177 @@
++"""v7.0.103: inspect and repair a job's stills and video Flow projects from the command line.
++
++Field case (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27 04:46 IST): a new production run
++stopped at the first video shot with
++
++    Video Flow project must differ from storyboard image project
++
++which named neither project, nor where either binding lived, nor what to do. The job stayed ``planned``, so it
++looked like it might still be running.
++
++``flow-projects`` prints both roles with the file each value came from, flags a collision, and changes
++nothing unless ``--confirm`` is given with exactly one explicit action.
++"""
++from __future__ import annotations
++
++import json
++import os
++
++from .providers.flow_browser import FlowBrowser
++
++SETTINGS = 'settings.json'
++VIDEO_FILE = 'flow_video_project.json'
++
++
++def _settings_path(job_dir):
++    return os.path.join(job_dir, SETTINGS)
++
++
++def _read_json(path):
++    try:
++        with open(path, encoding='utf-8') as handle:
++            data = json.load(handle)
++        return data if isinstance(data, dict) else {}
++    except (OSError, ValueError):
++        return {}
++
++
++def _write_json(path, data):
++    tmp = path + '.tmp'
++    with open(tmp, 'w', encoding='utf-8') as handle:
++        json.dump(data, handle, indent=2)
++        handle.flush()
++        os.fsync(handle.fileno())
++    os.replace(tmp, path)
++
++
++def describe(factory, job_id) -> dict:
++    """Both bindings, their sources and the collision flag. Read-only."""
++    return factory.flow_project_bindings(job_id)
++
++
++def _report(bindings) -> list[str]:
++    lines = [f"Job:            {bindings['job_id']}",
++             f"Stills project: {bindings['stills_project'] or '(not bound)'}"
++             + (f"   from {bindings['stills_source']}" if bindings['stills_source'] else ''),
++             f"Video project:  {bindings['video_project'] or '(not bound)'}"
++             + (f"   from {bindings['video_source']}" if bindings['video_source'] else '')]
++    loose = {role: value for role, value in
++             (('settings stills', bindings['stills_candidates']['settings']),
++              ('database stills', bindings['stills_candidates']['database']),
++              ('settings video', bindings['video_candidates']['settings']),
++              ('file video', bindings['video_candidates']['file']))
++             if value}
++    if len(set(loose.values())) > 1:
++        lines.append('')
++        lines.append('Stored copies that disagree (only the ones above are used):')
++        for role, value in loose.items():
++            lines.append(f'  {role}: {value}')
++    lines.append('')
++    if bindings['conflict']:
++        lines.append('COLLISION: both roles point at the same project. A new video could not be told apart '
++                     'from the stills in that gallery, so video generation is refused (no credits are spent).')
++        lines.append('Repair, one of:')
++        lines.append(f'  python3 cli.py v3 flow-projects {bindings["job_id"]} --clear-video --confirm   '
++                     '# video gets its own project next time')
++        lines.append(f'  python3 cli.py v3 flow-projects {bindings["job_id"]} '
++                     '--set-stills https://flow.google.com/project/<storyboard-project-id> --confirm')
++    elif not bindings['stills_project']:
++        lines.append('No stills project is bound: storyboard frames will open their own project.')
++    elif not bindings['video_project']:
++        lines.append('No video project is bound: the first video submission will open its own project '
++                     '(separate from the stills project).')
++    else:
++        lines.append('OK: the two roles use different projects.')
++    return lines
++
++
++def run_flow_projects(factory, args) -> int:
++    """Print the bindings; apply exactly one explicit change when --confirm is given."""
++    job_id = args.job_id
++    job_dir = factory.pm.job_dir(job_id)
++    actions = {
++        '--set-stills': args.set_stills or '',
++        '--set-video': args.set_video or '',
++        '--clear-stills': bool(args.clear_stills),
++        '--clear-video': bool(args.clear_video),
++    }
++    chosen = [name for name, value in actions.items() if value]
++    print('\n'.join(_report(describe(factory, job_id))))
++    if not chosen:
++        if args.confirm:
++            print('\nNothing to change: name one of --set-stills, --set-video, --clear-stills, --clear-video.')
++            return 2
++        print('\nRead-only. Add --confirm with one of --set-stills URL, --set-video URL, --clear-stills, '
++              '--clear-video to change a binding.')
++        return 0
++    if len(chosen) > 1:
++        print('\nRefused: change one binding per command (' + ', '.join(chosen) + '). Nothing was changed.')
++        return 2
++    if not args.confirm:
++        print('\nDry run: add --confirm to apply ' + chosen[0] + '. Nothing was changed.')
++        return 0
++
++    settings_path = _settings_path(job_dir)
++    settings = _read_json(settings_path)
++    action = chosen[0]
++    if action in ('--set-stills', '--set-video'):
++        url = FlowBrowser.normalize_project_url(actions[action])
++        if not url:
++            print('\nRefused: expected https://flow.google.com/project/<uuid>. Nothing was changed.')
++            return 2
++    else:
++        url = ''
++
++    if action == '--set-stills':
++        settings['flow_project_url'] = url
++        _write_json(settings_path, settings)
++        factory.db.upsert(job_id, flow_project=url)
++        video = describe(factory, job_id)['video_project']
++        print(f'\nStills project bound to {url}.')
++        if video and video == url:
++            print('The video binding still points at the same URL, so the collision remains: run '
++                  f'`python3 cli.py v3 flow-projects {job_id} --clear-video --confirm` (or choose another '
++                  'stills project).')
++        factory.pm.log(job_id, 'flow_project_stills_set', {'url': url})
++        return 0
++
++    if action == '--set-video':
++        from .flow_project_isolation import persist_project_binding
++        try:
++            persist_project_binding(os.path.join(job_dir, VIDEO_FILE), url, 'video', job_id)
++        except (RuntimeError, ValueError) as error:
++            print('\nRefused: ' + str(error) + ' Nothing was changed. Use --clear-video to release the '
++                  'existing video binding first.')
++            return 2
++        if settings.get('flow_video_project_url'):
++            settings.pop('flow_video_project_url', None)
++            _write_json(settings_path, settings)
++        print(f'\nVideo project bound to {url}.')
++        factory.pm.log(job_id, 'flow_project_video_set', {'url': url})
++        return 0
++
++    if action == '--clear-stills':
++        settings.pop('flow_project_url', None)
++        _write_json(settings_path, settings)
++        factory.db.upsert(job_id, flow_project='')
++        print('\nStills binding removed: the next storyboard pass opens its own project.')
++        factory.pm.log(job_id, 'flow_project_stills_cleared', {})
++        return 0
++
++    # --clear-video
++    freed = []
++    path = os.path.join(job_dir, VIDEO_FILE)
++    if os.path.isfile(path):
++        os.replace(path, path + '.cleared')
++        freed.append(os.path.basename(path) + ' -> ' + os.path.basename(path) + '.cleared')
++    if settings.get('flow_video_project_url'):
++        settings.pop('flow_video_project_url', None)
++        _write_json(settings_path, settings)
++        freed.append('settings.json flow_video_project_url')
++    if not freed:
++        print('\nNothing to clear: no video binding is stored. Nothing was changed.')
++        return 0
++    print('\nVideo binding cleared (' + ', '.join(freed) + '). The next video submission opens its own '
++          'project, separate from the stills project. Saved request journals keep their own project URLs.')
++    factory.pm.log(job_id, 'flow_project_video_cleared', {'freed': freed})
++    return 0
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/job_activity.py b/engine/job_activity.py
+--- a/engine/job_activity.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/job_activity.py	2026-10-26 23:34:44.000000000 +0000
+@@ -0,0 +1,127 @@
++"""v7.0.103: answer "is this job still running, or did it stop?" from files, without a browser.
++
++Field case (2026-10-27): the Queue showed ``status: planned`` and a red line *"Video Flow project must differ
++from storyboard image project"*. Nothing said whether the production was still working or had stopped, and
++``planned`` reads like "queued".
++
++``job_activity()`` reads three local facts:
++
++* the job's ``.production.lock`` — held means a live process owns this job (running);
++* ``logs/progress.json`` — the last stage and percentage;
++* the tail of ``generation_log.json`` — the most recent recorded event, including a stop reason.
++
++It never opens a browser, takes no lock longer than an instant, and writes nothing.
++"""
++from __future__ import annotations
++
++import datetime
++import fcntl
++import json
++import os
++
++LOCK_NAME = '.production.lock'
++STOP_EVENTS = ('job_paused', 'flow_request_failed_without_pause', 'job_failed', 'run_failed',
++               'flow_project_conflict', 'flow_recovery_exhausted')
++
++
++def _read_json(path):
++    try:
++        with open(path, encoding='utf-8') as handle:
++            data = json.load(handle)
++        return data if isinstance(data, dict) else {}
++    except (OSError, ValueError):
++        return {}
++
++
++def lock_held(job_dir) -> bool:
++    """True when another process holds this job's production lock (an instant, non-blocking probe)."""
++    path = os.path.join(job_dir, LOCK_NAME)
++    if not os.path.isfile(path):
++        return False
++    try:
++        with open(path, 'a+b') as handle:
++            try:
++                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
++            except OSError:
++                return True
++            fcntl.flock(handle, fcntl.LOCK_UN)
++            return False
++    except OSError:
++        return False
++
++
++def _age(seconds) -> str:
++    if seconds is None:
++        return 'unknown age'
++    seconds = int(seconds)
++    if seconds < 90:
++        return f'{seconds}s ago'
++    if seconds < 5400:
++        return f'{seconds // 60}m ago'
++    if seconds < 172800:
++        return f'{seconds // 3600}h ago'
++    return f'{seconds // 86400}d ago'
++
++
++def _epoch(stamp):
++    try:
++        return datetime.datetime.fromisoformat(str(stamp)).timestamp()
++    except (TypeError, ValueError):
++        return None
++
++
++def job_activity(job_dir, now=None) -> dict:
++    """Local, read-only snapshot: is the job running, how far did it get, and why did it stop?"""
++    job_dir = str(job_dir)
++    now = now if now is not None else datetime.datetime.now().timestamp()
++    running = lock_held(job_dir)
++    progress = _read_json(os.path.join(job_dir, 'logs', 'progress.json'))
++    events = _read_json(os.path.join(job_dir, 'generation_log.json'))
++    # generation_log.json is a list, so _read_json's dict guard rejects it: read it directly.
++    try:
++        with open(os.path.join(job_dir, 'generation_log.json'), encoding='utf-8') as handle:
++            loaded = json.load(handle)
++        events = loaded if isinstance(loaded, list) else []
++    except (OSError, ValueError):
++        events = []
++    last = events[-1] if events else {}
++    stopped = next((row for row in reversed(events)
++                    if str(row.get('event')) in STOP_EVENTS), {})
++    progress_stamp = _epoch(progress.get('ts'))
++    last_stamp = _epoch(last.get('ts'))
++    newest = max([value for value in (progress_stamp, last_stamp) if value], default=None)
++    return {
++        'running': running,
++        'last_stage': str(progress.get('stage') or ''),
++        'last_percent': progress.get('percent'),
++        'last_progress_at': progress.get('ts', ''),
++        'last_event': str(last.get('event') or ''),
++        'last_event_at': last.get('ts', ''),
++        'idle': _age(now - newest) if newest else 'unknown',
++        'stopped_by': str(stopped.get('event') or ''),
++        'stop_reason': ' '.join(str(stopped.get('error') or stopped.get('reason') or '').split())[:600],
++        'stop_shot': str(stopped.get('shot') or ''),
++        'stop_at': stopped.get('ts', ''),
++    }
++
++
++def describe(activity) -> list[str]:
++    """Human lines for ``cli.py v3 status``: running / stopped, and what to do next."""
++    if activity.get('running'):
++        head = ('RUNNING: a live process holds this job ('
++                + (f"{activity.get('last_stage')} · {activity.get('last_percent')}% · "
++                   f"last update {activity.get('idle')}" if activity.get('last_stage') else 'no progress line yet')
++                + '). Keep Studio open.')
++        return [head]
++    lines = ['NOT RUNNING: no process holds this job, so nothing is progressing on its own.']
++    if activity.get('last_stage'):
++        lines.append(f"  Last progress: {activity['last_stage']} "
++                     f"({activity.get('last_percent')}%, updated {activity.get('idle')})")
++    if activity.get('stop_reason'):
++        lines.append(f"  Stopped by: {activity.get('stopped_by')} at {activity.get('stop_at')}"
++                     + (f" (shot {activity['stop_shot']})" if activity.get('stop_shot') else ''))
++        lines.append(f"  Reason: {activity['stop_reason']}")
++    elif activity.get('last_event'):
++        lines.append(f"  Last recorded event: {activity['last_event']} at {activity.get('last_event_at')}")
++    lines.append('  A status of "planned" means the plan is saved, not that work is in progress.')
++    return lines
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v7103_project_conflict.py b/tests/test_v7103_project_conflict.py
+--- a/tests/test_v7103_project_conflict.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7103_project_conflict.py	2026-10-26 23:34:52.000000000 +0000
+@@ -0,0 +1,247 @@
++"""v7.0.103: a stills/video Flow-project collision is explained, repairable, and no longer caused by recovery.
++
++Field case (job 20261022-143856-7-small-daily-habits-tha-9729, 2026-10-27 04:46 IST): a new production run
++stopped at the first video shot with
++
++    Video Flow project must differ from storyboard image project
++
++- no project URLs, no file names, no fix;
++- the job stayed ``planned``, so it looked like it might still be running.
++
++Root cause: ``recover_flow_video`` bound the *video* project it had just downloaded from through
++``_remember_flow_project_url``, which writes the job's **stills** binding (settings ``flow_project_url`` and the
++database ``flow_project``). With the video binding already on that project, the next run saw both roles on one
++project and refused.
++
++These tests pin: the recovery binds the video role only; the collision message names both roles, the files they
++come from and the repair; the job is paused rather than left as "planned"; and ``flow-projects`` inspects and
++repairs explicitly (nothing changes without ``--confirm``).
++
++No browser, no Flow request, no credits.
++"""
++import json
++import os
++from types import SimpleNamespace
++
++import pytest
++
++from engine import flow_projects_cli as fpc
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++STILLS = 'https://flow.google.com/project/14dbfdef-c5ac-44ff-ac50-37690c93a642'
++VIDEO = 'https://flow.google.com/project/37d8cf57-12b4-4a85-9934-5580e90d3781'
++
++
++class FakeDB:
++    def __init__(self, row=None):
++        self.row = dict(row or {})
++        self.writes = []
++
++    def get(self, job_id):
++        return dict(self.row)
++
++    def upsert(self, job_id, **fields):
++        self.row.update(fields)
++        self.writes.append(fields)
++
++
++def _job(tmp_path, stills_setting='', stills_db='', video_file='', video_setting=''):
++    job = tmp_path / JOB
++    (job / 'flow').mkdir(parents=True)
++    (job / 'production_manifest.json').write_text('{"job_id": "%s", "shots": []}' % JOB)
++    settings = {}
++    if stills_setting:
++        settings['flow_project_url'] = stills_setting
++    if video_setting:
++        settings['flow_video_project_url'] = video_setting
++    (job / 'settings.json').write_text(json.dumps(settings))
++    if video_file:
++        (job / 'flow_video_project.json').write_text(json.dumps({'project_url': video_file, 'role': 'video'}))
++    return job
++
++
++def _factory(job, db=None):
++    from engine.factory import Factory
++    factory = Factory.__new__(Factory)
++    factory.pm = SimpleNamespace(job_dir=lambda job_id: str(job), log=lambda *a, **k: None,
++                                 load_manifest=lambda job_id: (_ for _ in ()).throw(FileNotFoundError()))
++    factory.db = db or FakeDB()
++    return factory
++
++
++# ----------------------------------------------------------------- the collision report
++
++def test_bindings_name_each_role_and_its_source(tmp_path):
++    job = _job(tmp_path, stills_setting=STILLS, video_file=VIDEO)
++    bindings = _factory(job).flow_project_bindings(JOB)
++    assert bindings['stills_project'] == STILLS and bindings['video_project'] == VIDEO
++    assert bindings['stills_source'] == 'settings.json flow_project_url'
++    assert bindings['video_source'] == 'flow_video_project.json'
++    assert bindings['conflict'] is False
++
++
++def test_a_collision_is_detected_across_sources(tmp_path):
++    """Stills from the database, video from the file: the same URL still collides."""
++    job = _job(tmp_path, video_file=VIDEO)
++    factory = _factory(job, FakeDB({'flow_project': VIDEO}))
++    bindings = factory.flow_project_bindings(JOB)
++    assert bindings['conflict'] is True
++    assert bindings['stills_source'] == 'database flow_project'
++
++
++def test_the_conflict_message_names_both_sources_and_the_exact_commands(tmp_path):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    message = _factory(job).flow_project_conflict_message(JOB)
++    assert VIDEO in message
++    assert 'settings.json flow_project_url' in message and 'flow_video_project.json' in message
++    assert f'flow-projects {JOB} --clear-video' in message
++    assert f'--set-stills https://flow.google.com/project/<storyboard-project-id>' in message
++    assert 'Nothing was generated or charged' in message
++    assert 'storyboard images and the video clips resolve to the same Flow project' in message
++
++
++def test_the_old_one_line_error_is_gone():
++    from pathlib import Path
++    source = Path('engine/factory.py').read_text(encoding='utf-8')
++    assert 'raise RuntimeError("Video Flow project must differ from storyboard image project")' not in source
++    start = source.index('if video_url and still_url and video_url == still_url:')
++    block = source[start:start + 1600]
++    assert 'self.flow_project_conflict_message(' in block
++    assert 'current.status = "paused"' in block          # not left looking like it is still running
++
++
++# ----------------------------------------------------------------- recovery binds the video role only
++
++def test_the_video_recovery_no_longer_writes_the_stills_binding():
++    from pathlib import Path
++    source = Path('engine/factory.py').read_text(encoding='utf-8')
++    start = source.index('def recover_flow_video')
++    end = source.index('def approve_flow_request', start) if 'def approve_flow_request' in source[start:] else len(source)
++    block = source[start:end]
++    assert '_remember_flow_video_project_url(' in block
++    assert '_remember_flow_project_url(' not in block     # the stills writer must not appear
++
++
++# ----------------------------------------------------------------- the CLI
++
++class Args(SimpleNamespace):
++    pass
++
++
++def _args(**kwargs):
++    base = dict(job_id=JOB, set_stills='', set_video='', clear_stills=False, clear_video=False, confirm=False)
++    base.update(kwargs)
++    return Args(**base)
++
++
++def test_the_cli_is_read_only_without_confirm(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    assert fpc.run_flow_projects(_factory(job), _args()) == 0
++    printed = capsys.readouterr().out
++    assert 'COLLISION' in printed and '--clear-video --confirm' in printed
++    assert json.loads((job / 'settings.json').read_text())['flow_project_url'] == VIDEO   # untouched
++
++
++def test_the_cli_refuses_a_dry_run_change(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    assert fpc.run_flow_projects(_factory(job), _args(clear_video=True)) == 0
++    assert 'Dry run' in capsys.readouterr().out
++    assert (job / 'flow_video_project.json').is_file()
++
++
++def test_clear_video_frees_the_role_and_keeps_a_backup(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    assert fpc.run_flow_projects(_factory(job), _args(clear_video=True, confirm=True)) == 0
++    assert not (job / 'flow_video_project.json').exists()
++    assert (job / 'flow_video_project.json.cleared').is_file()
++    assert 'opens its own project' in capsys.readouterr().out
++    bindings = _factory(job).flow_project_bindings(JOB)
++    assert bindings['conflict'] is False and bindings['video_project'] == ''
++
++
++def test_set_stills_rebinds_and_warns_when_the_video_binding_still_collides(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    factory = _factory(job)
++    assert fpc.run_flow_projects(factory, _args(set_stills=STILLS, confirm=True)) == 0
++    printed = capsys.readouterr().out
++    assert json.loads((job / 'settings.json').read_text())['flow_project_url'] == STILLS
++    assert factory.db.row.get('flow_project') == STILLS
++    # the video binding still points at the old URL, so nothing collides any more
++    assert _factory(job).flow_project_bindings(JOB)['conflict'] is False
++    assert 'Stills project bound' in printed
++
++
++def test_set_video_refuses_a_second_binding_without_clearing_first(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=STILLS, video_file=VIDEO)
++    other = 'https://flow.google.com/project/08d0cf93-326d-43a8-bb93-4b36653721c1'
++    assert fpc.run_flow_projects(_factory(job), _args(set_video=other, confirm=True)) == 2
++    assert 'Refused' in capsys.readouterr().out
++    assert json.loads((job / 'flow_video_project.json').read_text())['project_url'] == VIDEO
++
++
++def test_two_actions_in_one_command_are_refused(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    assert fpc.run_flow_projects(_factory(job), _args(clear_video=True, clear_stills=True, confirm=True)) == 2
++    assert 'one binding per command' in capsys.readouterr().out
++
++
++def test_an_invalid_url_is_refused(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=VIDEO, video_file=VIDEO)
++    assert fpc.run_flow_projects(_factory(job), _args(set_stills='not-a-url', confirm=True)) == 2
++    assert 'expected https://flow.google.com/project/<uuid>' in capsys.readouterr().out
++
++
++def test_clear_stills_removes_both_copies(tmp_path):
++    job = _job(tmp_path, stills_setting=STILLS)
++    factory = _factory(job, FakeDB({'flow_project': STILLS}))
++    assert fpc.run_flow_projects(factory, _args(clear_stills=True, confirm=True)) == 0
++    assert 'flow_project_url' not in json.loads((job / 'settings.json').read_text())
++    assert factory.db.row.get('flow_project') == ''
++
++
++def test_the_report_says_ok_when_the_roles_differ(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=STILLS, video_file=VIDEO)
++    fpc.run_flow_projects(_factory(job), _args())
++    assert 'OK: the two roles use different projects.' in capsys.readouterr().out
++
++
++def test_the_report_flags_disagreeing_copies(tmp_path, capsys):
++    job = _job(tmp_path, stills_setting=STILLS, stills_db=VIDEO, video_file=VIDEO)
++    factory = _factory(job, FakeDB({'flow_project': VIDEO}))
++    fpc.run_flow_projects(factory, _args())
++    printed = capsys.readouterr().out
++    assert 'Stored copies that disagree' in printed
++    assert 'database stills' in printed and 'settings stills' in printed
++
++
++# ----------------------------------------------------------------- is it running or stopped?
++
++def test_a_free_lock_means_the_job_is_not_running(tmp_path):
++    from engine.job_activity import job_activity
++    job = _job(tmp_path, stills_setting=STILLS, video_file=VIDEO)
++    (job / 'logs').mkdir()
++    (job / 'logs' / 'progress.json').write_text(json.dumps(
++        {'ts': '2026-10-27T04:46:16+05:30', 'percent': 28.0, 'stage': 'Opening persisted project URL'}))
++    (job / 'generation_log.json').write_text(json.dumps([
++        {'ts': '2026-10-27T04:46:20+05:30', 'event': 'flow_project_conflict',
++         'shot': 'shot_017', 'error': 'stills and video resolve to the same project'}]))
++    activity = job_activity(job, now=1761520000)
++    assert activity['running'] is False
++    assert activity['stopped_by'] == 'flow_project_conflict'
++    assert activity['stop_shot'] == 'shot_017'
++    assert 'same project' in activity['stop_reason']
++    lines = ' '.join(__import__('engine.job_activity', fromlist=['describe']).describe(activity))
++    assert 'NOT RUNNING' in lines
++    assert '"planned" means the plan is saved' in lines
++
++
++def test_a_held_lock_means_running(tmp_path):
++    import fcntl
++    from engine.job_activity import job_activity
++    job = _job(tmp_path)
++    lock_path = job / '.production.lock'
++    lock_path.write_bytes(b'')
++    with open(lock_path, 'a+b') as handle:
++        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        assert job_activity(job)['running'] is True
++    assert job_activity(job)['running'] is False
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7101_to_v7102.py b/tools/update_v7101_to_v7102.py
+--- a/tools/update_v7101_to_v7102.py	2026-10-26 15:29:24.000000000 +0000
++++ b/tools/update_v7101_to_v7102.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,160 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.102 update to a v7.0.101 installation.
+-
+-Why the video scan reported "no verified match" while the clip was in the saved project:
+-
+-- a video request is stored as a full envelope ("Create exactly 1 VIDEO clip. ... exactly as the creative
+-  brief: <brief>"), while a tile's Reuse prompt usually returns only the brief, so equality against the
+-  envelope could never hold even when the prompt was read successfully;
+-- several fresh assets (the same clip as a <video> node and as its poster) are not several clips, but the
+-  scan only accepted a single verified candidate.
+-
+-v7.0.102:
+-
+-- ``FlowBrowser.video_creative_brief()`` parses our own video envelope and
+-  ``same_video_generation_prompt()`` compares exactly on either side (model labels with dots included);
+-- when several candidates verify with the same prompt, the one Flow renders as a real video element wins;
+-  two genuinely different clips still refuse;
+-- every fresh candidate the scan considered is printed with its prompt, size and - when the tile exposes it -
+-  its own /edit/ URL, and the failure text hands over a ready
+-  ``--asset-url ... --asset-reviewed`` command per candidate. The new ``edit_url`` is read-only context and
+-  is not part of the persisted signature, so existing baselines keep matching.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.102 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.102/tools/update_v7101_to_v7102.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.102/tools/update_v7101_to_v7102.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['VERSION', 'VIDEO_PROMPT_MATCH_V7_0_102.md', 'engine/providers/flow_browser.py',
+-           'tests/test_v7102_video_prompt_brief.py', 'tools/update_v7101_to_v7102.py']
+-# Files as they exist in 7.0.101: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['f068874b2f0363b02752b73dd8704696627f4ed21ce1264a910ffdef22737d22'],
+-    'engine/providers/flow_browser.py': ['424fe3492ff652e32a5e0a734ce30255fffd32ba50f503dfadbcbe14b303bdfc'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.101', '7.0.102')  # 7.0.102 allows a safe re-run after success
+-
+-# The 7.0.101 zip carries the 7.0.100 to 7.0.101 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.100', '7.0.101', 'tools/update_v7100_to_v7101.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.101 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.101 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.101 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.102 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.102 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.102 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.101-to-v7.0.102-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.102. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7102_to_v7103.py b/tools/update_v7102_to_v7103.py
+--- a/tools/update_v7102_to_v7103.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7102_to_v7103.py	2026-10-26 23:35:22.000000000 +0000
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.103 update to a v7.0.102 installation.
++
++Field case: a production stopped with
++
++    Video Flow project must differ from storyboard image project
++
++and the job stayed ``status=planned``, so it was impossible to tell whether it was still running. Root cause:
++v7.0.99's video recovery wrote the *video* project into the job's **stills** binding, so the next run found both
++roles on one project and refused to start.
++
++v7.0.103:
++
++- ``flow_project_bindings()`` / ``flow_project_conflict_message()`` name both roles, the file each value comes
++  from, whether they collide and the exact repair commands;
++- the guard pauses the job (never leaves it "planned"), logs ``flow_project_conflict`` and raises the full
++  explanation - nothing is generated or charged;
++- ``recover_flow_video`` binds the video role only, so recovery can no longer overwrite the stills binding;
++- ``cli.py v3 flow-projects <job>`` reports both bindings and repairs them explicitly
++  (``--set-stills``, ``--set-video``, ``--clear-stills``, ``--clear-video``, each needing ``--confirm``);
++- ``cli.py v3 status <job>`` says whether a live process holds the job, and if not, what stopped it and why;
++- the Job panel shows both bindings, the explanation and the copy-ready repairs.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.103 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.103/tools/update_v7102_to_v7103.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.103/tools/update_v7102_to_v7103.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['FLOW_PROJECT_CONFLICT_V7_0_103.md', 'VERSION', 'app.py', 'cli.py', 'engine/factory.py',
++           'engine/flow_projects_cli.py', 'engine/job_activity.py',
++           'tests/test_v7103_project_conflict.py', 'tools/update_v7102_to_v7103.py']
++# Files as they exist in 7.0.102: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['17f2d0e934c795eaa2a9235cfd235c863775ba5813a51abe2cc520c1ee8652a4'],
++    'app.py': ['165370aaa52a8b1a86c5e1a8f75cf3d5259f35de4c8fe8c7c675a66e92d5df43'],
++    'cli.py': ['f5dffa264ead90d9bf984d42d5989640bad2dc8a88523c5256d792576829718a'],
++    'engine/factory.py': ['08732c159629b6b3b7e9673994d2aba88050a72462823f96a644d1f0dc191edf'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.102', '7.0.103')  # 7.0.103 allows a safe re-run after success
++
++# The 7.0.102 zip carries the 7.0.101 to 7.0.102 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.101', '7.0.102', 'tools/update_v7101_to_v7102.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.102 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.102 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.102 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.103 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.103 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.103 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.102-to-v7.0.103-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.103. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

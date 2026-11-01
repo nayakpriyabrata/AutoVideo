@@ -1,0 +1,1416 @@
+diff --git a/CARDS_AND_CAPTION_CHECK_V7_0_112.md b/CARDS_AND_CAPTION_CHECK_V7_0_112.md
+new file mode 100644
+index 0000000..b636b49
+--- /dev/null
++++ b/CARDS_AND_CAPTION_CHECK_V7_0_112.md
+@@ -0,0 +1,127 @@
++# AutoVideoAI v7.0.112 — the card off the face, the same card in every language, and proof in the picture
++
++Two reports. One about where a text card sits and how it looks, one about an Odia transcript that would not go
++away. Neither fix renders anything by itself or spends a credit.
++
++---
++
++## 1. The card: below the face, above the captions, the same in all three languages
++
++**What you saw:** the English card sat over the presenter's face. The Hindi and Odia cards sat lower, in a plain
++navy panel with white text — and the English one looked better.
++
++**Why:** they were drawn by two different code paths.
++
++| | English master | Hindi / Odia editions |
++|---|---|---|
++| Position | 12 % of the height — a **top** card, over the face | 72 % — a bottom strip |
++| Panel | playful palette, accent rail, rounded panel | hand-rolled navy rectangle |
++| Text | the job's card style, stroke, fit | one font size, white, thin stroke |
++
++### One band for every card
++
++`engine/render/card_band.py` is now the only place a card's position is decided:
++
++* it starts at **40 %** of the height in a 16:9 frame, **44 %** in 9:16 — below the head and shoulders of a
++  portrait shot, which is where your face is;
++* it ends where the caption style's own numbers say the top caption line begins, less a 2 % gap — so a card can
++  never sit on the transcript;
++* the card is **centred** in that band, which is the "middle, not on the person's face" you asked for;
++* with no transcript burned, the band ends above the channel logo instead.
++
++Same numbers in `graphics.py` (English master, keypoint/chapter/intro/outro cards), `educational_cards.py` (the
++speech-timed pop-up cards) and `finishing_studio._card_image` (the editions).
++
++### One card style for every language
++
++The editions drew a hard-coded `bold` style while the English master used the job's actual style. Now:
++
++* `create_plan()` records the **job's** style (from the saved language state, else the production's own
++  `publish_readiness.json`, where `text_card_style` is the resolved style the primary render drew) and gives it to
++  every edition;
++* `_card_image` hands the card to the shared `render_overlay_png` with that style — the same panel, accent rail,
++  typography and stroke as English;
++* an edition with an explicitly saved `card_style` keeps it, and an educational edition stays `playful`.
++
++Where the card lands, measured on a 1920×1080 frame:
++
++```
++old English keypoint card    y 571 → 856   (53 % → 79 %)   over the face
++old edition strip            y ~700 → 780  (65 % → 72 %)   different look
++now, every language          y 432 → 730   (40 % → 68 %)   below the face, above the captions
++```
++
++---
++
++## 2. The transcript: now the picture is checked, not just the record
++
++v7.0.111 named the current file and stopped a stale plan from re-burning captions. What it could not do was look
++at the video. So v7.0.112 adds the witness that cannot agree with a plan by accident.
++
++* **Every render samples the finished picture** — five moments — and records what it sees in
++  `production/language_editions_render.json` under `captions_detected`: how much of the caption band is
++  glyph-bright, how much sharp local contrast it carries, and a sentence with the numbers.
++* The test is **two measurements**, not one: bright alone counts a bright sky or a colour bar; bright *and* edged
++  is thin text with a dark outline. On the field videos: **1.5 % bright / 6.4 % edges** with the transcript,
++  **16.6 % bright / 1.5 % edges** for a colour-bar picture — called correctly, and the earlier one-number rule
++  called the colour bars text.
++* `python3 cli.py v3 language-outputs <job> --files --check-captions` prints it for the current file:
++
++  ```
++  Odia (or)
++    watch: …/render/<job>-or-edition.mp4
++    export: …/language_editions/20261028-…/exports/or-20261028-….mp4
++    burned captions: no (provenance) · 2026-10-28 02:28 · sha 741e80864a4f
++    picture check: caption band: 0.00% bright / 0.96% edges at 0.9s, … — no burned transcript detected.
++    earlier file (NOT current): … · burned captions: yes
++  ```
++
++  It warns, with the numbers, when the *current* file shows text while the job asks for none. It never warns in
++  the other direction: a caption is not on screen every second, so finding nothing proves nothing.
++* **The panel now plays the uniquely named export**, not the stable `render/<job>-or-edition.mp4` copy. A browser
++  or a player can keep yesterday's file under that stable name and show it as today's; the export name changes
++  with every render. The copy is still there — labelled "same file, stable name, for playing outside the app".
++
++If a render is reported as current and the picture check says it shows no burned transcript, that file really has
++none: play that exact path.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.112/tools/update_v7111_to_v7112.py /path/to/AutoVideoAI-v7.0.111         # dry run
++python3 ../AutoVideoAI-v7.0.112/tools/update_v7111_to_v7112.py /path/to/AutoVideoAI-v7.0.111 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses an installation older
++than 7.0.111 and says which earlier update to apply first. Code backups go to
++`code-update-backups/v7.0.111-to-v7.0.112-<stamp>/`; a second run says "already up to date".
++
++Already at 7.0.109? Apply 7.0.110, then 7.0.111, then this one.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7112_card_band_and_picture_check.py` (**21**).
++
++* a card never starts in the face zone and never reaches the burned captions, at four frame sizes;
++* the band is centred, not a strip at the top, and a short frame still gets a usable one;
++* **the English card and an edition card are pixel-identical** (same bounding box) in two aspect ratios and two
++  styles — the "make Odia look like English" request, measured;
++* the edition takes the job's style, and an unknown saved style is ignored rather than propagated;
++* the picture check sees a burned caption and does not see a plain frame; a missing file is reported, not guessed;
++* a real render records `captions_detected` in the edition record and in the panel listing, and a job that asked
++  for no transcript is warned about only when text is visible.
++
++One existing test changed with its reason stated in place: `test_lower_cards_leave_head_area_and_caption_margin`
++asserted cards start at or below 50 % of the height. A two-line card is taller than the room between 50 % and the
++caption line at 70 %, so that rule pushed the panel onto the captions — or, at the old 12 %, onto the face. It now
++asserts what the request actually needs: below the head, above the captions.
++
++Full suite: **28 failed / 1 812 passed / 4 skipped**, against a pristine 7.0.111 tree failing the same set minus
++the ten card-position tests this change fixes. No new failures.
+diff --git a/VERSION b/VERSION
+index a76f9e6..90b5ba9 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.111
+\ No newline at end of file
++7.0.112
+\ No newline at end of file
+diff --git a/app.py b/app.py
+index 4a74fa7..76c0fd5 100644
+--- a/app.py
++++ b/app.py
+@@ -612,13 +612,20 @@ def language_edition_panel(job_id):
+         files_row = (files.get('editions') or {}).get(code) or {}
+         current = files_row.get('current') or {}
+         if current.get('path') and Path(current['path']).is_file():
+-            watch = current.get('render_copy') or current['path']
+-            st.video(str(watch), width=420)
++            # v7.0.112: play the export, whose name is unique per render. The copy in render/ keeps a stable
++            # name, so a browser or a player can show yesterday's video from its cache under today's name.
++            st.video(str(current['path']), width=420)
+             burned = (current.get('captions') or {}).get('burned')
+             state = ('with a burned transcript' if burned else
+                      'without a burned transcript' if burned is False else 'transcript state unknown')
+-            st.caption('**This is the current ' + LANGUAGE_PACKS[code].label + ' video**: ' + Path(watch).name +
+-                       ' · ' + state + ' · rendered ' + str(current.get('exported_at') or ''))
++            st.caption('**This is the current ' + LANGUAGE_PACKS[code].label + ' video**: ' +
++                       Path(current['path']).name + ' · ' + state + ' · rendered ' +
++                       str(current.get('exported_at') or ''))
++            detected = current.get('captions_detected') or {}
++            if detected.get('checked'):
++                st.caption('Picture check: ' + str(detected.get('detail') or ''))
++            if current.get('render_copy'):
++                st.caption('Same file, stable name, for playing outside the app: ' + current['render_copy'])
+             if current.get('render_copy') and current.get('render_copy_matches') is False:
+                 st.warning('The copy in render/ is not the current export. Watch ' + current['path'] +
+                            ' instead, or close the player that has it open and render again.')
+diff --git a/cli.py b/cli.py
+index b49353a..4dbb98c 100644
+--- a/cli.py
++++ b/cli.py
+@@ -377,6 +377,9 @@ def main_v3(argv):
+     lang_out.add_argument("--language", default="", metavar="LANG",
+                           help="With --files: only this language, e.g. or")
+     lang_out.add_argument("--json", action="store_true", help="With --files: machine-readable output")
++    lang_out.add_argument("--check-captions", action="store_true",
++                          help="With --files: also look at the picture of the current export and say whether a "
++                               "transcript is burned into its caption band (three sampled frames)")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -686,7 +689,8 @@ def main_v3(argv):
+             # which file is current, what it burned, and which files are stale - so the old Odia video can never
+             # be mistaken for the new render again.
+             from engine import edition_files
+-            data = edition_files.report(job_dir, language=(getattr(args, "language", "") or None), verify=True)
++            data = edition_files.report(job_dir, language=(getattr(args, "language", "") or None), verify=True,
++                                        check_captions=bool(getattr(args, "check_captions", False)))
+             if getattr(args, "json", False):
+                 print(_json.dumps(data, indent=2, ensure_ascii=False))
+             else:
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+index b54a01b..3fc0a24 100644
+--- a/engine/edition_files.py
++++ b/engine/edition_files.py
+@@ -137,7 +137,7 @@ def _requested(job_root, code):
+     return transcript_for(state, code)
+ 
+ 
+-def report(job_root, *, language=None, verify=False):
++def report(job_root, *, language=None, verify=False, check_captions=False):
+     """The current file per edition, what it burned, and every older file that is not current.
+ 
+     ``verify`` re-hashes the current export; the dashboard leaves it off (a panel rerun must not re-read every
+@@ -159,6 +159,14 @@ def report(job_root, *, language=None, verify=False):
+         current = None
+         if current_path and Path(current_path).is_file():
+             current = _describe(current_path, verify=verify)
++            # A fresh picture check wins; otherwise report what the render recorded.
++            current['captions_detected'] = dict(entry.get('captions_detected') or {}) if not check_captions else {}
++            if check_captions:
++                try:
++                    from .render.caption_check import probe as caption_probe
++                    current['captions_detected'] = caption_probe(current_path)
++                except Exception as error:      # the listing must still work without FFmpeg
++                    current['captions_detected'] = {'checked': False, 'detail': str(error)[:200]}
+             if verify and entry.get('sha256') and current.get('sha256') and current['sha256'] != entry['sha256']:
+                 current['sha256_ok'] = False
+             elif verify and entry.get('sha256'):
+@@ -210,6 +218,12 @@ def report(job_root, *, language=None, verify=False):
+                 row['problems'].append(
+                     _label(code) + ' is the current export and it has no burned captions, although this job asks '
+                     'for a transcript in ' + _label(code) + '. Render that language again to burn it.')
++            detected = current.get('captions_detected') or {}
++            if detected.get('checked'):
++                from .render.caption_check import explain as explain_captions
++                sentence = explain_captions(detected, expected=requested)
++                if sentence and sentence not in row['problems']:
++                    row['problems'].append(sentence)
+             if current.get('render_copy_matches') is False:
+                 row['problems'].append(
+                     'The copy in render/ (' + Path(current['render_copy']).name + ') is not the current export. '
+@@ -251,6 +265,9 @@ def summary(job_root, *, verify=False):
+         burned = (current.get('captions') or {}).get('burned')
+         state = 'captions: yes' if burned else ('captions: no' if burned is False else 'captions: unknown')
+         watch = current.get('render_copy') or current['path']
++        detected = current.get('captions_detected') or {}
++        if detected.get('checked'):
++            state += ' · picture check: ' + ('text visible' if detected.get('looks_like_text') else 'no text')
+         lines.append(row['label'] + ': ' + state + ' · ' + Path(watch).name + ' · ' + current.get('exported_at', '')
+                      + ' · ' + ('copy in render/ is current' if current.get('render_copy_matches')
+                                 else 'watch the export path, not the copy'))
+@@ -287,6 +304,9 @@ def format_report(data):
+             detail += ', suppressed: ' + captions['suppressed']
+         lines.append('  ' + state + ' (' + detail + ') · ' + str(current.get('exported_at') or '') +
+                      (' · sha ' + current['sha256_short'] if current.get('sha256_short') else ''))
++        detected = current.get('captions_detected') or {}
++        if detected.get('checked'):
++            lines.append('  picture check: ' + str(detected.get('detail') or ''))
+         for old in row.get('older') or []:
+             old_burned = (old.get('captions') or {}).get('burned')
+             mark = 'burned captions: yes' if old_burned else (
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index eabdbba..f2dbe0c 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -219,8 +219,11 @@ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+                           'intro': bool(assets.get('intro')), 'outro': bool(assets.get('outro')), 'reviewed': False,
+                           'cards_warning': ''}
+     edition_file = job_root / 'production' / 'language_editions.json'
++    # v7.0.112: one card style for every language - the one the English master drew.
++    job_card_style = _job_card_style(job_root)
+     if editorial and edition_file.is_file():
+         language_state = json.loads(edition_file.read_text(encoding='utf8'))
++        job_card_style = _job_card_style(job_root, language_state) or job_card_style
+         prepared = language_state.get('bundles', {})
+         for lang, edition in editions.items():
+             bundle = prepared.get(lang)
+@@ -264,6 +267,8 @@ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+                         edition['hook_warning'] = str(bundle.get('hooks_error') or
+                             'Hooks were not prepared for this language; this edition has no hooks.')
+                 edition['script'] = bundle['script']
++                edition['card_style'] = str(bundle.get('card_style') or job_card_style or '') or None
++                edition['captions_burned'] = bool(captions)
+                 edition['timing_source'] = bundle.get('timing_source','unverified')
+                 if bundle.get('words') and Path(bundle['words']).is_file():
+                     edition['words'] = _json_snapshot(bundle['words'], asset_dir, 'words-'+lang)
+@@ -275,6 +280,8 @@ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+             # 7.0.107: bounded retiming budget for a longer narration (see engine/narration_fit.py).
+             'fit_policy': dict(fit_policy or {}),
+             'captions': bool(captions),
++            # v7.0.112: the English master's card style, so a Hindi or Odia card looks like it.
++            'card_style': job_card_style or None,
+             'editions': editions, 'music_volume': 0.12,
+             'branding_motion': True,
+             # 7.0.109: editions carry the same animated channel badge as the primary master; set False for the
+@@ -285,6 +292,41 @@ def create_plan(source, profile_path, *, languages=('en',), output_root=None,
+     return folder / 'plan.json'
+ 
+ 
++CARD_STYLES = ('bold', 'playful', 'clean')
++
++
++def _job_card_style(job_root, state=None):
++    """The card style this job's English master used, so an edition can match it (v7.0.112).
++
++    Read from the saved language state first (when the app wrote it), then from the production's own
++    ``publish_readiness.json`` (``text_card_style`` is the resolved style the primary render actually drew).
++    Returns ``''`` when neither is known, and the caller falls back to its own default.
++    """
++    candidates = []
++    if isinstance(state, dict):
++        candidates.append(state.get('card_style'))
++    try:
++        readiness = json.loads((Path(job_root) / 'production' / 'publish_readiness.json').read_text(encoding='utf8'))
++        candidates.append(readiness.get('text_card_style'))
++    except (OSError, ValueError):
++        pass
++    for value in candidates:
++        value = str(value or '').strip().lower()
++        if value in CARD_STYLES:
++            return value
++    return ''
++
++
++def _edition_card_style(edition):
++    """The style one edition draws its cards with: explicit, else the job's, else playful for education."""
++    value = str(edition.get('card_style') or '').strip().lower()
++    if value in CARD_STYLES:
++        return value
++    if bool(edition.get('educational')):
++        return 'playful'
++    return 'bold'
++
++
+ def _job_transcript_choice(plan_path, language):
+     """The saved job's transcript choice for one edition, or None when this plan is not part of a saved job.
+ 
+@@ -396,25 +438,21 @@ def _run(cmd, progress=None, duration=None):
+         p.stdout.close(); p.stderr.close()
+ 
+ 
+-def _card_image(text, width, height, path, language):
+-    from PIL import Image, ImageDraw, ImageFont
+-    from engine.render.typography import font as make_font
+-    image = Image.new('RGBA', (width, height), (0, 0, 0, 0)); draw = ImageDraw.Draw(image)
+-    font = make_font(max(22, min(58, width // 28)), style='clean', text=text)
+-    max_width = width * .78; words = text.split(); lines=[]; current=''
+-    for word in words:
+-        attempt = (current+' '+word).strip()
+-        if current and draw.textlength(attempt, font=font) > max_width:
+-            lines.append(current); current=word
+-        else: current=attempt
+-    if current: lines.append(current)
+-    if len(lines) > 3: raise ValueError('Card is too long for the frame')
+-    step = font.size * 1.4; box_h = int(len(lines)*step + 34); top=int(height*.72-box_h/2)
+-    draw.rounded_rectangle((width*.08, top, width*.92, top+box_h), radius=16, fill=(12, 18, 28, 176))
+-    for i, line in enumerate(lines):
+-        draw.text((width/2, top+17+i*step), line, font=font, anchor='mt', fill='white', stroke_width=1,
+-                  stroke_fill=(5, 8, 12), direction='ltr' if language == 'en' else None)
+-    image.save(path)
++def _card_image(text, width, height, path, language, *, style='playful', captions=True):
++    """Draw one edition card with the same renderer as the English master (v7.0.112).
++
++    The editions used to draw their own navy panel with white text at 72% of the height, while the English master
++    used the shared playful card - which is why the two looked different. There is now one card: same palette,
++    same accent rail, same type, same band (see ``engine.render.card_band``), for every language.
++    """
++    from engine.render.graphics import OverlayEvent, render_overlay_png
++    event = OverlayEvent('keypoint', 0, 1, ' '.join(str(text or '').split()), anchor='top-left',
++                         layout={'captions': bool(captions)})
++    try:
++        render_overlay_png(event, str(path), width, height, style=style)
++    except ValueError as error:
++        raise ValueError('Card is too long for the frame (' + str(error) + '): ' + str(text)[:80]) from error
++    return event
+ 
+ 
+ def _edition_overlays(edition, language, voice, words_path, width, height, tmp_dir, legacy_cards,
+@@ -443,13 +481,14 @@ def _edition_overlays(edition, language, voice, words_path, width, height, tmp_d
+     # v7.0.107: the edition keeps its own card kinds and palette; a plain video is not turned educational
+     # just because it is being exported in another language.
+     educational = bool(edition.get('educational'))
+-    style = 'playful' if educational else str(edition.get('card_style') or 'bold')
++    # v7.0.112: the edition uses the card style the English master used, not a hard-coded 'bold'.
++    style = _edition_card_style(edition)
+     overlays = []
+     if edition.get('speech_cards'):
+         shutil.copyfile(_verified(edition['speech_cards']), root / 'production' / 'speech_cards.json')
+         overlays = render_cards(root, audio, words, edition['script'], duration, width, height, style,
+                                 educational=educational, topic=edition.get('topic', ''),
+-                                language=language) or []
++                                language=language, captions=bool(edition.get('captions_burned', True))) or []
+     stats['cards'] = len(overlays)
+     if edition.get('hooks'):
+         shutil.copyfile(_verified(edition['hooks']), root / 'production' / 'hooks.json')
+@@ -684,8 +723,10 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                 filters += [f"[{current}][{inp}:v]overlay=x=0:y=0:"
+                             f"enable='between(t,{event.start:.3f},{event.end:.3f})':shortest=1[v{inp}]"]
+                 current = f'v{inp}'; inp += 1
++        card_style = _edition_card_style(dict(edition, card_style=edition.get('card_style') or plan.get('card_style')))
+         for index,card in enumerate(legacy_cards):
+-            art=tmp_dir/f'card-{index}.png';_card_image(card['text'],width,height,art,language)
++            art=tmp_dir/f'card-{index}.png'
++            _card_image(card['text'],width,height,art,language, style=card_style, captions=bool(words_path))
+             cmd += ['-loop','1','-framerate','30','-i',str(art)]
+             start=offset+float(card['start']);end=offset+float(card['end'])
+             filters += [f'[{current}][{inp}:v]overlay=0:0:enable=\'between(t,{start:.3f},{end:.3f})\':shortest=1[v{inp}]'];current=f'v{inp}';inp+=1
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index 881d2fb..24f3f45 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -606,6 +606,22 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                              .get('captions_suppressed') or '')
+             if suppressed:
+                 entry['warning'] = (entry.get('warning') + ' ' if entry.get('warning') else '') + suppressed
++            # v7.0.112: look at the picture and record what it shows. The record and the plan can agree with each
++            # other and still be wrong about the file; three sampled frames cannot be.
++            try:
++                from .render.caption_check import probe as caption_probe
++                detected = caption_probe(exported)
++                entry['captions_detected'] = {key: detected[key] for key in ('checked', 'ratio',
++                                                                            'looks_like_text', 'detail')}
++                # Only one direction is a warning. A caption is not on screen every second, so samples that
++                # find nothing prove nothing - but text that IS visible while this job asked for none is
++                # exactly the report that started this.
++                if detected.get('checked') and detected.get('looks_like_text') and not wants[code]:
++                    entry['warning'] = (entry.get('warning') + ' ' if entry.get('warning') else '') + \
++                        ('This finished file shows burned text in its caption band, although this job asks for '
++                         'no transcript in ' + _label(code) + '. ' + str(detected.get('detail') or ''))
++            except Exception:      # a check must never stop an export
++                entry['captions_detected'] = {'checked': False, 'detail': 'Not checked.'}
+             entry.pop('error', None)
+             _sync_render_copies(job_root, {'editions': {code: entry}})
+         except Exception as error:  # keep the primary edition and every finished edition
+diff --git a/engine/render/caption_check.py b/engine/render/caption_check.py
+new file mode 100644
+index 0000000..761e226
+--- /dev/null
++++ b/engine/render/caption_check.py
+@@ -0,0 +1,128 @@
++"""Look at a finished video and say whether text is burned into its caption band (v7.0.112).
++
++Field report: "the render is right there in the record, but the Odia video still shows the transcript." Provenance
++and the plan agree with each other; the only witness that cannot be argued with is the picture. This module samples
++the caption band of a finished file and measures how much of it is glyph-bright pixels - the white and yellow that
++a burned caption is made of.
++
++It is a **check with numbers**, not a judge: a bright sky or a white shirt can raise the ratio, so the result is
++reported as a measurement (percentage of near-white pixels, per sampled frame) that a person can read, and a
++threshold is only used to raise a *question*, never to certify a video as clean.
++
++No FFmpeg state is kept and nothing is written; the caller decides what to do with the numbers.
++"""
++from __future__ import annotations
++
++import subprocess
++import tempfile
++from pathlib import Path
++
++#: How much of the caption band is glyph-bright (white or highlight yellow) in a file with a burned transcript.
++#: The field videos measured 1.3 % with a transcript and 0.0 % without one.
++BRIGHT_RATIO = 0.004
++
++#: How much sharp local contrast the band carries. Text is thin strokes with a dark outline, so it produces far
++#: more than a bright but flat scene does; a test pattern of colour bars (a false positive for brightness alone)
++#: measured 0.015, a burned caption 0.063. Requiring **both** is what keeps a bright sky from being called text.
++EDGE_RATIO = 0.035
++
++#: Where the caption band starts, as a fraction of the height, when no frame size is known yet.
++BAND_FRACTION = 0.70
++
++
++def _ffmpeg():
++    from .ffmpeg_renderer import ffmpeg_exe
++    return ffmpeg_exe()
++
++
++def _frame(video, moment, out):
++    command = [_ffmpeg(), '-y', '-hide_banner', '-loglevel', 'error', '-ss', f'{max(0.0, moment):.3f}',
++               '-i', str(video), '-frames:v', '1', str(out)]
++    return subprocess.run(command, capture_output=True, text=True, timeout=120).returncode == 0 and Path(out).is_file()
++
++
++def _measure(path, top_fraction):
++    """``(bright_share, edge_share)`` for the caption band of one frame.
++
++    ``bright_share`` counts pixels that are near white or a saturated highlight yellow - what a caption glyph is
++    made of. ``edge_share`` counts pixels that differ sharply from their own neighbourhood, which is what thin
++    text with a dark outline looks like and what a flat bright area does not.
++    """
++    from PIL import Image, ImageFilter
++    with Image.open(path) as original:
++        colour = original.convert('RGB')
++    width, height = colour.size
++    upper = int(height * top_fraction)
++    band = colour.crop((0, upper, width, height))
++    pixels = band.load()
++    grey = band.convert('L')
++    blurred = grey.filter(ImageFilter.GaussianBlur(6))
++    flat, smooth = grey.load(), blurred.load()
++    bright = edges = total = 0
++    for y in range(0, band.size[1], 2):                 # every other row is plenty for a share
++        for x in range(0, band.size[0], 2):
++            red, green, blue = pixels[x, y]
++            total += 1
++            if (red >= 232 and green >= 232 and blue >= 232) or (red >= 195 and green >= 175 and blue <= 150):
++                bright += 1
++            if abs(flat[x, y] - smooth[x, y]) > 55:
++                edges += 1
++    if not total:
++        return 0.0, 0.0
++    return bright / total, edges / total
++
++
++def probe(video, *, moments=(0.15, 0.3, 0.45, 0.6, 0.75), band=BAND_FRACTION):
++    """``{'checked', 'frames': [...], 'ratio', 'looks_like_text', 'band', 'detail'}`` for one finished file."""
++    video = Path(video)
++    result = {'checked': False, 'frames': [], 'ratio': 0.0, 'edge_ratio': 0.0, 'looks_like_text': None,
++              'band': band, 'detail': ''}
++    if not video.is_file():
++        result['detail'] = 'No file to check: ' + str(video)
++        return result
++    duration = 0.0
++    try:
++        from .. import finishing_studio as finish
++        _info, duration = finish._probe(video)
++    except Exception:
++        duration = 0.0
++    with tempfile.TemporaryDirectory(prefix='caption-check-') as folder:
++        for index, share in enumerate(moments):
++            moment = (duration * share) if duration else float(index) * 1.5 + 0.5
++            frame = Path(folder) / f'{index}.png'
++            try:
++                if not _frame(video, moment, frame):
++                    continue
++                bright, edges = _measure(frame, band)
++            except (OSError, subprocess.SubprocessError, ValueError):
++                continue
++            result['frames'].append({'at': round(moment, 2), 'bright': round(bright, 5),
++                                     'edges': round(edges, 5)})
++    if not result['frames']:
++        result['detail'] = 'Could not read a frame from ' + video.name + ' (FFmpeg missing or the file is unreadable).'
++        return result
++    result['checked'] = True
++    result['ratio'] = max(frame['bright'] for frame in result['frames'])
++    result['edge_ratio'] = max(frame['edges'] for frame in result['frames'])
++    result['looks_like_text'] = result['ratio'] >= BRIGHT_RATIO and result['edge_ratio'] >= EDGE_RATIO
++    result['detail'] = ('caption band: '
++                        + ', '.join(f"{frame['bright'] * 100:.2f}% bright / {frame['edges'] * 100:.2f}% edges "
++                                    f"at {frame['at']}s" for frame in result['frames'])
++                        + (' — consistent with a burned transcript.' if result['looks_like_text'] else
++                           ' — no burned transcript detected.'))
++    return result
++
++
++def explain(result, *, expected):
++    """A sentence that compares what the file shows with what the job asked for, or ``''`` when they agree."""
++    if not result or not result.get('checked') or expected is None:
++        return ''
++    if expected and not result['looks_like_text']:
++        # Deliberately not a warning: a caption is not on screen every second, so a handful of samples can land
++        # between cues. The check only ever reports text it can see.
++        return ''
++    if (not expected) and result['looks_like_text']:
++        return ('Bright text is visible in the caption band of this file, although the job asks for no transcript. '
++                'This is the file to look at, not an older one: render that language again after checking that its '
++                'transcript switch is off.')
++    return ''
+diff --git a/engine/render/captions_ass.py b/engine/render/captions_ass.py
+index 472afe9..c5ef660 100644
+--- a/engine/render/captions_ass.py
++++ b/engine/render/captions_ass.py
+@@ -133,6 +133,23 @@ def _wrap2(text: str, width: int = 18) -> str:
+     return " ".join(parts[:split]) + r"\N" + " ".join(parts[split:])
+ 
+ 
++def caption_block_top(W: int, H: int, *, aspect: str = "16:9", template: str = "HORMOZI",
++                       lines: int = 2) -> int:
++    """The highest pixel a burned caption can reach, so a card can stay above it (v7.0.112).
++
++    Uses the same numbers ``build_captions`` uses - the template's font size scaled to the frame, the safe zone's
++    bottom margin, and the two lines a phrase wraps to - with line spacing taken as 1.3x the font size, a little
++    more than libass draws, so the answer is on the safe side.
++    """
++    zone = aspect if aspect in SAFE_ZONES else "9:16"
++    rw, rh = REFERENCE_SIZE[zone]
++    scale = min(int(W) / rw, int(H) / rh)
++    T = TEMPLATES.get(str(template).upper(), TEMPLATES["HORMOZI"])
++    fontsize = max(8, round(T["Fontsize"] * scale))
++    margin_v = round(SAFE_ZONES[zone]["MarginV"] * int(H) / rh)
++    return max(0, int(H) - margin_v - int(round(max(1, lines) * fontsize * 1.3)))
++
++
+ def build_captions(words: list[dict], out_base: str, template: str = "HORMOZI",
+                    aspect: str = "9:16", W: int = 1080, H: int = 1920,
+                    keyword_color: str | None = None,
+diff --git a/engine/render/card_band.py b/engine/render/card_band.py
+new file mode 100644
+index 0000000..c33b43a
+--- /dev/null
++++ b/engine/render/card_band.py
+@@ -0,0 +1,76 @@
++"""Where an editorial card sits, in one place, for every language (v7.0.112).
++
++Field report, with a screenshot: the English text card covered the presenter's face, while the Hindi and Odia
++cards did not - and the English card looked better. Two things were wrong, and both were accidents of two
++different code paths:
++
++* the **English** master drew its keypoint card at 12 % of the frame height (a top card), straight over the face;
++* the **language editions** drew theirs at 72 % (a bottom strip) in a plain navy panel with white text - a
++  different look, because ``finishing_studio._card_image`` drew its own panels instead of using the shared
++  renderer.
++
++The band below is the one a presenter's face and the burned captions do not occupy: it starts below 40-44 % of
++the frame (head and shoulders are above it) and ends where the caption style's own numbers say the top caption
++line begins, less a small gap. A card is centred inside it, so the same card lands in the same place in English,
++Hindi and Odia.
++"""
++from __future__ import annotations
++
++#: The part of the frame a talking-head presenter's face normally occupies. Cards never start here. 16:9 portraits
++#: sit in the middle of the frame with the head from about 8% to 36%; 9:16 frames put the head a little lower.
++FACE_ZONE = {'landscape': 0.40, 'portrait': 0.44}
++
++#: Where a card may end when no caption is burned: clear of the channel logo in the bottom-right corner.
++FREE_ZONE = {'landscape': 0.84, 'portrait': 0.78}
++
++#: The smallest band worth using when the frame is very short.
++MIN_BAND = 0.12
++
++#: Breathing room between the bottom of a card and the top of a caption line.
++GAP = 0.02
++
++
++def band(width, height, *, vertical=None, captions=True, template=None, gap=GAP):
++    """``(top, bottom)`` of the card band in pixels, for this frame.
++
++    The bottom is the highest pixel a burned caption can reach (``captions_ass.caption_block_top``, the same
++    numbers the caption style uses) less a small gap - so a card can never sit on the transcript. Without a
++    caption the band ends above the channel logo instead.
++    """
++    height = int(height)
++    vertical = (int(height) > int(width)) if vertical is None else bool(vertical)
++    top = int(round(height * FACE_ZONE['portrait' if vertical else 'landscape']))
++    if captions:
++        from .captions_ass import caption_block_top
++        aspect = '9:16' if vertical else '16:9'
++        bottom = caption_block_top(int(width), height, aspect=aspect, template=template or
++                                   ('OPUS' if vertical else 'HORMOZI'))
++        bottom -= int(round(height * float(gap)))
++    else:
++        bottom = int(round(height * FREE_ZONE['portrait' if vertical else 'landscape']))
++    if bottom - top < int(round(height * MIN_BAND)):     # never invert or collapse the band
++        bottom = min(height, top + max(1, int(round(height * MIN_BAND))))
++        top = max(int(round(height * FACE_ZONE['portrait' if vertical else 'landscape'])), bottom - int(round(height * MIN_BAND)))
++    return top, bottom
++
++
++def safe_top(width, height, panel_height, *, vertical=None, captions=True, template=None):
++    """Top edge for a card panel of ``panel_height``, centred in the band.
++
++    A panel taller than the band starts at the band's top rather than being shrunk: the card renderers already
++    chose a readable type size, and moving the panel is safer than re-fitting its text.
++    """
++    top, bottom = band(width, height, vertical=vertical, captions=captions, template=template)
++    free = max(0, bottom - top - int(panel_height))
++    return top + free // 2
++
++
++def describe(width, height, panel_height=0, *, vertical=None, captions=True):
++    """A sentence for a log or an audit: which band was used, in pixels and fractions."""
++    vertical = (int(height) > int(width)) if vertical is None else bool(vertical)
++    top, bottom = band(width, height, vertical=vertical, captions=captions)
++    placed = safe_top(width, height, panel_height, vertical=vertical, captions=captions)
++    height = int(height)
++    return (('portrait' if vertical else 'landscape') + ' frame ' + str(int(height)) + ' px: cards sit between '
++            + f'{top}px ({top / max(1, height):.0%}) and {bottom}px '
++            + f'({bottom / max(1, height):.0%}); this card starts at {placed}px')
+diff --git a/engine/render/educational_cards.py b/engine/render/educational_cards.py
+index bfd0e3d..e78ae85 100644
+--- a/engine/render/educational_cards.py
++++ b/engine/render/educational_cards.py
+@@ -65,8 +65,9 @@ def _badge(d, kind, cx, cy, r, palette):
+         d.polygon(points, fill=INK)
+ 
+ 
+-def render_single(card: dict, path, width: int, height: int, style: str) -> dict:
++def render_single(card: dict, path, width: int, height: int, style: str, captions: bool = True) -> dict:
+     from .typography import resolve_style, PALETTES, fit, draw_text
++    from .card_band import safe_top
+     kind = card["kind"]
+     style = resolve_style(style)
+     palette = PALETTES[style]
+@@ -87,6 +88,9 @@ def render_single(card: dict, path, width: int, height: int, style: str) -> dict
+     gap = int(10 * scale)
+     text_h = (label.height if label else 0) + gap + body.height
+     panel_h = max(2 * badge_r, text_h) + 2 * pad
++    # v7.0.112: the same card band as the English master - below the presenter's face, above the captions, and
++    # never at 12% of the height where it used to cover the face.
++    top = safe_top(width, height, panel_h, vertical=vertical, captions=bool(captions))
+     # 7.0.107: a soft shadow and a slightly denser panel keep the card readable over bright footage.
+     from PIL import ImageFilter
+     shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+@@ -176,11 +180,12 @@ def render_series(series: dict, path, width: int, height: int, style: str, activ
+                        "text_boxes": boxes, "canvas": [width, height], "active": active}}
+ 
+ 
+-def render_card_png(card: dict, path, width: int, height: int, style: str = "playful") -> dict:
++def render_card_png(card: dict, path, width: int, height: int, style: str = "playful",
++                    captions: bool = True) -> dict:
+     """Draw one single-point card (educational or plain keypoint) and return its overlay fields."""
+     kind = card.get("kind")
+     if kind not in DRAWABLE_KINDS:
+         raise ValueError("Unknown card kind: " + str(kind))
+-    info = render_single(card, path, width, height, style)
++    info = render_single(card, path, width, height, style, captions=captions)
+     return {**info, "kind": kind, "start": card["start"], "end": card["end"], "title": card["text"],
+             "anchor": "top-left", "opacity": 1, "anim": "pop", "fade_in": .22, "fade_out": .22}
+diff --git a/engine/render/graphics.py b/engine/render/graphics.py
+index a23e479..e0fc68c 100644
+--- a/engine/render/graphics.py
++++ b/engine/render/graphics.py
+@@ -349,12 +349,15 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
+             sizes.append(layout.size)
+         return layout
+ 
+-    if event.kind in {'intro', 'outro', 'keypoint', 'chapter', 'progress_list', 'recap'}:
+-        # Captions occupy the lower part of both landscape and portrait masters.
+-        # Keep editorial cards above them, including generated recap cards.
++    if event.kind in {'progress_list', 'recap'}:
++        # Captions occupy the lower part of both landscape and portrait masters, so a full-height summary
++        # panel starts near the top of the frame.
+         top = int(H * .12)
+     if event.kind in {'intro', 'outro', 'keypoint', 'chapter'}:
+-        # Lower-third cards leave the upper presenter area and bottom captions clear.
++        # v7.0.112: one card band for every language and every card kind - below the presenter's face and above
++        # the burned captions, centred in between. A keypoint card used to sit at 12% of the height, straight
++        # over the face in the English master, while editions drew a different card at 72%.
++        from .card_band import safe_top
+         panel_h = int(H * (.25 if vertical else .30))
+         if event.kind != 'chapter' or not event.title.strip().isdigit():
+             body = event.body if event.kind != 'keypoint' else ''
+@@ -363,6 +366,8 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
+                           size=88*scale, minimum=62*scale, style=style, bold=True,
+                           headline=True, max_lines=3, stroke=stroke)
+             panel_h = min(panel_h, 2*pad+int(26*scale)+heading.height+(int(104*scale) if body else 0))
++        top = safe_top(W, H, panel_h, vertical=vertical,
++                       captions=bool(event.layout.get('captions', True)))
+         box = (left, top, right, top+panel_h)
+         panel(box)
+         content_top = top+pad+int(26*scale)
+@@ -477,7 +482,8 @@ def render_overlay_png(event: OverlayEvent, path: str, W: int, H: int,
+         else:
+             img.alpha_composite(logo, (int(W*.07), int(H*.035)))
+     event.layout = {'style': style, 'font_sizes': sizes, 'text_boxes': ink_boxes,
+-                    'reading_floor': round(38*scale), 'canvas': [W, H]}
++                    'reading_floor': round(38*scale), 'canvas': [W, H],
++                    'captions': bool(event.layout.get('captions', True))}
+     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+     img.save(path)
+     event.path = path
+diff --git a/engine/speech_cards.py b/engine/speech_cards.py
+index 2e8dfe0..4f25220 100644
+--- a/engine/speech_cards.py
++++ b/engine/speech_cards.py
+@@ -393,7 +393,8 @@ def prepare(root, audio, words, script, duration, language, cleanup='delete-afte
+     return result
+ 
+ 
+-def render(root, audio, words, script, duration, width, height, style, educational=False, topic='', language=''):
++def render(root, audio, words, script, duration, width, height, style, educational=False, topic='', language='',
++           captions=True):
+     path = Path(root) / 'production' / 'speech_cards.json'
+     if not path.is_file():
+         return None
+@@ -429,7 +430,8 @@ def render(root, audio, words, script, duration, width, height, style, education
+         target = Path(root) / 'render' / 'graphics' / f'speech-card-{index:02d}.png'
+         # 7.0.107: every speech card is a real pop-up card - a panel with a badge that opens and closes -
+         # not a thin static lower-third strip. The card carries its box, so the renderer can animate it.
+-        overlays.append(render_card_png(card, target, int(width), int(height), style=style))
++        overlays.append(render_card_png(card, target, int(width), int(height), style=style,
++                                        captions=bool(captions)))
+     return overlays
+ 
+ 
+diff --git a/tests/test_v7112_card_band_and_picture_check.py b/tests/test_v7112_card_band_and_picture_check.py
+new file mode 100644
+index 0000000..f2f7398
+--- /dev/null
++++ b/tests/test_v7112_card_band_and_picture_check.py
+@@ -0,0 +1,247 @@
++"""v7.0.112: one card band and one card style for every language, and a picture check on the render.
++
++Field report, with a screenshot: the English card covered the presenter's face while the Hindi and Odia cards did
++not, and the English card looked better than theirs.
++
++Both came from two different code paths:
++
++* the English master drew its keypoint card at 12 % of the height - a top card, over the face;
++* the language editions drew a hand-rolled navy panel at 72 % - a different look entirely.
++
++The promises these tests hold, in order:
++
++1. a card never starts in the face zone (the top half of the frame) and never reaches the burned captions;
++2. the same card lands in the same place, with the same style, in English, Hindi and Odia;
++3. the render itself is checked against the picture, not only against the plan.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++TEXT = 'Keep shoulders back and spine straight to signal confidence'
++
++
++# --------------------------------------------------------------------------- where a card may sit
++
++
++@pytest.mark.parametrize('width,height', [(1920, 1080), (1080, 1920), (1280, 720), (720, 1280)])
++def test_a_card_never_starts_on_the_face(width, height):
++    from engine.render.card_band import FACE_ZONE, band
++    top, _bottom = band(width, height)
++    face = FACE_ZONE['portrait' if height > width else 'landscape']
++    assert top >= height * face - 1, 'the card band must start below the face zone'
++
++
++@pytest.mark.parametrize('width,height', [(1920, 1080), (1080, 1920)])
++def test_a_card_never_reaches_the_burned_captions(width, height):
++    from engine.render.card_band import band
++    from engine.render.captions_ass import caption_block_top
++    aspect = '9:16' if height > width else '16:9'
++    top, bottom = band(width, height, captions=True)
++    assert bottom <= caption_block_top(width, height, aspect=aspect,
++                                       template='OPUS' if height > width else 'HORMOZI')
++
++
++def test_the_card_band_is_centred_and_not_a_strip_at_the_top():
++    from engine.render.card_band import band, safe_top
++    width, height = 1920, 1080
++    top, bottom = band(width, height)
++    panel = 200
++    placed = safe_top(width, height, panel)
++    assert top <= placed <= bottom - panel + 1
++    # centred inside the band, within a pixel
++    assert abs((placed - top) - ((bottom - panel) - placed)) <= 1
++    assert placed > height * 0.39
++
++
++def test_a_short_frame_still_gets_a_usable_band():
++    from engine.render.card_band import band
++    top, bottom = band(640, 360)
++    assert 0 < top < bottom <= 360 and bottom - top >= 360 * 0.10
++
++
++def test_the_band_is_described_for_a_log():
++    from engine.render.card_band import describe
++    sentence = describe(1920, 1080, 300)
++    assert 'landscape' in sentence and 'px' in sentence and 'cards sit between' in sentence
++
++
++# --------------------------------------------------------------------------- one card, every language
++
++
++@pytest.mark.parametrize('width,height', [(1920, 1080), (1080, 1920)])
++@pytest.mark.parametrize('style', ['playful', 'bold'])
++def test_the_english_card_and_an_edition_card_are_the_same_card(tmp_path, width, height, style):
++    """Same renderer, same style, same position - the field report's "make Odia look like English"."""
++    from PIL import Image
++    from engine.render.graphics import OverlayEvent, render_overlay_png
++    from engine.finishing_studio import _card_image
++    english = tmp_path / 'english.png'
++    render_overlay_png(OverlayEvent('keypoint', 0, 1, TEXT, anchor='top-left', layout={'captions': True}),
++                       str(english), width, height, style=style)
++    edition = tmp_path / 'edition.png'
++    _card_image(TEXT, width, height, edition, 'or', style=style, captions=True)
++    from engine.render.captions_ass import caption_block_top
++    from engine.render.card_band import FACE_ZONE
++    box_en, box_or = Image.open(english).getbbox(), Image.open(edition).getbbox()
++    assert box_en == box_or
++    face = FACE_ZONE['portrait' if height > width else 'landscape']
++    assert box_en[1] >= height * face - 6, 'the card must not start on the face'
++    captions = caption_block_top(width, height, aspect='9:16' if height > width else '16:9',
++                                 template='OPUS' if height > width else 'HORMOZI')
++    assert box_en[3] <= captions, 'the card must stay above the captions'
++
++
++def test_the_edition_uses_the_job_card_style_not_a_hard_coded_one(tmp_path):
++    from engine import finishing_studio as finish
++    (tmp_path / 'production').mkdir(parents=True)
++    (tmp_path / 'production' / 'publish_readiness.json').write_text(json.dumps({'text_card_style': 'clean'}),
++                                                                  encoding='utf-8')
++    assert finish._job_card_style(tmp_path) == 'clean'
++    # a saved language state wins over the readiness file, and an unknown value is ignored
++    assert finish._job_card_style(tmp_path, {'card_style': 'playful'}) == 'playful'
++    (tmp_path / 'production' / 'publish_readiness.json').write_text(json.dumps({'text_card_style': 'neon'}),
++                                                                  encoding='utf-8')
++    assert finish._job_card_style(tmp_path) == ''
++    assert finish._edition_card_style({'card_style': None, 'educational': True}) == 'playful'
++    assert finish._edition_card_style({'card_style': 'bold'}) == 'bold'
++
++
++def test_the_edition_card_is_drawn_by_the_shared_renderer(tmp_path):
++    """No hand-rolled panel: the edition uses the same card drawing code as the English master."""
++    from PIL import Image
++    from engine.finishing_studio import _card_image
++    path = tmp_path / 'card.png'
++    event = _card_image(TEXT, 1920, 1080, path, 'hi', style='playful', captions=True)
++    assert event.kind == 'keypoint' and event.layout['captions'] is True
++    image = Image.open(path)
++    assert image.size == (1920, 1080)
++    pixel = image.convert('RGB').getpixel((200, 620))       # inside the panel
++    assert pixel != (0, 0, 0), 'the panel is drawn, not an empty frame'
++
++
++def test_a_card_too_long_for_the_frame_names_the_card(tmp_path):
++    from engine.finishing_studio import _card_image
++    with pytest.raises(ValueError) as error:
++        _card_image(' '.join(['word'] * 120), 640, 360, tmp_path / 'x.png', 'or')
++    assert 'Card is too long for the frame' in str(error.value) and 'word word' in str(error.value)
++
++
++# --------------------------------------------------------------------------- the picture check
++
++
++def _video(tmp_path, with_text):
++    """A 4 s video; with_text burns white caption-like text into the caption band.
++
++    The text is drawn with Pillow (some FFmpeg builds here have no drawtext filter) and encoded with the same
++    encoder the renderer uses.
++    """
++    from PIL import Image, ImageDraw, ImageFont
++    frame = tmp_path / ('with.png' if with_text else 'plain.png')
++    image = Image.new('RGB', (640, 360), (32, 48, 64))
++    if with_text:
++        draw = ImageDraw.Draw(image)
++        try:
++            face = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 40)
++        except OSError:
++            face = ImageFont.load_default()
++        draw.text((90, 300), 'captions burned here', font=face, fill=(255, 255, 255))
++    image.save(frame)
++    target = tmp_path / ('with.mp4' if with_text else 'without.mp4')
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', str(frame), '-t', '4',
++                    '-r', '24', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(target)], check=True)
++    return target
++
++
++@needs_ffmpeg
++def test_the_picture_check_sees_a_burned_transcript(tmp_path):
++    from engine.render.caption_check import probe
++    drawn = probe(_video(tmp_path, True))
++    plain = probe(_video(tmp_path, False))
++    assert drawn['checked'] and plain['checked']
++    assert drawn['looks_like_text'] is True, drawn
++    assert plain['looks_like_text'] is False, plain
++    assert drawn['ratio'] > plain['ratio']
++    assert '%' in drawn['detail']
++
++
++@needs_ffmpeg
++def test_the_picture_check_can_disagree_with_the_job_and_says_so(tmp_path):
++    from engine.render.caption_check import explain, probe
++    result = probe(_video(tmp_path, True))
++    sentence = explain(result, expected=False)
++    assert 'although the job asks for no transcript' in sentence
++    assert explain(result, expected=True) == ''
++    plain = probe(_video(tmp_path, False))
++    # The other direction is deliberately silent: a caption is not on screen every second, so a handful of
++    # samples that find nothing cannot prove the transcript is missing.
++    assert explain(plain, expected=True) == ''
++    assert explain(plain, expected=False) == ''
++
++
++def test_an_unreadable_file_is_reported_not_guessed(tmp_path):
++    from engine.render.caption_check import probe
++    missing = probe(tmp_path / 'nope.mp4')
++    assert missing['checked'] is False and missing['looks_like_text'] is None
++    assert 'No file to check' in missing['detail']
++
++
++@needs_ffmpeg
++def test_a_render_records_what_the_picture_shows(tmp_path):
++    """The edition record now carries the picture check, so the panel can show it without re-reading the file."""
++    from engine import edition_files
++    from engine.language_editions import render_job_editions, set_transcript
++    job = _job(tmp_path)
++    first = render_job_editions(job)
++    assert first['status'] == 'exported', first
++    entry = json.loads((job / 'production' / 'language_editions_render.json').read_text())['editions']['or']
++    assert entry['captions_detected']['checked'] is True
++    assert entry['captions_detected']['looks_like_text'] is False
++    assert entry['captions_detected']['detail']
++
++    set_transcript(job, languages={'or': True})
++    render_job_editions(job)
++    entry = json.loads((job / 'production' / 'language_editions_render.json').read_text())['editions']['or']
++    assert entry['captions_detected']['looks_like_text'] is True
++    assert 'caption band' not in (entry.get('warning') or '')     # asked for, and it is there: no warning
++    listing = edition_files.report(job)
++    assert listing['editions']['or']['current']['captions_detected']['looks_like_text'] is True
++    assert 'picture check:' in '\n'.join(edition_files.format_report(listing))
++
++
++# --------------------------------------------------------------------------- supporting fixtures
++
++
++def _job(tmp_path):
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = job / 'render' / 'visual-master.mp4'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'color=c=0x203040:size=640x360:rate=24:duration=6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
++                    str(picture)], check=True)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': 6.0}), encoding='utf-8')
++    folder = job / 'speech-editions' / 'or' / 'key'
++    folder.mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=700:sample_rate=44100', '-t', '6', '-c:a', 'pcm_s16le', str(voice)], check=True)
++    words = [{'word': 'ଶବ୍ଦ' + str(i), 'start': 0.3 + i * 0.6, 'end': 0.3 + i * 0.6 + 0.5} for i in range(9)]
++    (folder / 'words.json').write_text(json.dumps(words, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': 6.0,
++              'words': str(folder / 'words.json'), 'script': ' '.join(word['word'] for word in words),
++              'language': 'or', 'timing_source': 'test', 'cards': [], 'text_cards': False}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++         'bundles': {'or': bundle}, 'transcript': {'default': False, 'languages': {}}}), encoding='utf-8')
++    return job
+diff --git a/tests/test_v733_publication_review.py b/tests/test_v733_publication_review.py
+index 23b8ee9..34c13db 100644
+--- a/tests/test_v733_publication_review.py
++++ b/tests/test_v733_publication_review.py
+@@ -25,13 +25,20 @@ def test_reference_plan_reserves_three_cast_slots(tmp_path):
+ 
+ 
+ def test_lower_cards_leave_head_area_and_caption_margin(tmp_path):
++    # v7.0.112: the head area starts at 40% (16:9) / 44% (9:16), not 50%. A two-line card is taller than the
++    # room between a 50% line and the burned captions at 70%, so the old 50% rule pushed the panel onto the
++    # captions - or, at 12% (the keypoint case), onto the presenter's face. The band is centred between the two
++    # limits instead, and these are still the assertions that matter: below the head, above the captions.
++    from engine.render.captions_ass import caption_block_top
+     from engine.render.graphics import OverlayEvent,render_overlay_png
+     for W,H in [(1920,1080),(1080,1920)]:
+         e=OverlayEvent('chapter',0,4,'01','Advanced Prompt Engineering')
+         p=tmp_path/f'{W}.png';render_overlay_png(e,str(p),W,H,style='playful')
+         box=Image.open(p).getbbox()
+-        assert box[1]>=H*.50 and box[3]<=H*.82
+-        assert all(b[1]>=H*.50 for b in e.layout['text_boxes'])
++        head=H*(.44 if H>W else .40)
++        captions=caption_block_top(W,H,aspect='9:16' if H>W else '16:9',template='OPUS' if H>W else 'HORMOZI')
++        assert box[1]>=head-2 and box[3]<=max(captions,H*.82)
++        assert all(b[1]>=head-2 for b in e.layout['text_boxes'])
+ 
+ 
+ def test_logo_replaces_second_channel_badge(tmp_path):
+diff --git a/tools/update_v7110_to_v7111.py b/tools/update_v7110_to_v7111.py
+deleted file mode 100644
+index 7537a0b..0000000
+--- a/tools/update_v7110_to_v7111.py
++++ /dev/null
+@@ -1,170 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.111 update to a v7.0.110 installation.
+-
+-One field report, and the answer to it:
+-
+-* **"The transcript is still there after I rendered again."** The render was right: the record and the new export
+-  both said *no captions*. But every render deliberately keeps the earlier video, so the job held two Odia videos
+-  with equally plausible names and nothing said which one was current - the old one, with the captions you had
+-  switched off, still played as if it were the latest render.
+-
+-v7.0.111 makes the current file impossible to miss, in three places:
+-
+-1. ``python3 cli.py v3 language-outputs <job> --files`` lists, per language, the file to watch, the time it was
+-   rendered, and **what that exact file burned** (read from the export's own provenance), plus every earlier file
+-   marked *not current*, with its own caption state.
+-2. The job panel plays the current export, labels it ("This is the current Odia video · without a burned
+-   transcript · rendered ..."), warns when the copy in ``render/`` is not it, and lists the older videos it keeps.
+-3. A plan built while captions were on can never re-burn them after the job switched them off: the job's setting
+-   now wins over the plan, and the provenance records that the burn was suppressed and why.
+-
+-Every earlier video is still kept - that is deliberate, and never deleted. Nothing is generated, re-recorded or
+-charged by this update.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.111 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.111/tools/update_v7110_to_v7111.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.111/tools/update_v7110_to_v7111.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py',
+-    'engine/edition_files.py', 'engine/language_editions.py', 'engine/finishing_studio.py',
+-    'tests/test_v7111_which_edition_file.py',
+-    'WHICH_EDITION_FILE_V7_0_111.md', 'tools/update_v7110_to_v7111.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['6afcf447ffd309cd5ab86aa3dbcdc14f767e046e25ea354f5a8d49517c3b29db'],
+-    'app.py': ['42ede10f240449fd1a9bde96cc4411a5cfa0b6169806429f2cfa0f438f1b8b94'],
+-    'cli.py': ['dfabf2a5c37494bfe6f481b81ef782d3856a8959011869221a7aec7ee50ac97c'],
+-    'engine/language_editions.py': ['6cacf22775c1cfd6972655aaad8c1f20fc67a2f3399941e5854a934a4ec31beb'],
+-    'engine/finishing_studio.py': ['ac0fff94dfdca5191e2994af4f2a18365a145e158146421a495a247fef3a3879'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.110', '7.0.111')  # 7.0.111 allows a safe re-run after success
+-
+-# The 7.0.111 zip carries the 7.0.110 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.109', '7.0.110', 'tools/update_v7109_to_v7110.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.110 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.110 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.110 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.111'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To see which '
+-              'language video is the current one: python3 cli.py v3 language-outputs <job> --files')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7111_to_v7112.py b/tools/update_v7111_to_v7112.py
+new file mode 100644
+index 0000000..1d6ca02
+--- /dev/null
++++ b/tools/update_v7111_to_v7112.py
+@@ -0,0 +1,174 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.111 update to a v7.0.110 installation.
++
++Two field reports:
++
++1. **"The Odia video still has the transcript, in language_editions and in render."** v7.0.111 named the current
++   file and made a stale plan incapable of re-burning captions. v7.0.112 adds the witness that cannot argue with
++   itself: every render now samples the finished picture and records whether text is actually burned into its
++   caption band, ``--files --check-captions`` shows that measurement, and the panel plays the uniquely named
++   export instead of the stable ``render/`` copy a browser can serve from its cache.
++2. **"The English text card covers the presenter's face, and the Hindi/Odia cards look different - make them match
++   the English one, in the middle, off the face."** One card band now applies to every language and every card
++   kind (``engine/render/card_band.py``): below the head, above the burned captions, centred in between. The
++   editions draw their cards with the same renderer and the same style the English master used, instead of their
++   own navy panel at 72 %.
++
++Nothing is generated, re-recorded or charged by this update.
++
++Usage (run from the existing installation folder, after extracting the 7.0.112 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.112/tools/update_v7111_to_v7112.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.112/tools/update_v7111_to_v7112.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py',
++    'engine/edition_files.py', 'engine/language_editions.py', 'engine/finishing_studio.py',
++    'engine/speech_cards.py', 'engine/render/graphics.py', 'engine/render/educational_cards.py',
++    'engine/render/captions_ass.py', 'engine/render/card_band.py', 'engine/render/caption_check.py',
++    'tests/test_v7112_card_band_and_picture_check.py', 'tests/test_v733_publication_review.py',
++    'CARDS_AND_CAPTION_CHECK_V7_0_112.md', 'tools/update_v7111_to_v7112.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['a9731290a3c8614d00c3f689eab19b31845b55daf219e09ca9cf853604596c2d'],
++    'app.py': ['aa068fae4b61af4728c7229632a5275187f4ba5fc72c27789ae7dcdaaaf890bc'],
++    'cli.py': ['50d1a6ea2cfd66feedca29cb4fcc5a3e082b5a9a88264045e36f389bb845d4bf'],
++    'engine/language_editions.py': ['f30331af16e875c83a0bf4735797b339b3bc7251918740045538fa85507b7601'],
++    'engine/finishing_studio.py': ['383f86b94d139df7ea161fcc66c8be676d6a11ac50fb369b59a8e0339dc23ae6'],
++    'engine/edition_files.py': ['d015806d9f6e0f0a493bc75bcea316780c07527f63aba8c4395ede6c687c4cb5'],
++    'engine/speech_cards.py': ['edabb9db2a725235c51cb5ea4b7da0cfeb10d3e98bdaf8ae980d383dcd536ff4'],
++    'engine/render/graphics.py': ['c70fafef9be8cdaff15cf2546fc2b8ad34b78d5f023ba60704f1fc20ad6a8865'],
++    'engine/render/educational_cards.py': ['1a53320fd9d0c9d947e681bb4b42822953178a6d0f75307e10fc1293197eb455'],
++    'engine/render/captions_ass.py': ['136ca1ec8c85ce6704fdd60e9fab0edac8c30cfbad9d6590d7f8ab6f98480440'],
++    'tests/test_v733_publication_review.py': ['98c559d2b90b962879371bff0f492e8d1e215b02e650fc6eaea1294ff592e14d'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.111', '7.0.112')  # 7.0.112 allows a safe re-run after success
++
++# The 7.0.112 zip carries the 7.0.111 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.110', '7.0.111', 'tools/update_v7110_to_v7111.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.111 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.111 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.111 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.112'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To see which '
++              'language video is the current one, and whether it really shows a transcript: '
++              'python3 cli.py v3 language-outputs <job> --files --check-captions')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

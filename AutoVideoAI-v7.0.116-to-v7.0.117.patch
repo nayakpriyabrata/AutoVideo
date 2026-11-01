@@ -1,0 +1,987 @@
+diff --git a/CARD_AUDIT_V7_0_117.md b/CARD_AUDIT_V7_0_117.md
+new file mode 100644
+index 0000000..d2e2b1e
+--- /dev/null
++++ b/CARD_AUDIT_V7_0_117.md
+@@ -0,0 +1,110 @@
++# AutoVideoAI v7.0.117 — ask before you spend the render
++
++Your Odia render finished, and the transcript fix is confirmed in the field:
++
++```
++"captions": false, "caption_source": "measured",
++"captions_detected": { "looks_like_text": false,
++  "detail": "caption band: 6.13% bright / 0.82% edges … — no burned transcript detected." }
++Odia: captions: no · picture check: no text
++```
++
++But that file was made by **7.0.115**, not 7.0.116. The proof is in its own record: the card audit that 7.0.116 writes
++(`cards_on_screen_at_once`) is not there, and neither is the warning it would have added. So this Odia video still has
++the old overlapping cards, and nothing in the app told you — a missing record looked exactly like "checked, fine".
++
++That is what this release fixes, without asking you to spend another two hours to find out.
++
++## `--card-audit` — the answer in seconds, before any render
++
++```
++python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --card-audit
++```
++
++It reads only. No encoding, no voice, no Flow credit, nothing written into the job. For every selected language it
++lists both card sources, every pair that would share the screen with the overlap in seconds, and exactly what a render
++will do:
++
++```
++Odia (or)
++  job cards: 1 · edition cards: 1 · drawn by a render: 1
++  Odia: the same card is scheduled twice for the same moment (once by the job card copy, once by the
++  edition card file, 2.1s apart). A render draws it once.
++  - not drawn twice: "ଅଭ୍ୟାସ ୧: କହିବା" is already drawn once (2.1s of overlap)
++  current file: …/or-20261028-175252-4d686981.mp4 (rendered before 7.0.116 - its card overlap is not recorded)
++
++A render of the languages above draws one card at a time and skips the overlaps. It reuses the saved narration
++and the approved picture - no new voice, no Flow credits:
++    python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++```
++
++If a language has nothing to fix, it says so plainly — *"3 cards, no two share the screen. A render draws all of
++them."* — and no render command is suggested. `--json` gives the same data machine-readable.
++
++## The listing stops being silent
++
++`--files` now states the card state of each current file instead of omitting it:
++
++```
++  cards: one at a time · 1 overlapping or duplicate card(s) were not drawn      ← rendered by 7.0.116+
++  cards: one at a time (recorded)                                              ← 7.0.116+, nothing dropped
++  cards: not recorded - this file was rendered before 7.0.116, so whether two cards share the screen is
++  unknown. `--card-audit` says whether this job needs a new render.             ← your current Odia file
++```
++
++and the one-line summary ends with `cards: one at a time` or `cards: not recorded`, so the difference is visible at a
++glance.
++
++---
++
++## What this means for your Odia video
++
++Nothing here changes a file. The sequence that costs you least:
++
++```
++python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --card-audit
++```
++
++* **it reports overlaps** (as in the example above) → render that language once more; the new file draws one card at a
++  time and the older file is kept;
++* **it reports no overlaps** → this job is already fine, keep the file you have and skip the render entirely.
++
++Either way you will know before the machine spends an hour on it.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.117/tools/update_v7116_to_v7117.py /path/to/AutoVideoAI-v7.0.116         # dry run
++python3 ../AutoVideoAI-v7.0.117/tools/update_v7116_to_v7117.py /path/to/AutoVideoAI-v7.0.116 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses anything older than
++7.0.116. Code backups go to `code-update-backups/v7.0.116-to-v7.0.117-<stamp>/`.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7117_card_audit.py` (**7**), real FFmpeg renders where they matter.
++
++* the audit finds the two-card collision before any render — one job card, one edition card, one pair, the overlap in
++  seconds, what a render draws and what it skips;
++* **the audit is read-only**: every file in the job, with its size, is identical before and after it runs;
++* a language with only one card source has nothing to fix and says so; a language with no cards says that; a missing
++  drafted card file is a note, not an error;
++* the audit reports whether the current file was rendered with the rule, and after a 7.0.116+ render it does;
++* the listing says `cards: not recorded - this file was rendered before 7.0.116` for a pre-7.0.116 record and
++  `cards: one at a time` when the file carries it, in both the summary line and the full listing.
++
++The updater also gained a guard this release needed: if a different file already sits where a *new* file of this
++update goes (`engine/card_audit.py`), it stops and names it instead of overwriting it — the same promise it already
++made for a file you had edited.
++
++Full suite in this environment: **55 failed / 1 824 passed / 4 skipped** (+4 collection errors), against a pristine
++7.0.116 tree failing the **identical** 55 tests and 4 errors (this sandbox's FFmpeg lacks `subtitles`/`drawtext`, so
++the caption and clip-editing suites cannot run here). No regressions; 7 new tests.
+diff --git a/VERSION b/VERSION
+index 3da7455..fab5cd9 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.116
+\ No newline at end of file
++7.0.117
+\ No newline at end of file
+diff --git a/cli.py b/cli.py
+index 8c1e06a..5e10230 100644
+--- a/cli.py
++++ b/cli.py
+@@ -380,6 +380,10 @@ def main_v3(argv):
+     lang_out.add_argument("--check-captions", action="store_true",
+                           help="With --files: also look at the picture of the current export and say whether a "
+                                "transcript is burned into its caption band (three sampled frames)")
++    # 7.0.117: would two cards be on screen together? Answered from the saved job, before an expensive render.
++    lang_out.add_argument("--card-audit", action="store_true",
++                          help="Only report, per language, the saved text cards, which of them would share the "
++                               "screen, and what a render will draw (read-only, seconds, no render)")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -705,6 +709,24 @@ def main_v3(argv):
+                           "their saved narration - no new voice, no Flow credits):")
+                     print("    python3 cli.py v3 language-outputs " + str(args.job_id) + " --fit-hold 8")
+             return
++        if getattr(args, "card_audit", False):
++            # 7.0.117: the one-card rule only shows in a new render, and a render is the expensive part. This says
++            # whether this job has anything to fix at all, before spending an hour of CPU on it.
++            from engine.card_audit import audit_job, format_audit
++            data = audit_job(job_dir, languages=(getattr(args, "language", "") or None))
++            if getattr(args, "json", False):
++                print(_json.dumps(data, indent=2, ensure_ascii=False))
++            else:
++                for line in format_audit(data):
++                    print(line)
++                if data.get("problems"):
++                    print("")
++                    print("A render of the languages above draws one card at a time and skips the overlaps. It "
++                          "reuses the saved narration and the approved picture - no new voice, no Flow credits:")
++                    print("    python3 cli.py v3 language-outputs " + str(args.job_id) + " --fit-hold 8")
++                else:
++                    print(str(data.get("message") or ""))
++            return
+         if getattr(args, "explain", False):
+             # 7.0.95: read-only. Names the language and the one action that unblocks it.
+             print(_json.dumps(edition_diagnosis(job_dir), indent=2, ensure_ascii=False))
+diff --git a/engine/card_audit.py b/engine/card_audit.py
+new file mode 100644
+index 0000000..6d224cd
+--- /dev/null
++++ b/engine/card_audit.py
+@@ -0,0 +1,206 @@
++"""Would two cards be on screen together? Answer it before spending a render (v7.0.117).
++
++v7.0.116 made an edition draw **one card at a time** - the job's copied cards and the language's own drafted cards
++were anchored to the same sentence and used to be drawn on top of each other. That fix only shows in a *new* render,
++and an edition render is the expensive part of the whole flow (an hour or two of CPU on the field job). A record
++written before 7.0.116 cannot say whether the file on disk has the old overlap, and the listing used to stay silent
++about it - silence that reads as "checked, fine".
++
++This module answers the question from the saved job, in seconds, without rendering any video:
++
++* what cards the job has for each language - the copied ``bundle['cards']`` and the edition's own
++  ``production/speech_cards.json``;
++* which of them would share the screen (with the shared seconds);
++* what a render will do about it: which cards are drawn, which are skipped, and why.
++
++It reads files and draws card PNGs into a temporary folder to learn their windows; it never encodes, never writes into
++the job, never records anything, never re-records a voice and never spends a Flow credit.
++"""
++from __future__ import annotations
++
++import json
++import shutil
++import tempfile
++from pathlib import Path
++
++
++def _read(path, default=None):
++    try:
++        path = Path(path)
++        if not path.is_file():
++            return default
++        return json.loads(path.read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return default
++
++
++def _label(code):
++    try:
++        from engine.languages import LANGUAGES
++        return LANGUAGES[str(code)].label
++    except Exception:
++        return str(code)
++
++
++def _plan_geometry(job_root, code):
++    """The frame size and card style the last plan for this language used, so the audit matches the render."""
++    width, height, style = 1280, 720, 'bold'
++    for folder in sorted(Path(job_root, 'language_editions').glob('*/plan.json'), reverse=True):
++        plan = _read(folder, {}) or {}
++        edition = (plan.get('editions') or {}).get(code)
++        if not edition:
++            continue
++        source = (plan.get('source') or {}).get('width'), (plan.get('source') or {}).get('height')
++        if all(isinstance(value, int) and value > 0 for value in source):
++            width, height = source
++        style = str(edition.get('card_style') or plan.get('card_style') or style)
++        break
++    return int(width), int(height), style
++
++
++def _edition_cards(bundle, code, width, height, style, workdir):
++    """The windows of the language's own drafted cards, or an explanation of why there are none."""
++    from engine import speech_cards
++    folder = Path(str(bundle.get('audio') or '')).parent
++    cards_file = folder / 'production' / 'speech_cards.json'
++    if not cards_file.is_file():
++        return [], 'this language has no drafted card file of its own'
++    root = Path(workdir) / ('edition-cards-' + str(code))
++    (root / 'production').mkdir(parents=True, exist_ok=True)
++    shutil.copyfile(cards_file, root / 'production' / 'speech_cards.json')
++    try:
++        overlays = speech_cards.render(root, Path(str(bundle['audio'])), _read(bundle['words'], []) or [],
++                                       str(bundle.get('script') or ''), float(bundle.get('duration') or 0),
++                                       width, height, style,
++                                       educational=bool(bundle.get('educational')),
++                                       topic=str(bundle.get('topic') or ''), language=str(code),
++                                       captions=bool(bundle.get('captions_burned', True))) or []
++    except Exception as error:      # a stale draft is a real finding, not a crash: report it in words
++        first = str(error).strip().splitlines()[0] if str(error).strip() else error.__class__.__name__
++        return [], 'its drafted card file could not be read: ' + first[:400]
++    return [dict(event) for event in overlays], ''
++
++
++def audit_language(job_root, code, state, *, workdir=None):
++    """One language: both card lists, the collisions, and what a render would draw."""
++    from engine.render.card_slots import conflicts, is_card, max_at_once, resolve
++    bundles = (state or {}).get('bundles') or {}
++    bundle = bundles.get(code)
++    result = {'language': code, 'label': _label(code), 'plan_cards': 0, 'edition_cards': 0,
++              'conflicts': [], 'dropped': [], 'drawn': 0, 'notes': [], 'message': ''}
++    if not bundle:
++        result['message'] = _label(code) + ' has no saved narration, so it has no cards to audit yet.'
++        return result
++    temporary = None
++    try:
++        temporary = workdir or tempfile.mkdtemp(prefix='card-audit-')
++        width, height, style = _plan_geometry(job_root, code)
++        overlays, why = _edition_cards(bundle, code, width, height, style, temporary)
++        legacy = list(bundle.get('cards') or []) if bundle.get('text_cards', True) else []
++        result['plan_cards'] = len(legacy)
++        result['edition_cards'] = sum(1 for event in overlays if is_card(event.get('kind')))
++        if why:
++            result['notes'].append(_label(code) + ': ' + why + '.')
++        entries, owners = [], {}
++        for index, event in enumerate(overlays):
++            if not is_card(event.get('kind')):
++                continue
++            entry = dict(event)
++            entry['source'] = 'the edition card file'
++            owners[id(entry)] = ('overlay', index)
++            entries.append(entry)
++        for card in legacy:
++            entry = {'kind': 'keypoint', 'start': card.get('start'), 'end': card.get('end'),
++                     'title': card.get('text', ''), 'source': 'the job card copy'}
++            owners[id(entry)] = ('legacy', card)
++            entries.append(entry)
++        if not entries:
++            result['message'] = (_label(code) + ' has no text cards saved for this narration, so no two cards can '
++                                 'share the screen.')
++            return result
++        result['conflicts'] = conflicts(entries)
++        report = {}
++        kept = resolve(entries, report=report)
++        result['drawn'] = len(kept)
++        result['cards_at_once'] = max_at_once(kept)
++        result['dropped'] = list(report.get('dropped') or [])
++        worst = max([row.get('shared_seconds') or 0 for row in result['conflicts']] or [0])
++        result['worst_overlap_seconds'] = round(float(worst), 3)
++        duplicates = sum(1 for row in result['dropped'] if row.get('duplicate'))
++        result['duplicates'] = duplicates
++        if result['conflicts'] and duplicates == len(result['conflicts']):
++            # The field shape: the same sentence drafted twice, once per card source.
++            result['message'] = (
++                _label(code) + ': the same card is scheduled twice for the same moment (once by the job card '
++                'copy, once by the edition card file, ' + f'{worst:.1f}s apart). A render draws it once.')
++        elif result['conflicts']:
++            pairs = len(result['conflicts'])
++            result['message'] = (
++                _label(code) + ': ' + str(len(entries)) + ' card window(s) in '
++                + str(result['plan_cards']) + ' job card(s) and ' + str(result['edition_cards'])
++                + ' edition card(s); ' + (str(pairs) + ' pair(s) would be on screen together'
++                                          if pairs > 1 else '1 pair would be on screen together')
++                + f" (longest overlap {worst:.1f}s). A render draws {result['drawn']} card(s) and skips "
++                + str(len(result['dropped'])) + '.')
++        else:
++            result['message'] = (_label(code) + ': ' + str(len(entries)) + ' card(s), no two share the screen. '
++                                 'A render draws all of them.')
++        return result
++    finally:
++        if workdir is None and temporary:
++            shutil.rmtree(temporary, ignore_errors=True)
++
++
++def audit_job(job_root, *, languages=None):
++    """Every selected language's card state, from the saved job. Read-only; seconds, not minutes."""
++    job_root = Path(job_root)
++    state = _read(job_root / 'production' / 'language_editions.json', {}) or {}
++    from engine.language_editions import requested_languages
++    source, extra, state_languages = requested_languages(job_root)
++    if state_languages is None:
++        return {'job': str(job_root), 'status': 'not_requested', 'languages': {}, 'problems': [],
++                'message': 'No language editions were selected for this job, so it has no edition cards to audit.'}
++    wanted = [code for code in (languages or extra) if code in extra]
++    record = _read(job_root / 'production' / 'language_editions_render.json', {}) or {}
++    rows, problems = {}, []
++    for code in wanted:
++        row = audit_language(job_root, code, state_languages)
++        entry = (record.get('editions') or {}).get(code) or {}
++        row['rule_recorded'] = entry.get('cards_on_screen_at_once') is not None
++        row['current_file'] = str(entry.get('path') or '')
++        rows[code] = row
++        if row.get('conflicts'):
++            problems.append(row['message'])
++    return {'job': str(job_root), 'status': 'audited', 'source_language': source, 'languages': rows,
++            'problems': problems,
++            'message': '' if not rows else ('' if problems else
++                                            'No two cards share the screen in any selected language.')}
++
++
++def format_audit(data):
++    """Readable lines: what each language has, what overlaps, and what a render will do."""
++    lines = []
++    if not data.get('languages'):
++        return [str(data.get('message') or 'Nothing to audit.')]
++    for code, row in data['languages'].items():
++        lines.append(row['label'] + ' (' + code + ')')
++        lines.append('  job cards: ' + str(row.get('plan_cards', 0)) + ' · edition cards: '
++                     + str(row.get('edition_cards', 0)) + ' · drawn by a render: '
++                     + str(row.get('drawn', 0)))
++        lines.append('  ' + str(row.get('message') or ''))
++        for note in row.get('notes') or []:
++            lines.append('  note: ' + note)
++        for dropped in (row.get('dropped') or [])[:6]:
++            text = str(dropped.get('text') or '')[:70]
++            shared = (f" ({dropped['would_share_seconds']:.1f}s of overlap)"
++                      if dropped.get('would_share_seconds') else '')
++            if dropped.get('duplicate'):
++                lines.append('  - not drawn twice: "' + text + '" is already drawn once' + shared)
++            else:
++                lines.append('  - skipped: "' + text + '" because "'
++                             + str(dropped.get('kept') or 'another card')[:70] + '" is still showing' + shared)
++        if row.get('current_file'):
++            lines.append('  current file: ' + row['current_file'] + ' ('
++                         + ('rendered with the one-card rule' if row.get('rule_recorded')
++                            else 'rendered before 7.0.116 - its card overlap is not recorded') + ')')
++    return lines
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+index 7f92602..3cde1ca 100644
+--- a/engine/edition_files.py
++++ b/engine/edition_files.py
+@@ -224,7 +224,11 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+             qc_failed = {}
+         row = {'language': code, 'label': _label(code), 'requested_transcript': requested,
+                'current': current, 'kept': kept, 'qc_failed': qc_failed, 'older': older, 'problems': [],
+-               'cards_overlap_removed': entry.get('cards_overlap_removed') or {}}
++               'cards_overlap_removed': entry.get('cards_overlap_removed') or {},
++               # v7.0.117: silence used to mean "unknown" here - a file rendered before 7.0.116 cannot say
++               # whether two cards shared the screen, and saying nothing read as "checked, fine".
++               'cards_rule_recorded': entry.get('cards_on_screen_at_once') is not None,
++               'cards_on_screen_at_once': entry.get('cards_on_screen_at_once')}
+         if current is not None:
+             burned = (current.get('captions') or {}).get('burned')
+             if requested is False and burned is True:
+@@ -349,6 +353,12 @@ def summary(job_root, *, verify=False):
+             continue
+         burned = (current.get('captions') or {}).get('burned')
+         state = 'captions: yes' if burned else ('captions: no' if burned is False else 'captions: unknown')
++        if (row.get('cards_overlap_removed') or {}).get('dropped'):
++            state += ' · cards: one at a time'
++        elif row.get('cards_rule_recorded'):
++            state += ' · cards: one at a time'
++        else:
++            state += ' · cards: not recorded'
+         watch = current.get('render_copy') or current['path']
+         detected = current.get('captions_detected') or {}
+         if detected.get('checked'):
+@@ -416,6 +426,11 @@ def format_report(data):
+             # v7.0.116: not a fault in this file - a note that two cards would have shared the screen.
+             lines.append('  cards: one at a time · ' + str(len(overlap['dropped']))
+                          + ' overlapping or duplicate card(s) were not drawn')
++        elif row.get('cards_rule_recorded'):
++            lines.append('  cards: one at a time (recorded)')
++        else:
++            lines.append('  cards: not recorded - this file was rendered before 7.0.116, so whether two cards '
++                         'share the screen is unknown. `--card-audit` says whether this job needs a new render.')
+         for old in row.get('older') or []:
+             old_burned = (old.get('captions') or {}).get('burned')
+             mark = 'burned captions: yes' if old_burned else (
+diff --git a/engine/render/card_slots.py b/engine/render/card_slots.py
+index 42a74b4..681dc59 100644
+--- a/engine/render/card_slots.py
++++ b/engine/render/card_slots.py
+@@ -102,6 +102,7 @@ def resolve(entries, *, gap=MIN_GAP, report=None):
+                 kept_seconds = round(last_end - start, 3) if start < last_end else 0.0
+                 dropped.append({'text': _text(entry), 'reason': 'the screen still showed the card before it',
+                                 'kept': _text(last), 'would_share_seconds': max(0.0, kept_seconds),
++                                'duplicate': _text(entry) == _text(last),
+                                 'start': round(start, 3), 'end': round(end, 3)})
+                 continue
+         kept.append((start, end, _index, entry))
+diff --git a/tests/test_v7117_card_audit.py b/tests/test_v7117_card_audit.py
+new file mode 100644
+index 0000000..869b651
+--- /dev/null
++++ b/tests/test_v7117_card_audit.py
+@@ -0,0 +1,196 @@
++"""v7.0.117: "would two cards be on screen together?" - answered before an expensive render.
++
++Field sequence: v7.0.116 made an edition draw one card at a time, and the Odia render that came back was made by
++7.0.115 - the record carried no card audit at all. Nothing in the listing said so: a missing field read exactly like
++"checked, fine", and the only way to learn the truth was another hour-long render.
++
++v7.0.117 answers the question from the saved job, in seconds:
++
++* ``engine.card_audit`` lists both card sources for a language, the collisions between them, and what a render will
++  draw - it encodes nothing and writes nothing into the job;
++* the listing says **"cards: not recorded"** for a file rendered before the rule, instead of silence.
++
++These tests hold both, and hold them to being read-only.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++
++SCRIPT = 'ଅଭ୍ୟାସ ଏକ କହିବା ପର୍ବରୁ ସାମାନ୍ୟ ଆଟକନ୍ତୁ ଏବଂ ଧୀରେ ଚାଲନ୍ତୁ ତାପରେ ଅଭ୍ୟାସ ଦୁଇ ଭଲ ଘୁମନ୍ତୁ'
++
++
++def _words():
++    return [{'word': word, 'start': round(0.4 + i * 0.55, 3), 'end': round(0.4 + i * 0.55 + 0.5, 3)}
++            for i, word in enumerate(SCRIPT.split())]
++
++
++def _video(path, seconds, *, audio=False):
++    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++           f'testsrc2=size=640x360:rate=24:duration={seconds}']
++    if audio:
++        cmd += ['-f', 'lavfi', '-i', f'sine=frequency=440:sample_rate=48000:duration={seconds}',
++                '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0']
++    else:
++        cmd += ['-an']
++    cmd += ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)]
++    subprocess.run(cmd, check=True)
++    return path
++
++
++def _job(tmp_path, *, copied_cards=True, drafted=True, card_text='ଅଭ୍ୟାସ ୧: କହିବା'):
++    from engine.production import digest
++    from engine import speech_cards
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = _video(job / 'render' / 'visual-master.mp4', 20.0)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': 20.0}), encoding='utf-8')
++    words = _words()
++    folder = job / 'speech-editions' / 'or' / 'key'
++    (folder / 'production').mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    duration = words[-1]['end'] + 0.6
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=700:sample_rate=44100', '-t', str(duration),
++                    '-c:a', 'pcm_s16le', str(voice)], check=True)
++    (folder / 'words.json').write_text(json.dumps(words, ensure_ascii=False), encoding='utf-8')
++    draft = {'cards': [{'text': card_text, 'start_word': 0, 'end_word': 3}],
++             'word_count': len(words), 'script_chars': len(SCRIPT)}
++    draft['fingerprint'] = speech_cards.fingerprint(voice, words, SCRIPT, '')
++    if drafted:
++        (folder / 'production' / 'speech_cards.json').write_text(json.dumps(draft, ensure_ascii=False),
++                                                                encoding='utf-8')
++    cards = speech_cards.anchor_cards(draft, words, duration, educational=False) if copied_cards else []
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': duration,
++              'words': str(folder / 'words.json'), 'script': SCRIPT, 'language': 'or',
++              'timing_source': 'test', 'cards': cards, 'text_cards': True, 'educational': False,
++              'cards_ready': True}
++    state = {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++             'bundles': {'or': bundle}, 'transcript': {'default': False, 'languages': {}}}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False),
++                                                              encoding='utf-8')
++    return job
++
++
++# ------------------------------------------------------------------ the audit itself
++
++
++@needs_ffmpeg
++def test_the_audit_finds_the_collision_before_any_render(tmp_path):
++    from engine.card_audit import audit_job, format_audit
++    job = _job(tmp_path)
++    data = audit_job(job)
++    row = data['languages']['or']
++    assert row['plan_cards'] == 1 and row['edition_cards'] == 1
++    assert len(row['conflicts']) == 1
++    assert row['drawn'] == 1 and len(row['dropped']) == 1
++    assert row['worst_overlap_seconds'] > 1.0
++    assert row['duplicates'] == 1
++    assert 'the same card is scheduled twice' in row['message']
++    assert 'A render draws it once.' in row['message']
++    assert data['problems'] and 'over' not in data['message']
++    lines = '\n'.join(format_audit(data))
++    assert 'job cards: 1 · edition cards: 1 · drawn by a render: 1' in lines
++    assert 'not drawn twice: "' in lines and 'already drawn once' in lines
++    # nothing was rendered and no export folder was created
++    assert not list((job / 'language_editions').glob('*')) if (job / 'language_editions').exists() else True
++
++
++@needs_ffmpeg
++def test_the_audit_is_read_only(tmp_path):
++    from engine.card_audit import audit_job
++    job = _job(tmp_path)
++    before = sorted((path.relative_to(job).as_posix(), path.stat().st_size)
++                    for path in job.rglob('*') if path.is_file())
++    audit_job(job)
++    after = sorted((path.relative_to(job).as_posix(), path.stat().st_size)
++                   for path in job.rglob('*') if path.is_file())
++    assert before == after
++
++
++@needs_ffmpeg
++def test_a_language_with_only_one_card_source_has_nothing_to_fix(tmp_path):
++    from engine.card_audit import audit_job
++    only_drafted = audit_job(_job(tmp_path / 'a', copied_cards=False))
++    row = only_drafted['languages']['or']
++    assert row['plan_cards'] == 0 and row['edition_cards'] == 1
++    assert row['conflicts'] == [] and row['drawn'] == 1
++    assert 'no two share the screen' in row['message']
++    assert only_drafted['problems'] == []
++    assert 'No two cards share the screen' in only_drafted['message']
++
++    only_copied = audit_job(_job(tmp_path / 'b', drafted=False))
++    row = only_copied['languages']['or']
++    assert row['plan_cards'] == 1 and row['edition_cards'] == 0
++    assert 'no drafted card file of its own' in ' '.join(row['notes'])
++    assert row['drawn'] == 1 and row['conflicts'] == []
++
++
++@needs_ffmpeg
++def test_a_language_with_no_cards_says_so(tmp_path):
++    from engine.card_audit import audit_job
++    data = audit_job(_job(tmp_path, copied_cards=False, drafted=False))
++    row = data['languages']['or']
++    assert row['drawn'] == 0 and row['conflicts'] == []
++    assert 'no text cards saved for this narration' in row['message']
++
++
++@needs_ffmpeg
++def test_the_audit_says_whether_the_current_file_was_rendered_with_the_rule(tmp_path):
++    from engine.card_audit import audit_job, format_audit
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    assert audit_job(job)['languages']['or']['rule_recorded'] is False     # nothing rendered yet
++    render_job_editions(job, fit_policy={'allow_hold': 8.0, 'hold_cap': 8.0})
++    row = audit_job(job)['languages']['or']
++    assert row['rule_recorded'] is True
++    assert 'rendered with the one-card rule' in '\n'.join(format_audit(audit_job(job)))
++
++
++# ------------------------------------------------------------------ the listing stops being silent
++
++
++@needs_ffmpeg
++def test_the_listing_says_when_a_file_predates_the_rule(tmp_path):
++    from engine import edition_files
++    from engine.language_editions import render_job_editions, _record_path
++    job = _job(tmp_path)
++    render_job_editions(job, fit_policy={'allow_hold': 8.0, 'hold_cap': 8.0})
++    record = json.loads(_record_path(job).read_text(encoding='utf-8'))
++    # exactly the field state: a file rendered before 7.0.116, with no card audit in the record
++    record['editions']['or'].pop('cards_on_screen_at_once', None)
++    record['editions']['or'].pop('cards_overlap_removed', None)
++    _record_path(job).write_text(json.dumps(record), encoding='utf-8')
++
++    data = edition_files.report(job)
++    row = data['editions']['or']
++    assert row['cards_rule_recorded'] is False
++    listing = '\n'.join(edition_files.format_report(data))
++    assert 'cards: not recorded - this file was rendered before 7.0.116' in listing
++    assert '--card-audit' in listing
++    summary = ' '.join(edition_files.summary(job))
++    assert 'cards: not recorded' in summary
++
++
++@needs_ffmpeg
++def test_the_listing_confirms_the_rule_when_the_file_has_it(tmp_path):
++    from engine import edition_files
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    render_job_editions(job, fit_policy={'allow_hold': 8.0, 'hold_cap': 8.0})
++    data = edition_files.report(job)
++    assert data['editions']['or']['cards_rule_recorded'] is True
++    listing = '\n'.join(edition_files.format_report(data))
++    assert 'cards: one at a time' in listing
++    assert 'not recorded' not in listing
++    summary = ' '.join(edition_files.summary(job))
++    assert 'cards: one at a time' in summary
+diff --git a/tools/update_v7115_to_v7116.py b/tools/update_v7115_to_v7116.py
+deleted file mode 100644
+index f4c40cd..0000000
+--- a/tools/update_v7115_to_v7116.py
++++ /dev/null
+@@ -1,170 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.116 update to a v7.0.115 installation.
+-
+-One field report on the Odia edition, with a screenshot: a single frame showed **two pop-up cards overlapping** - the
+-bold KEY POINT panel, and behind it a second panel of the same shape with the rest of the sentence.
+-
+-Both were real, and both lists were drawn by the same render:
+-
+-* ``bundle['cards']`` - the job's copied cards, drafted from the original English card pass and stored on the
+-  language's narration; drawn in their own loop as full-frame images;
+-* ``production/speech_cards.json`` - the edition's own cards, drafted for this language from its own reviewed
+-  narration and drawn by ``speech_cards.render()``.
+-
+-They are anchored to the same spoken sentence, so when their windows differ by a few tenths of a second they land on
+-top of each other. Nothing compared the two lists - only hooks were ever checked against cards.
+-
+-v7.0.116 draws **one card at a time**, from either list:
+-
+-1. ``engine/render/card_slots.py`` (new) holds the rule: cards only (hooks are pills in another band), a 0.15 s beat
+-   between two cards, and, when two collide, the card from the language's own drafted file wins - it was written for
+-   this narration, in this language. A duplicate of the same text is drawn once.
+-2. The edition render applies it before anything is drawn, so the dropped card is never encoded.
+-3. ``graphics-<lang>.json`` and the export's provenance record what was drawn, ``cards_on_screen_at_once`` (1), and
+-   what gave way; the job record, the panel warning and the listing's ``--files`` view repeat it. Nothing changes
+-   silently, and no card is deleted from your saved files - only the duplicate draw is skipped.
+-
+-Nothing is re-recorded, no Flow credit is spent, and no new video request is opened by this update. An edition has to
+-be rendered again to see the fix, which uses the saved narration and the approved picture.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION',
+-    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
+-    'engine/render/card_slots.py',
+-    'tests/test_v7116_one_card_at_a_time.py',
+-    'ONE_CARD_AT_A_TIME_V7_0_116.md', 'tools/update_v7115_to_v7116.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['5b9bf5f5dd00aea55ac89a2ec026374fa24de90505a14e32e7c2e3bd8d03f106'],
+-    'engine/finishing_studio.py': ['27b6806d5f5f5eab2f8c9bd916ad3da1755125f0212b47775387e296bcf2ec8e'],
+-    'engine/language_editions.py': ['81df39d7f3d976613c1da4be56abdf10fa5d207f48d16832c92f6d913db91b02'],
+-    'engine/edition_files.py': ['b48f4ccca88120805bac8ad4faf840ce09618f829028e1c7be2310809899aabe'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.115', '7.0.116')  # 7.0.116 allows a safe re-run after success
+-
+-# The 7.0.116 zip carries the 7.0.115 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.114', '7.0.115', 'tools/update_v7114_to_v7115.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.115 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.115 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.115 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.116'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To put one card on '
+-              'screen at a time, render the language again (it reuses the saved narration and the approved '
+-              'picture): python3 cli.py v3 language-outputs <job> --files --check-captions then the render command '
+-              'it prints.')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7116_to_v7117.py b/tools/update_v7116_to_v7117.py
+new file mode 100644
+index 0000000..d422339
+--- /dev/null
++++ b/tools/update_v7116_to_v7117.py
+@@ -0,0 +1,172 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.117 update to a v7.0.116 installation.
++
++The field sequence that produced this release: v7.0.116 made an edition draw one card at a time, and the Odia video
++that came back was rendered by 7.0.115 - its record had no card audit at all. Nothing said so. A missing field looked
++exactly like "checked, fine", and the only way to find out was another hour-long render.
++
++v7.0.117 makes that question answerable in seconds, before a render:
++
++1. ``python3 cli.py v3 language-outputs <job> --card-audit`` - read-only. It lists, per language, the job's copied
++   cards and the edition's own drafted cards, every pair that would share the screen (with the overlap in seconds),
++   and exactly what a render will draw. It encodes nothing, writes nothing into the job, spends no Flow credit and
++   uses no voice.
++2. The file listing says **"cards: not recorded - this file was rendered before 7.0.116"** instead of staying
++   silent, and "cards: one at a time" when the file does carry the record. Silence is never shown as a pass again.
++
++Nothing is rendered, re-recorded or charged by this update. To see the one-card fix in a video, that language still
++has to be rendered again - after ``--card-audit`` says it is worth doing.
++
++Usage (run from the existing installation folder, after extracting the 7.0.117 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.117/tools/update_v7116_to_v7117.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.117/tools/update_v7116_to_v7117.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'cli.py',
++    'engine/edition_files.py', 'engine/card_audit.py', 'engine/render/card_slots.py',
++    'tests/test_v7117_card_audit.py',
++    'CARD_AUDIT_V7_0_117.md', 'tools/update_v7116_to_v7117.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['879aad20f466cd8f29e3dbda4ee951bcaf030a89417701485108111d64b5203a'],
++    'cli.py': ['cbd9087bad41fed7630111bd3aa2b06c1e35fcc90d1e92825d74d74099bd1d16'],
++    'engine/edition_files.py': ['965ef0e6b4b90fa63f551982d5c6de80e3411502ddf85643b8300e2ce0607280'],
++    'engine/render/card_slots.py': ['1ca496fa8b072bdc3c78238cf8cd4ded25627550a7b91d4d462be3a23a565543'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.116', '7.0.117')  # 7.0.117 allows a safe re-run after success
++
++# The 7.0.117 zip carries the 7.0.116 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.115', '7.0.116', 'tools/update_v7115_to_v7116.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.116 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.116 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.116 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.117'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++        if destination.exists() and not allowed and sha(destination) != expected[name]:
++            # v7.0.117: a file this release introduces (engine/card_audit.py) must not overwrite a different file
++            # that already sits at that path - the same promise as for an edited file, applied to a new one.
++            raise ValueError('A different file already exists where this update installs ' + name +
++                             '; preserved it and changed nothing. Move it aside and run the update again.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. Before spending a '
++              'render on the one-card fix, ask whether this job needs it: python3 cli.py v3 language-outputs <job> '
++              '--card-audit   (read-only, seconds - it names every card that would share the screen and what a '
++              'render will draw)')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

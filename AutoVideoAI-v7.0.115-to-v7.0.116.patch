@@ -1,0 +1,1067 @@
+diff --git a/ONE_CARD_AT_A_TIME_V7_0_116.md b/ONE_CARD_AT_A_TIME_V7_0_116.md
+new file mode 100644
+index 0000000..9c85c1b
+--- /dev/null
++++ b/ONE_CARD_AT_A_TIME_V7_0_116.md
+@@ -0,0 +1,102 @@
++# AutoVideoAI v7.0.116 — one card on screen at a time
++
++Your screenshot showed it exactly: one Odia frame carrying **two** pop-up cards, the bold KEY POINT panel in front and
++a second panel of the same shape behind it, a fraction of a second out of step, holding the rest of the sentence.
++
++The transcript fix is holding — that is a separate, older bug and this frame confirms it is gone. This one was in the
++cards.
++
++## Why two cards were drawn
++
++Both panels were real, and both were drawn by the *same* render, from two different lists:
++
++* **the job's copied cards** — `bundle['cards']`, written by the original English card pass and stored on each
++  language's narration. `render()` draws each of these as a full-frame image in its own loop;
++* **the edition's own cards** — `production/speech_cards.json`, drafted for this language from its own reviewed
++  narration (`speech_cards.render()`), drawn in a second loop.
++
++Both are anchored to the same spoken sentence, so as soon as their windows differ by a few tenths of a second they
++land on the same pixels. Nothing compared the two lists: hooks were checked against cards, copied cards were not.
++
++Reproduced on 7.0.115 with an Odia narration before touching anything (the two panels below are one frame, 1.2 s in;
++the second panel is the copied job card, and it carries the whole sentence):
++
++```
++copied job card:  0.4 → 2.40s   ଅଭ୍ୟାସ ୧: କହିବା
++edition card:     0.4 → 2.55s   ଅଭ୍ୟାସ ୧: କହିବା
++```
++
++## What 7.0.116 does
++
++New module `engine/render/card_slots.py` decides what may be drawn, before anything is encoded:
++
++1. **One card at a time.** Two cards may not share the screen, from either list. Cards keep a 0.15 s beat between them,
++   which is longer than the 0.22 s fades they open and close with, so one card never fades through another.
++2. **The edition's own card wins** when they collide — it was drafted for this narration, in this language, with this
++   card style — and a *duplicate* of the same text is drawn once rather than twice.
++3. **Hooks are untouched.** They are small pills in their own band; the rule only governs cards.
++4. **Nothing is deleted.** Your saved cards, the copied ones and the drafted ones, stay exactly as they are; the
++   render simply does not draw the second one.
++
++The render records what it did: `graphics-<lang>.json` and the export's provenance now carry
++`cards_on_screen_at_once` (1) and, when something gave way, `cards_overlap_removed` with the text, the window, the
++card that kept the screen and the overlap in seconds. The job warns in plain words and the file listing shows:
++
++```
++  cards: one at a time · 1 overlapping or duplicate card(s) were not drawn
++```
++
++Nothing is re-recorded, no Flow credit is spent, and no new video request is opened. Your saved cards are not
++rewritten, so if you ever want the other card to win, that is a one-line rule change, not a re-draft.
++
++---
++
++## What to do
++
++Update, then render the Odia edition once more:
++
++```
++python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --fit-hold 8
++```
++
++Only languages that are not current are rendered, from their saved narration and the approved picture. The earlier
++files are kept. The new Odia file should show one card at a time; if any card was dropped as a duplicate, the job
++panel says which one, and the listing repeats it.
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.116/tools/update_v7115_to_v7116.py /path/to/AutoVideoAI-v7.0.115         # dry run
++python3 ../AutoVideoAI-v7.0.116/tools/update_v7115_to_v7116.py /path/to/AutoVideoAI-v7.0.115 --apply
++```
++
++Code, docs and tests only. `outputs/`, saved jobs, Flow journals, browser profiles and `music_library/` are never
++touched; a file you edited yourself is preserved and the run stops and names it. It refuses anything older than
++7.0.115. Code backups go to `code-update-backups/v7.0.115-to-v7.0.116-<stamp>/`.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7116_one_card_at_a_time.py` (**11**), with real FFmpeg renders.
++
++* the rule on its own: a second card is dropped while the first is showing; a 0.15 s beat is enforced; the edition's
++  own card beats the copied one; the same text twice is drawn once and explained that way; `conflicts()` reports what
++  shared the screen; hooks and cards are told apart; a points series and a single card cannot coexist;
++* a real edition render draws exactly one card and records `cards_on_screen_at_once: 1` plus the dropped card's text
++  and overlap in `graphics-or.json` **and** in the export's provenance;
++* **the picture check**: the same edition rendered with and without the copied job cards produces frames that differ
++  by a mean of under 2/255 per channel at 1.2 s — the extra panel is gone, not dimmed;
++* the job record, the panel warning and the listing all say which card gave way, so the change is not silent;
++* an edition with no drafted card file still draws its copied cards — the rule never removes the only cards a
++  language has.
++
++Full suite in this environment: **55 failed / 1 817 passed / 4 skipped** (plus 4 collection errors), against a
++pristine 7.0.115 tree failing the **identical** 55 tests and 4 errors (this sandbox's FFmpeg lacks
++`subtitles`/`drawtext`, so the caption and clip-editing suites cannot run here). No regressions; 11 new tests.
++
++The before/after frames from the reproduction are `before-116.png` (two panels) and `after-116.png` (one panel).
+diff --git a/VERSION b/VERSION
+index 60002d0..3da7455 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.115
+\ No newline at end of file
++7.0.116
+\ No newline at end of file
+diff --git a/engine/edition_files.py b/engine/edition_files.py
+index 47404d2..7f92602 100644
+--- a/engine/edition_files.py
++++ b/engine/edition_files.py
+@@ -223,7 +223,8 @@ def report(job_root, *, language=None, verify=False, check_captions=False):
+         else:
+             qc_failed = {}
+         row = {'language': code, 'label': _label(code), 'requested_transcript': requested,
+-               'current': current, 'kept': kept, 'qc_failed': qc_failed, 'older': older, 'problems': []}
++               'current': current, 'kept': kept, 'qc_failed': qc_failed, 'older': older, 'problems': [],
++               'cards_overlap_removed': entry.get('cards_overlap_removed') or {}}
+         if current is not None:
+             burned = (current.get('captions') or {}).get('burned')
+             if requested is False and burned is True:
+@@ -410,6 +411,11 @@ def format_report(data):
+         detected = current.get('captions_detected') or {}
+         if detected.get('checked'):
+             lines.append('  picture check: ' + str(detected.get('detail') or ''))
++        overlap = row.get('cards_overlap_removed') or {}
++        if overlap.get('dropped'):
++            # v7.0.116: not a fault in this file - a note that two cards would have shared the screen.
++            lines.append('  cards: one at a time · ' + str(len(overlap['dropped']))
++                         + ' overlapping or duplicate card(s) were not drawn')
+         for old in row.get('older') or []:
+             old_burned = (old.get('captions') or {}).get('burned')
+             mark = 'burned captions: yes' if old_burned else (
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index 86d9155..9bb61b6 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -667,6 +667,46 @@ def _edition_overlays(edition, language, voice, words_path, width, height, tmp_d
+     return overlays
+ 
+ 
++def _one_card_at_a_time(legacy_cards, overlays, report=None):
++    """Split the cards into "draw" and "drop" so two never share the screen (v7.0.116).
++
++    Field report: an Odia frame showed two KEY POINT panels at once. Both existed - the job's copied cards
++    (``bundle['cards']``) were drawn in their own loop and the edition's own drafted cards
++    (``production/speech_cards.json``) in another, anchored to the same sentence a fraction of a second apart, and
++    nothing compared the two lists. Hooks are left alone: they are pills in their own band, and the hook placement
++    already avoids every card.
++
++    Returns ``(kept legacy cards, kept overlays)``. ``report`` receives what gave way, so the export can say it.
++    """
++    from engine.render.card_slots import is_card, resolve
++    entries = []
++    owners = {}
++    for index, event in enumerate(overlays or []):
++        if not is_card(event.get('kind')):
++            continue
++        entry = dict(event)
++        entry['source'] = 'the edition card file'
++        owners[id(entry)] = ('overlay', index)
++        entries.append(entry)
++    for card in legacy_cards or []:
++        entry = {'kind': 'keypoint', 'start': card.get('start'), 'end': card.get('end'),
++                 'title': card.get('text', ''), 'source': 'the job card copy'}
++        owners[id(entry)] = ('legacy', card)
++        entries.append(entry)
++    if not entries:
++        return list(legacy_cards or []), list(overlays or [])
++    kept = resolve(entries, report=report)
++    keep = {id(entry) for entry in kept}
++    drop_overlays = {index for key, (kind, index) in owners.items()
++                     if kind == 'overlay' and key not in keep}
++    keep_legacy = {id(card) for key, (kind, card) in owners.items() if kind == 'legacy' and key in keep}
++    overlay_result = [event for index, event in enumerate(overlays or []) if index not in drop_overlays]
++    legacy_result = [card for card in legacy_cards or [] if id(card) in keep_legacy]
++    if report is not None:
++        report['cards_overlap_removed'] = True
++    return legacy_result, overlay_result
++
++
+ def _retime_overlays(overlays, tempo):
+     """Move cards and hooks with a sped-up narration (v7.0.108).
+ 
+@@ -810,12 +850,25 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                                           legacy_cards, duration=float(voice['duration']) if voice else None,
+                                           stats=graphics_stats)
+         overlay_specs = _retime_overlays(overlay_specs, tempo)
++        # v7.0.116: two cards must never be on screen together - the copied job cards and the edition's own drafted
++        # cards are anchored to the same sentence and used to be drawn on top of each other.
++        overlap_report = {}
++        legacy_cards, overlay_specs = _one_card_at_a_time(legacy_cards, overlay_specs, report=overlap_report)
++        from engine.render.card_slots import describe as describe_overlap, is_card, max_at_once
++        drawn_cards = [event for event in overlay_specs if is_card(event.get('kind'))] + list(legacy_cards)
++        graphics_stats['cards'] = len(drawn_cards)
++        graphics_stats['cards_on_screen_at_once'] = max_at_once(drawn_cards)
++        if overlap_report.get('dropped'):
++            graphics_stats['cards_overlap_removed'] = {
++                'considered': overlap_report.get('considered'), 'kept': overlap_report.get('kept'),
++                'dropped': overlap_report['dropped'], 'note': describe_overlap(overlap_report)}
+         if overlay_specs or edition.get('speech_cards') or edition.get('hooks'):
+             # 7.0.107: this edition writes down what it drew, so a missing card is explainable later.
+             graphics_stats.update({
+                 'language': language, 'animated': sum(1 for e in overlay_specs if e.get('anim')),
+                 'kinds': {kind: sum(1 for e in overlay_specs if e.get('kind') == kind)
+                           for kind in sorted({str(e.get('kind')) for e in overlay_specs})},
++                'plan_cards_drawn': len(legacy_cards),
+                 'speech_cards_prepared': bool(edition.get('speech_cards')),
+                 'hooks_prepared': bool(edition.get('hooks')),
+                 'educational': bool(edition.get('educational')),
+@@ -1032,6 +1085,9 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                      'music_volume': float(plan.get('music_volume', .12)) if music else 0.0,
+                      'music_duck': sound if music else None,
+                      'loudness_target_lufs': -14 if music else None,
++                     'cards_overlap_removed': graphics_stats.get('cards_overlap_removed') or None,
++                     'cards_on_screen_at_once': graphics_stats.get('cards_on_screen_at_once'),
++                     'cards_drawn': {'overlays': len(overlay_specs), 'plan_cards': len(legacy_cards)},
+                      'export_qc': {key: qc.get(key) for key in
+                                    ('expected_seconds', 'container_seconds', 'video_seconds', 'audio_seconds',
+                                     'video_padded_seconds', 'notes', 'checked_at')}})
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index 0b4c50f..a4e7441 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -703,6 +703,20 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                              .get('captions_suppressed') or '')
+             if suppressed:
+                 entry['warning'] = (entry.get('warning') + ' ' if entry.get('warning') else '') + suppressed
++            # v7.0.116: two cards used to be drawn on top of each other. The render now draws one and says which
++            # gave way - keep that in the record, so the panel can show it rather than the change being silent.
++            try:
++                provenance = _read(Path(str(exported)).with_suffix('.provenance.json'), {}) or {}
++                overlap = provenance.get('cards_overlap_removed') or {}
++                if overlap.get('dropped'):
++                    entry['cards_overlap_removed'] = overlap
++                    if overlap.get('note'):
++                        entry['warning'] = ((entry.get('warning') + ' ') if entry.get('warning') else '') \
++                            + str(overlap['note'])
++                if provenance.get('cards_on_screen_at_once') is not None:
++                    entry['cards_on_screen_at_once'] = provenance['cards_on_screen_at_once']
++            except OSError:
++                pass
+             # v7.0.112: look at the picture and record what it shows. The record and the plan can agree with each
+             # other and still be wrong about the file; three sampled frames cannot be.
+             try:
+diff --git a/engine/render/card_slots.py b/engine/render/card_slots.py
+new file mode 100644
+index 0000000..42a74b4
+--- /dev/null
++++ b/engine/render/card_slots.py
+@@ -0,0 +1,146 @@
++"""One pop-up card on screen at a time (v7.0.116).
++
++Field report, Odia edition: a video frame showed **two cards overlapping** - one bold KEY POINT panel with Odia text,
++and, a fraction of a second out of step, a second panel of the same shape carrying the rest of the sentence. The
++screenshot showed both at once, the second half-hidden behind the first.
++
++Both were real, drawn by the same render from two different sources:
++
++* the **job's copied cards** - ``bundle['cards']``, written by the original English card draft and stored on the
++  language's narration. ``render()`` draws each one as an image over the whole frame;
++* the **edition's own drafted cards** - ``production/speech_cards.json``, drafted for this language from its own
++  reviewed narration, and drawn by ``speech_cards.render()``.
++
++Both sets are anchored to the same spoken sentence, so when their windows differ by a few tenths of a second they
++overlap - two panels on screen, one over the other. Nothing checked: the copied cards were drawn in their own loop,
++the drafted cards in another, and only hooks were ever compared against cards.
++
++This module is that check. It is pure - windows in, windows out - so the rule can be tested without a video:
++
++* only one **card** may occupy the screen at a time (``CARD_KINDS``: keypoint, takeaway, tip, warning, points);
++* hooks are not cards: they are small pills in their own band and are never dropped here;
++* when two cards collide, the one drawn from the language's *own drafted file* wins, because that is the one
++  written for this narration, in this language; the other is reported, not silently discarded;
++* a card keeps a short gap from its neighbours, so a card cannot be replaced by another mid-fade.
++"""
++from __future__ import annotations
++
++CARD_KINDS = frozenset({'keypoint', 'takeaway', 'tip', 'warning', 'points'})
++
++#: Clear screen between two cards, in seconds. Both card renderers fade over 0.22s, so this is a visible beat.
++MIN_GAP = 0.15
++
++#: Preference between two colliding cards. Higher wins.
++PRIORITY = {'the edition card file': 3, 'the job card copy': 2, 'a hook': 0}
++
++
++def is_card(kind) -> bool:
++    return str(kind or '').strip().lower() in CARD_KINDS
++
++
++def _window(entry):
++    try:
++        start = float(entry.get('start'))
++        end = float(entry.get('end'))
++    except (TypeError, ValueError, AttributeError):
++        return None
++    if end <= start:
++        return None
++    return start, end
++
++
++def conflicts(entries, *, gap=MIN_GAP):
++    """Every pair of cards that share the screen, with how long they share it."""
++    rows = []
++    for entry in entries or []:
++        window = _window(entry)
++        if window:
++            rows.append((window, entry))
++    rows.sort(key=lambda pair: pair[0])
++    found = []
++    for index, (first, one) in enumerate(rows):
++        for second, other in rows[index + 1:]:
++            if second[0] >= first[1] + gap:
++                break
++            shared = round(min(first[1], second[1]) - max(first[0], second[0]), 3)
++            found.append({'first': _text(one), 'second': _text(other),
++                          'first_window': [round(first[0], 3), round(first[1], 3)],
++                          'second_window': [round(second[0], 3), round(second[1], 3)],
++                          'shared_seconds': max(0.0, shared)})
++    return found
++
++
++def _text(entry):
++    return ' '.join(str(entry.get('title') or entry.get('text') or entry.get('spoken_anchor') or '')
++                    .split())[:120]
++
++
++def resolve(entries, *, gap=MIN_GAP, report=None):
++    """Return the cards that may be drawn: the same dicts, in time order, never overlapping.
++
++    Pass **cards only** (``is_card``); hooks are a different band and are placed against the cards elsewhere.
++
++    ``report`` (a dict, when given) receives ``considered``, ``kept``, ``dropped`` and one ``conflicts`` row per
++    card that gave way - what it was, what kept the screen, and how much they would have shared.
++    """
++    rows = []
++    for index, entry in enumerate(entries or []):
++        window = _window(entry)
++        if window is None:
++            if report is not None:
++                report.setdefault('dropped', []).append(
++                    {'text': _text(entry), 'reason': 'it has no usable time on screen'})
++            continue
++        rows.append((window[0], window[1], index, entry))
++    rows.sort(key=lambda row: (row[0], -row[1], -PRIORITY.get(str(row[3].get('source') or ''), 1), row[2]))
++    kept = []
++    dropped = []
++    for start, end, _index, entry in rows:
++        if kept:
++            last_start, last_end, _i, last = kept[-1]
++            if start < last_end + gap:
++                kept_seconds = round(last_end - start, 3) if start < last_end else 0.0
++                dropped.append({'text': _text(entry), 'reason': 'the screen still showed the card before it',
++                                'kept': _text(last), 'would_share_seconds': max(0.0, kept_seconds),
++                                'start': round(start, 3), 'end': round(end, 3)})
++                continue
++        kept.append((start, end, _index, entry))
++    if report is not None:
++        report['considered'] = len(rows)
++        report['kept'] = len(kept)
++        report['dropped_count'] = len(dropped)
++        report.setdefault('dropped', []).extend(dropped)
++    return [entry for _start, _end, _index, entry in kept]
++
++
++def max_at_once(entries, *, gap=0.0):
++    """How many of these cards can be on screen at the same instant. After ``resolve`` this must be 1."""
++    rows = sorted(window for window in (_window(entry) for entry in entries or []) if window)
++    highest = 0
++    for index, (start, _end) in enumerate(rows):
++        live = sum(1 for other_start, other_end in rows
++                   if other_start <= start + gap and other_end > start + gap)
++        highest = max(highest, live)
++    return highest
++
++
++def describe(report) -> str:
++    """One sentence for the job record: what was drawn, and what gave way."""
++    report = report or {}
++    dropped = list(report.get('dropped') or [])
++    if not dropped:
++        return ''
++    first = dropped[0]
++    shared = f" ({first['would_share_seconds']:.1f}s of overlap)" if first.get('would_share_seconds') else ''
++    if str(first.get('text') or '').strip() == str(first.get('kept') or '').strip():
++        sentence = ('The same card was scheduled twice for this moment - once by the job card copy and once by the '
++                    'edition card file - so it was drawn once' + shared + ', from the edition card file')
++    else:
++        sentence = ('Two cards would have been on screen at the same time, so only one was drawn: '
++                    + str(first.get('text') or 'a card') + ' was dropped because '
++                    + str(first.get('kept') or 'another card') + ' was already showing' + shared)
++    if len(dropped) == 2:
++        sentence += '; one more card was dropped for the same reason'
++    elif len(dropped) > 2:
++        sentence += '; ' + str(len(dropped) - 1) + ' more cards were dropped for the same reason'
++    return sentence + '. Nothing else was re-recorded or re-rendered.'
+diff --git a/tests/test_v7116_one_card_at_a_time.py b/tests/test_v7116_one_card_at_a_time.py
+new file mode 100644
+index 0000000..4a8b07e
+--- /dev/null
++++ b/tests/test_v7116_one_card_at_a_time.py
+@@ -0,0 +1,293 @@
++"""v7.0.116: two cards on screen at the same time.
++
++Field report, Odia edition, with a screenshot: one frame showed **two** pop-up cards overlapping - the bold KEY POINT
++panel with its Odia text, and behind it, a fraction of a second out of step, a second panel of the same shape carrying
++the rest of the sentence.
++
++Both were real, and both came from the same render writing to the same frame from two different lists:
++
++* ``bundle['cards']`` - the job's copied cards, drafted from the original English card pass and stored on the
++  language's narration. ``render()`` draws each one as a full-frame image in its own loop;
++* ``production/speech_cards.json`` - the edition's own cards, drafted for this language from its own reviewed
++  narration, drawn by ``speech_cards.render()``.
++
++They are anchored to the same spoken sentence, so when their windows differ by even a few tenths of a second they
++overlap - two panels, one behind the other. Nothing compared the two lists; only hooks were ever checked against
++cards. Reproduced on the 7.0.115 tree with a 20 s Odia narration: the same two panels at 1.2 s.
++
++v7.0.116 draws **one card at a time**, from either source, and records which one gave way. These tests hold it:
++
++* the rule itself (overlap, gap, priority, duplicates) without any video;
++* a real edition render draws a single card and says so in ``graphics-<lang>.json`` and its provenance;
++* the picture is *identical* to the same edition rendered without the copied job cards - the extra panel is gone;
++* hooks are never dropped by the rule - they are pills in their own band;
++* an educational points series and a single card cannot be on screen together either;
++* the job record and the listing carry the note, so nothing changes silently.
++"""
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++os.environ.setdefault('HOME', '/tmp')
++
++SCRIPT = ('ଅଭ୍ୟାସ ଏକ କହିବା ପର୍ବରୁ ସାମାନ୍ୟ ଆଟକନ୍ତୁ ଏବଂ ଧୀରେ ଚାଲନ୍ତୁ ତାପରେ ଅଭ୍ୟାସ ଦୁଇ ଭଲ ଘୁମନ୍ତୁ')
++
++
++def _words():
++    parts = SCRIPT.split()
++    return [{'word': word, 'start': round(0.4 + i * 0.55, 3), 'end': round(0.4 + i * 0.55 + 0.5, 3)}
++            for i, word in enumerate(parts)]
++
++
++# --------------------------------------------------------------------------- the rule, without a video
++
++
++def test_a_second_card_is_dropped_while_the_first_is_still_showing():
++    from engine.render.card_slots import max_at_once, resolve
++    report = {}
++    cards = [{'kind': 'keypoint', 'start': 0.4, 'end': 2.6, 'title': 'first'},
++             {'kind': 'keypoint', 'start': 1.2, 'end': 3.0, 'title': 'second'},
++             {'kind': 'keypoint', 'start': 4.0, 'end': 6.0, 'title': 'third'}]
++    kept = resolve(cards, report=report)
++    assert [card['title'] for card in kept] == ['first', 'third']
++    assert report['considered'] == 3 and report['dropped_count'] == 1
++    assert report['dropped'][0]['text'] == 'second'
++    assert report['dropped'][0]['kept'] == 'first'
++    assert report['dropped'][0]['would_share_seconds'] == 1.4
++    assert max_at_once(kept) == 1
++
++
++def test_cards_keep_a_clear_beat_between_them():
++    from engine.render.card_slots import MIN_GAP, resolve
++    touching = [{'kind': 'keypoint', 'start': 0.0, 'end': 2.0, 'title': 'a'},
++                {'kind': 'keypoint', 'start': 2.0 + MIN_GAP / 2, 'end': 4.0, 'title': 'b'}]
++    assert [card['title'] for card in resolve(touching)] == ['a']        # fades would overlap
++    apart = [{'kind': 'keypoint', 'start': 0.0, 'end': 2.0, 'title': 'a'},
++             {'kind': 'keypoint', 'start': 2.0 + MIN_GAP + 0.01, 'end': 4.0, 'title': 'b'}]
++    assert [card['title'] for card in resolve(apart)] == ['a', 'b']
++
++
++def test_the_edition_own_card_wins_over_the_copied_job_card():
++    from engine.render.card_slots import resolve
++    cards = [{'kind': 'keypoint', 'start': 0.4, 'end': 2.4, 'title': 'copied', 'source': 'the job card copy'},
++             {'kind': 'keypoint', 'start': 0.4, 'end': 2.6, 'title': 'drafted', 'source': 'the edition card file'}]
++    kept = resolve(cards)
++    assert [card['title'] for card in kept] == ['drafted']
++
++
++def test_the_same_card_twice_is_explained_as_one_card_not_two():
++    from engine.render.card_slots import describe, resolve
++    report = {}
++    kept = resolve([{'kind': 'keypoint', 'start': 0.4, 'end': 2.55, 'title': 'same', 'source': 'the edition card file'},
++                    {'kind': 'keypoint', 'start': 0.4, 'end': 2.4, 'title': 'same', 'source': 'the job card copy'}],
++                   report=report)
++    assert len(kept) == 1
++    sentence = describe(report)
++    assert 'scheduled twice' in sentence and 'drawn once' in sentence
++    assert 'no Flow credits' not in sentence          # it is a draw decision, not a render cost
++    assert 're-rendered' in sentence
++
++
++def test_conflicts_lists_what_shared_the_screen():
++    from engine.render.card_slots import conflicts
++    found = conflicts([{'start': 0.0, 'end': 3.0, 'title': 'a'}, {'start': 1.0, 'end': 2.0, 'title': 'b'}])
++    assert len(found) == 1
++    assert found[0]['first'] == 'a' and found[0]['second'] == 'b'
++    assert found[0]['shared_seconds'] == 1.0
++    assert conflicts([{'start': 0.0, 'end': 1.0, 'title': 'a'}, {'start': 2.0, 'end': 3.0, 'title': 'b'}]) == []
++
++
++def test_hooks_and_cards_are_told_apart():
++    from engine.render.card_slots import is_card
++    assert is_card('keypoint') and is_card('points') and is_card('takeaway')
++    assert not is_card('hook') and not is_card('intro') and not is_card(None)
++
++
++def test_an_educational_series_and_a_single_card_cannot_share_the_screen():
++    from engine import finishing_studio as finish
++    overlays = [{'kind': 'points', 'start': 2.0, 'end': 9.0, 'title': 'series', 'path': 'a.png'},
++                {'kind': 'takeaway', 'start': 3.5, 'end': 6.0, 'title': 'single', 'path': 'b.png'},
++                {'kind': 'hook', 'start': 3.0, 'end': 4.0, 'title': 'hook', 'path': 'c.png'}]
++    report = {}
++    legacy, kept = finish._one_card_at_a_time([], overlays, report=report)
++    kinds = [event['kind'] for event in kept]
++    assert kinds.count('points') == 1 and 'hook' in kinds          # the hook is untouched
++    assert 'takeaway' not in kinds                                  # the single card gave way
++    assert report['dropped'][0]['text'] == 'single'
++
++
++# --------------------------------------------------------------------------- a real edition render
++
++
++def _video(path, seconds, *, audio=False, size='640x360'):
++    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++           f'testsrc2=size={size}:rate=24:duration={seconds}']
++    if audio:
++        cmd += ['-f', 'lavfi', '-i', f'sine=frequency=440:sample_rate=48000:duration={seconds}',
++                '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0']
++    else:
++        cmd += ['-an']
++    cmd += ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)]
++    subprocess.run(cmd, check=True)
++    return path
++
++
++def _job(tmp_path, *, copied_cards=True, drafted=True):
++    """An Odia edition: a copied job card AND the edition's own drafted card, as the field job had."""
++    from engine.production import digest
++    from engine import speech_cards
++    job = tmp_path / ('job' if copied_cards else 'job-control')
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = _video(job / 'render' / 'visual-master.mp4', 20.0)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': digest(picture), 'duration': 20.0}), encoding='utf-8')
++    words = _words()
++    folder = job / 'speech-editions' / 'or' / 'key'
++    (folder / 'production').mkdir(parents=True)
++    voice = folder / 'voice.wav'
++    duration = words[-1]['end'] + 0.6
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=700:sample_rate=44100', '-t', str(duration),
++                    '-c:a', 'pcm_s16le', str(voice)], check=True)
++    (folder / 'words.json').write_text(json.dumps(words, ensure_ascii=False), encoding='utf-8')
++    draft = {'cards': [{'text': 'ଅଭ୍ୟାସ ୧: କହିବା', 'start_word': 0, 'end_word': 3}],
++             'word_count': len(words), 'script_chars': len(SCRIPT)}
++    draft['fingerprint'] = speech_cards.fingerprint(voice, words, SCRIPT, '')
++    if drafted:
++        (folder / 'production' / 'speech_cards.json').write_text(json.dumps(draft, ensure_ascii=False),
++                                                                encoding='utf-8')
++    cards = speech_cards.anchor_cards(draft, words, duration, educational=False) if copied_cards else []
++    bundle = {'audio': str(voice), 'audio_sha256': digest(voice), 'duration': duration,
++              'words': str(folder / 'words.json'), 'script': SCRIPT, 'language': 'or',
++              'timing_source': 'test', 'cards': cards, 'text_cards': True, 'educational': False,
++              'cards_ready': True}
++    state = {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None},
++             'bundles': {'or': bundle}, 'transcript': {'default': False, 'languages': {}}}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(state, ensure_ascii=False),
++                                                              encoding='utf-8')
++    return job
++
++
++def _render_with_audit(job, monkeypatch):
++    """Render the Odia edition and report exactly what was drawn: the copied cards and the overlays."""
++    from engine import finishing_studio as finish
++    from engine.production import digest
++    picture = Path(json.loads((job / 'production' / 'visual_master.json').read_text(encoding='utf-8'))['path'])
++    plan_path = finish.create_plan(picture, {'or': None}, languages=['or'], output_root=job / 'language_editions',
++                                  source_rights='own_content', source_language='en', require_profiles=False,
++                                  fit_narration=True, captions=False)
++    finish.set_edition(plan_path, 'or', reviewed=True)
++    drawn_cards, overlays = [], []
++    real_card, real_overlays = finish._card_image, finish._add_overlays
++
++    def card_image(text, *args, **kwargs):
++        drawn_cards.append(text)
++        return real_card(text, *args, **kwargs)
++
++    def add_overlays(cmd, filters, current, inp, specs, *args, **kwargs):
++        overlays.extend(dict(spec) for spec in specs)
++        return real_overlays(cmd, filters, current, inp, specs, *args, **kwargs)
++
++    monkeypatch.setattr(finish, '_card_image', card_image)
++    monkeypatch.setattr(finish, '_add_overlays', add_overlays)
++    exported = finish.render(plan_path, 'or')
++    monkeypatch.undo()
++    base = Path(plan_path).parent
++    return Path(exported), base, {'copied_cards': drawn_cards, 'overlays': overlays}
++
++
++@needs_ffmpeg
++def test_a_real_edition_draws_one_card_and_records_which_gave_way(tmp_path, monkeypatch):
++    from engine.render.card_slots import is_card, max_at_once
++    job = _job(tmp_path)
++    exported, base, audit = _render_with_audit(job, monkeypatch)
++    cards = [event for event in audit['overlays'] if is_card(event.get('kind'))] + [
++        {'start': None} for _ in ()]  # copied cards are audited below through the graphics record
++    assert len(audit['copied_cards']) + len(cards) == 1          # exactly one card was drawn
++    stats = json.loads((base / 'graphics-or.json').read_text(encoding='utf-8'))
++    assert stats['cards_on_screen_at_once'] == 1
++    assert stats['cards'] == 1
++    dropped = stats['cards_overlap_removed']['dropped']
++    assert len(dropped) == 1 and dropped[0]['text'] == 'ଅଭ୍ୟାସ ୧: କହିବା'
++    assert 'scheduled twice' in stats['cards_overlap_removed']['note']
++    provenance = json.loads(exported.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['cards_on_screen_at_once'] == 1
++    assert provenance['cards_overlap_removed']['dropped'][0]['text'] == 'ଅଭ୍ୟାସ ୧: କହିବା'
++    assert max_at_once([{'start': 0.4, 'end': 2.6}]) == 1
++
++
++@needs_ffmpeg
++def test_the_copied_job_card_no_longer_changes_the_picture(tmp_path, monkeypatch):
++    """The strongest check: render the same edition with and without the copied cards, and look at the frame."""
++    from PIL import Image, ImageChops
++    with_cards = _job(tmp_path, copied_cards=True)
++    without = _job(tmp_path, copied_cards=False)
++    plan_with = json.loads((with_cards / 'production' / 'language_editions.json').read_text())['bundles']['or']
++    plan_without = json.loads((without / 'production' / 'language_editions.json').read_text())['bundles']['or']
++    assert len(plan_with['cards']) == 1 and plan_without['cards'] == []      # the only difference between the two
++    one, one_base, one_audit = _render_with_audit(with_cards, monkeypatch)
++    two, two_base, two_audit = _render_with_audit(without, monkeypatch)
++    # in the fixed render the copied card is never drawn at all - not in either job
++    assert one_audit['copied_cards'] == [] and two_audit['copied_cards'] == []
++    assert len(one_audit['overlays']) == len(two_audit['overlays']) == 1
++
++    frames = []
++    for index, (video, folder) in enumerate(((one, one_base), (two, two_base))):
++        frame = folder / f'frame-{index}.png'
++        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-ss', '1.2', '-i', str(video),
++                        '-frames:v', '1', str(frame)], check=True)
++        frames.append(Image.open(frame).convert('RGB'))
++    difference = ImageChops.difference(frames[0], frames[1])
++    mean = sum(sum(pixel) for pixel in difference.getdata()) / (frames[0].width * frames[0].height * 3)
++    assert mean < 2.0, f'the copied card is still drawn: mean channel difference {mean:.2f}'
++
++    listing = json.loads((one_base / 'graphics-or.json').read_text(encoding='utf-8'))
++    assert listing['plan_cards_drawn'] == 0          # the copied card was not drawn at all
++
++
++@needs_ffmpeg
++def test_the_job_record_and_listing_note_the_dropped_card(tmp_path, monkeypatch):
++    from engine import edition_files
++    from engine.language_editions import render_job_editions, edition_diagnosis
++    job = _job(tmp_path)
++    report = render_job_editions(job, fit_policy={'allow_hold': 8.0, 'hold_cap': 8.0})
++    assert report['status'] == 'exported', report
++    entry = report['editions']['or']
++    assert entry['cards_overlap_removed']['dropped'][0]['text'] == 'ଅଭ୍ୟାସ ୧: କହିବା'
++    assert 'scheduled twice' in entry['warning']
++    assert entry['cards_on_screen_at_once'] == 1
++    assert 'scheduled twice' in edition_diagnosis(job)['editions']['or']['warning']
++    listing = '\n'.join(edition_files.format_report(edition_files.report(job)))
++    assert 'cards: one at a time · 1 overlapping or duplicate card(s) were not drawn' in listing
++
++
++@needs_ffmpeg
++def test_a_language_without_a_drafted_card_file_still_draws_its_copied_cards(tmp_path, monkeypatch):
++    """The rule must not silently remove the only cards an edition has."""
++    from engine import finishing_studio as finish
++    job = _job(tmp_path, copied_cards=True, drafted=False)
++    picture = Path(json.loads((job / 'production' / 'visual_master.json').read_text(encoding='utf-8'))['path'])
++    plan_path = finish.create_plan(picture, {'or': None}, languages=['or'], output_root=job / 'language_editions',
++                                  source_rights='own_content', source_language='en', require_profiles=False,
++                                  fit_narration=True, captions=False)
++    finish.set_edition(plan_path, 'or', reviewed=True)
++    drawn = []
++    real = finish._card_image
++
++    def card_image(text, *args, **kwargs):
++        drawn.append(text)
++        return real(text, *args, **kwargs)
++    monkeypatch.setattr(finish, '_card_image', card_image)
++    exported = finish.render(plan_path, 'or')
++    monkeypatch.undo()
++    assert drawn == ['ଅଭ୍ୟାସ ୧: କହିବା']
++    provenance = json.loads(Path(exported).with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['cards_drawn'] == {'overlays': 0, 'plan_cards': 1}
++    assert provenance['cards_overlap_removed'] is None
+diff --git a/tools/update_v7114_to_v7115.py b/tools/update_v7114_to_v7115.py
+deleted file mode 100644
+index ed93960..0000000
+--- a/tools/update_v7114_to_v7115.py
++++ /dev/null
+@@ -1,179 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.115 update to a v7.0.114 installation.
+-
+-One field report on 7.0.114, from the repair render itself:
+-
+-    [ 73%] Rendering Odia edition Odia
+-    [100%] Language editions finished
+-    "error": "Export QC failed: duration or audio"
+-
+-Fifty-nine minutes of rendering, and that was everything it said. The check behind it was one line that compared the
+-finished file's duration with the timeline and threw ``Export QC failed: duration or audio`` - inside the ``try``
+-whose ``finally`` deletes the temporary folder, so the finished video was deleted with it. No numbers, no file, no
+-cause, nothing to play.
+-
+-v7.0.115:
+-
+-1. **The check measures the two tracks separately** and reports both, in seconds. "The picture stops early" and
+-   "the narration stops early" are different defects with different repairs, and an mp4 whose *header* merely
+-   disagrees with both is neither - that one is now accepted with a note instead of costing another hour.
+-2. **A failed export keeps the video it made.** It is copied beside the plan as ``result-<lang>.qc-failed.mp4``,
+-   with ``qc-<lang>.json`` holding the numbers, and the job says so: the file exists, play it, here is why it is
+-   not marked current.
+-3. **The picture is extended to the timeline before the expensive pass.** When the concatenated picture is even
+-   slightly shorter than the container says, the last frame is cloned to cover the gap - free - instead of the
+-   export landing short and failing after the encode.
+-4. **A language with no current export names the videos it still has.** Three field reports in a row said "no
+-   current video yet" while finished videos sat in the folder; the newest one on disk is now named, with its date
+-   and whether it has captions.
+-
+-Nothing is generated, re-recorded or charged by this update, and the repair render re-records nothing either: it
+-reuses the saved narration and the approved picture.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.115 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.115/tools/update_v7114_to_v7115.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.115/tools/update_v7114_to_v7115.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION',
+-    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
+-    'tests/test_v7115_qc_keeps_the_file.py',
+-    'EXPORT_CHECK_V7_0_115.md', 'tools/update_v7114_to_v7115.py',
+-]
+-# Files as they exist in 7.0.110: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['e6aa888014bcdd0da7a253ae5b7806352faf58fd857c4955885872c08807d893'],
+-    'engine/finishing_studio.py': ['ac092dc57f2470c3453e734d9aebd52b3c2f8bc31826206c011c68628f4b98e6'],
+-    'engine/language_editions.py': ['52289d6b0eb4db5e9d073fc5d86c2d36eabec2b73803d5571865dbbb4f2555b4'],
+-    'engine/edition_files.py': ['b8d775a812497453ae30bebaa8d1ee9626c97fa095ad9968886be3b849ba03bc'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.114', '7.0.115')  # 7.0.115 allows a safe re-run after success
+-
+-# The 7.0.115 zip carries the 7.0.114 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.113', '7.0.114', 'tools/update_v7113_to_v7114.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.114 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.114 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.114 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.115'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To see which '
+-              'language video is current, what each one really shows, and where a failed export kept its file: '
+-              'python3 cli.py v3 language-outputs <job> --files --check-captions')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7115_to_v7116.py b/tools/update_v7115_to_v7116.py
+new file mode 100644
+index 0000000..f4c40cd
+--- /dev/null
++++ b/tools/update_v7115_to_v7116.py
+@@ -0,0 +1,170 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.116 update to a v7.0.115 installation.
++
++One field report on the Odia edition, with a screenshot: a single frame showed **two pop-up cards overlapping** - the
++bold KEY POINT panel, and behind it a second panel of the same shape with the rest of the sentence.
++
++Both were real, and both lists were drawn by the same render:
++
++* ``bundle['cards']`` - the job's copied cards, drafted from the original English card pass and stored on the
++  language's narration; drawn in their own loop as full-frame images;
++* ``production/speech_cards.json`` - the edition's own cards, drafted for this language from its own reviewed
++  narration and drawn by ``speech_cards.render()``.
++
++They are anchored to the same spoken sentence, so when their windows differ by a few tenths of a second they land on
++top of each other. Nothing compared the two lists - only hooks were ever checked against cards.
++
++v7.0.116 draws **one card at a time**, from either list:
++
++1. ``engine/render/card_slots.py`` (new) holds the rule: cards only (hooks are pills in another band), a 0.15 s beat
++   between two cards, and, when two collide, the card from the language's own drafted file wins - it was written for
++   this narration, in this language. A duplicate of the same text is drawn once.
++2. The edition render applies it before anything is drawn, so the dropped card is never encoded.
++3. ``graphics-<lang>.json`` and the export's provenance record what was drawn, ``cards_on_screen_at_once`` (1), and
++   what gave way; the job record, the panel warning and the listing's ``--files`` view repeat it. Nothing changes
++   silently, and no card is deleted from your saved files - only the duplicate draw is skipped.
++
++Nothing is re-recorded, no Flow credit is spent, and no new video request is opened by this update. An edition has to
++be rendered again to see the fix, which uses the saved narration and the approved picture.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION',
++    'engine/finishing_studio.py', 'engine/language_editions.py', 'engine/edition_files.py',
++    'engine/render/card_slots.py',
++    'tests/test_v7116_one_card_at_a_time.py',
++    'ONE_CARD_AT_A_TIME_V7_0_116.md', 'tools/update_v7115_to_v7116.py',
++]
++# Files as they exist in 7.0.110: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['5b9bf5f5dd00aea55ac89a2ec026374fa24de90505a14e32e7c2e3bd8d03f106'],
++    'engine/finishing_studio.py': ['27b6806d5f5f5eab2f8c9bd916ad3da1755125f0212b47775387e296bcf2ec8e'],
++    'engine/language_editions.py': ['81df39d7f3d976613c1da4be56abdf10fa5d207f48d16832c92f6d913db91b02'],
++    'engine/edition_files.py': ['b48f4ccca88120805bac8ad4faf840ce09618f829028e1c7be2310809899aabe'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.115', '7.0.116')  # 7.0.116 allows a safe re-run after success
++
++# The 7.0.116 zip carries the 7.0.115 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.114', '7.0.115', 'tools/update_v7114_to_v7115.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.115 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.115 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.115 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.116'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. To put one card on '
++              'screen at a time, render the language again (it reuses the saved narration and the approved '
++              'picture): python3 cli.py v3 language-outputs <job> --files --check-captions then the render command '
++              'it prints.')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

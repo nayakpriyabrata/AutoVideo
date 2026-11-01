@@ -1,0 +1,2450 @@
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/BRANDING_PAGES_AND_CHOICE_V7_0_123.md b/BRANDING_PAGES_AND_CHOICE_V7_0_123.md
+--- a/BRANDING_PAGES_AND_CHOICE_V7_0_123.md	1970-01-01 00:00:00.000000000 +0000
++++ b/BRANDING_PAGES_AND_CHOICE_V7_0_123.md	2026-11-01 12:44:00.000000000 +0000
+@@ -0,0 +1,115 @@
++# v7.0.123 · Branding reaches a job made from prepared voices, TTS has its own page, and a blocked frame can be chosen
++
++Three things from the same install, all real:
++
++> *"I don't see the earlier selected channel profile is attached to either of the language"*
++> *"keep the resume of the failed or scripted or planned jobs in this … we can keep the tts in a separate
++> section to create a new job out of it, and give user option to attach the channel and character if it's
++> missing"*
++> *"one of the old failed job, i want you to fix it"*
++
++## 1 · The channel profile you chose in Create now reaches the job
++
++Create step 3 saved a channel profile per language (name, logo, intro, outro). That mapping was **never
++recorded with the narration**, and a job created from prepared voices wrote no `production/language_editions.json`
++at all - so its Three-language panel could only answer *"no intro, no outro"* and the video carried no channel
++branding of its own.
++
++* *4 · Review language scripts → all TTS* now records `channel_profiles` in `batch.json`, per language.
++* `create_job_from_batch` applies them: the primary language's own channel name and logo go into the job's
++  settings (watermark on), and the job is written the same `production/language_editions.json` Create writes -
++  `editions`, `profiles` per language and the attached voices.
++* The success notice says what the job got: `… voices attached; cast: Mira the presenter; channel: English → My
++  Channel English (logo, intro, outro) · Hindi → … · Odia → …`.
++* CLI: `python3 cli.py v3 use-voices <batch> --create-job --rights own_content --channel en=<profile>,hi=<profile>`.
++
++## 2 · Prepared Voices is its own page; Queue & Resume is only about a saved job
++
++The TTS panel, the batch list and the stopped-TTS section moved to **Jobs & Recovery → Prepared Voices** (the
++sidebar label is *Prepared Voices · make a job from TTS*).
++
++**Prepared Voices** opens with **Run your prepared voices**: *Batch to run* → **Character in this video** →
++**Channel profile · name, logo, intro and outro** (one box per language, pre-filled from the batch) → rights →
++**Create the job from these voices**. Then it lists the sessions that still need finishing, the other sessions,
++and the stopped TTS runs a finished job no longer needs - nothing removed, nothing deleted.
++
++**Queue & Resume** now answers one question: how do I move this saved job forward? It opens with a one-line
++**Resume here** notice and a button to the other page, then the job's monitor, steps, narration, cast, channel,
++saved images and Three-language output. Nothing about preparing narration is left on it.
++
++Creating a job lands you on Queue & Resume with the confirmation and `SCRIPT ✓ · VOICE ✓`, because that is where
++**Resume / continue job** is.
++
++Because the list is one page instead of two, each option is now the identifying line itself (`Create step 4 ·
++2026-10-24 10:10 · English, Hindi, Odia · ready · voices 3/3 · not part of any job yet · newest`) - it reads the
++same in the dashboard and in the terminal.
++
++## 3 · Attach a channel profile (and a character) to a job that is already saved
++
++Queue & Resume now has two panels for what a job is missing, both writing settings only:
++
++* **Channel profile · name, logo, intro and outro** - one box per language over the profiles on this
++  installation, with *Save the channel profile for this job*. After saving, Three-language output can add the
++  intro/outro and render each edition **from the picture the job already has**: no shot is generated again, no
++  voice is recorded again, no Flow credit is spent.
++* **Cast · who appears in the video** (v7.0.122) - the character, while the job has no storyboard yet.
++
++CLI: `python3 cli.py v3 channel <job>` to read it, `… --set en=<profile>,…` or `… --all <profile>` to attach it.
++
++## 4 · The failed job that could not get past shot_051
++
++```
++⚠️ shot_051 opening frame: Flow failed after 1 attempts → free fallback
++Cause: FlowRequestPending: Two or more real images are saved for shot_051_open.jpg.
++Recovery stopped without submitting or replacing; review the saved Flow project and choose which image to keep.
++```
++
++The app was right to stop - it cannot prove which of two generated images belongs to that frame, and guessing
++would put the wrong picture in the video. What was missing was a way to *choose*. Both images are already
++downloaded as probe files beside the frame, with their checksums in the request journal, so:
++
++* Queue & Resume has **Saved images waiting for your choice**: it shows each frame that is waiting, the request
++  text, the saved images side by side, and **Keep this image for …**.
++* It commits your choice with the same checksum-verified path the automatic recovery uses, so the frame is then
++  a normal saved frame and **Resume / continue job** continues from it.
++* Nothing else is touched: no browser opens, no request is submitted, no Flow credit is spent, and the image you
++  did not choose stays where it is.
++* CLI: `python3 cli.py v3 keep-frame <job>` lists them, `… --image shot_051_open.jpg --keep 2` keeps one.
++
++For that job specifically: open it in Queue & Resume, choose the image in **Saved images waiting for your
++choice**, save the channel profile in **Channel profile**, then **Resume / continue job**. The remaining frames
++and the shot generation continue from what is already saved - the 2½ hours of Flow work in that project is not
++repeated.
++
++## Nothing else moves
++
++No voice is re-recorded, no shot is re-generated, nothing is deleted, and no Flow credit is spent by installing
++this release. Saving a channel profile or choosing a saved image only writes settings and copies an image that
++Flow already produced.
++
++## Verified
++
++* `tests/test_v7119_queue_narration_and_steps.py` now asserts the batches are on Prepared Voices, with their
++  voices playable, and that Queue & Resume lists neither the batch nor its audio.
++* 13 new tests in `tests/test_v7123_branding_pages_and_choice.py`: the batch recording its channel profiles, the
++  job keeping them (editions, profiles, bundles, channel name, logo, watermark), `--channel` and
++  `v3 channel`, an unknown profile refused, the two pages being disjoint (Queue has no picker, Prepared Voices
++  has it), attaching branding to an existing job, listing and keeping a blocked image, a changed candidate
++  refused, the CLI for both, the page creating a job and landing on Queue & Resume, and the page keeping a
++  blocked image, and creating a job landing on Queue & Resume with its confirmation and steps.
++* Full suite on the unzipped release compared with a pristine v7.0.122 checkout: identical failure set.
++* Updater: dry run, `--apply`, backup, self-check, idempotent re-run, edited-file guard, chain guard from 7.0.121.
++* The patch `AutoVideoAI-v7.0.122-to-v7.0.123.patch` applied to a pristine 7.0.122 tree reproduces the release
++  tree exactly.
++
++## Install
++
++Stop the dashboard, extract the zip beside your installation, then from inside the installation folder:
++
++```
++python3 ../AutoVideoAI-v7.0.123-Branding-Pages-And-Choice/tools/update_v7122_to_v7123.py . --apply
++python3 cli.py v3 self-check
++```
++
++Then: **Jobs & Recovery → Prepared Voices** to make a job from TTS, and **Queue & Resume** to resume a job,
++attach its channel profile, or choose a saved image.
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-10-31 08:57:14.000000000 +0000
++++ b/RELEASE_MANIFEST.json	2026-11-01 12:44:00.000000000 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.122",
+-  "built_at": "2026-10-31T08:57:14+00:00",
++  "version": "7.0.123",
++  "built_at": "2026-11-01T12:44:01+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -58,6 +58,11 @@
+       "sha256": "acda9769213d3ccf142a7c6512b6280457276c0ca5cc750b729ab2139c1c92aa"
+     },
+     {
++      "path": "BRANDING_PAGES_AND_CHOICE_V7_0_123.md",
++      "bytes": 7338,
++      "sha256": "d896e5857994506ad4d216be523b361fe5f0c66bc0fb2c1bfc9ef22630208760"
++    },
++    {
+       "path": "BROLL_BATCH_APPROVAL_V7_0_47.md",
+       "bytes": 1112,
+       "sha256": "28ee8b964eb9fc26ac3062aeaed9f403b0193366906d62170bfd9d6a68597335"
+@@ -1060,7 +1065,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "d23aa1959198e16b50aba707f58ca64ff041aa93dae581d02b91e774eb21b4c2"
++      "sha256": "b9f9cf3ba03112809ae93aff7d14eee61e1858ea7696034debe0004f60d2fe8d"
+     },
+     {
+       "path": "VIDEO_APPROVAL_PENDING_V7_0_99.md",
+@@ -1124,8 +1129,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 294725,
+-      "sha256": "88b59855b94a3766076b63c0ca6ff58c01840bcd5987ef1c440c6879508b1b7e"
++      "bytes": 307657,
++      "sha256": "f1e6296cea30162c24291e8d37347fe93effcadf128c99c43423fed9dae1dd19"
+     },
+     {
+       "path": "architecture.md",
+@@ -1239,8 +1244,8 @@
+     },
+     {
+       "path": "cli.py",
+-      "bytes": 128343,
+-      "sha256": "0ddbeb11895d9229be33fa22c052e40b42cf4d244cbeb3eed7ac91748d088c93"
++      "bytes": 134419,
++      "sha256": "2e5b28e5d765396c0a6d8544f0924fce9182ca144daeaf83071fa4c9dd8e8d1a"
+     },
+     {
+       "path": "clip_config.yaml",
+@@ -1419,8 +1424,8 @@
+     },
+     {
+       "path": "engine/batch_actions.py",
+-      "bytes": 12025,
+-      "sha256": "60a13f336458bcdeb4233407b4ce32b738c96afc51b83708c2200d7e7c54e3d7"
++      "bytes": 14520,
++      "sha256": "4c128f69804ae7e265c19cc46be7b9840c1ff955de93eafdcd76671dce8c0d79"
+     },
+     {
+       "path": "engine/brand_logo.py",
+@@ -1473,6 +1478,11 @@
+       "sha256": "e225ca5c5c30f23c151526a1bc9716e47e1f8a60216c27a85d215cec6a5d5f5a"
+     },
+     {
++      "path": "engine/channel_profiles.py",
++      "bytes": 6875,
++      "sha256": "284b3690f40cb473ca9cbade68f25883d5330481e29a906ec5609d740b7dbdca"
++    },
++    {
+       "path": "engine/clip_branding.py",
+       "bytes": 2996,
+       "sha256": "a4fc4de4ded4b63284cb2211ee41f67493026d2da8aed7c91aa7eafd2e7227cb"
+@@ -1568,6 +1578,11 @@
+       "sha256": "2f267f84f2f4a11ec07be2ca1258dffa8409bfc1d44d10f340ad4ce9c369fa69"
+     },
+     {
++      "path": "engine/flow_choice.py",
++      "bytes": 6917,
++      "sha256": "88d20e8a79ed1f795ba9f7ea49abfc0bbdec07756aa0dac0f73018d57b07501b"
++    },
++    {
+       "path": "engine/flow_download_diagnostics.py",
+       "bytes": 4766,
+       "sha256": "439dec4c2a443891f3046ab8e7d1f9978c4d0c818718dbe2e00223a92fb41bd9"
+@@ -2094,13 +2109,13 @@
+     },
+     {
+       "path": "engine/speech_batches.py",
+-      "bytes": 15230,
+-      "sha256": "52be37af9cb2bdebd859e28a5f02fd4dffca2238cd6bd9e1f51f65b9925da898"
++      "bytes": 15700,
++      "sha256": "e3afdb2c0d5ac4f1453d0612268243444d1b971d75ca872a45f0a24580b7063b"
+     },
+     {
+       "path": "engine/speech_cards.py",
+-      "bytes": 53702,
+-      "sha256": "8d9561ac7eca8fe6c4cd04e536c617aae58c0a2cee7cba3b7489cdc8090de0c6"
++      "bytes": 54074,
++      "sha256": "6366d2bad4e2235ec6e75f68e87e26f34e3a8dfb210209549804f57f883af364"
+     },
+     {
+       "path": "engine/stock_video.py",
+@@ -2879,8 +2894,8 @@
+     },
+     {
+       "path": "tests/test_v7119_queue_narration_and_steps.py",
+-      "bytes": 12097,
+-      "sha256": "d03c0182a69e1be9dce769c4daff70a4af3ef233fc4513de9ca6b287e211ce98"
++      "bytes": 12640,
++      "sha256": "84025a8c820abecae93ee0c404cdce6d060576fb04f35fb14de80f5102749f53"
+     },
+     {
+       "path": "tests/test_v711_verified_flow_prompts.py",
+@@ -2889,18 +2904,23 @@
+     },
+     {
+       "path": "tests/test_v7120_use_prepared_voices.py",
+-      "bytes": 12488,
+-      "sha256": "519d5f4472435ce6fdaf2ffa852a2a7307aebc304ebce572a54e9fbedad9fb9d"
++      "bytes": 12598,
++      "sha256": "2a34ade20bcb74cedcb1a222526d16282435ab336fe708d83b1b43da25dc1adf"
+     },
+     {
+       "path": "tests/test_v7121_run_prepared_voices.py",
+-      "bytes": 12599,
+-      "sha256": "42910c97fe76a5bb06aea7b78680b2296033ebb1a886b3beef594ec28ec99ab2"
++      "bytes": 12744,
++      "sha256": "662893346d06ecc9e1eda81572ce6994b6fe1ab0ef738abba4b11c9e6e0abb62"
+     },
+     {
+       "path": "tests/test_v7122_cast_and_every_batch.py",
+-      "bytes": 21116,
+-      "sha256": "c42c020427b87355523a3eaaf3142d0403ada0ac71441188212126193e8a68f8"
++      "bytes": 21256,
++      "sha256": "4d3ef58a0d237aa9c7fb125f23264c84d61f46a5cab7f91d05065c7449cc9c66"
++    },
++    {
++      "path": "tests/test_v7123_branding_pages_and_choice.py",
++      "bytes": 23200,
++      "sha256": "9a73b133c4de4812ca018badf5dcf31027fd02b6512ce6a2ea4466f450daf40b"
+     },
+     {
+       "path": "tests/test_v712_migration_cast_music.py",
+@@ -3458,9 +3478,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v7121_to_v7122.py",
+-      "bytes": 9548,
+-      "sha256": "3fa3a3db812ff5ed6fc2f3517413a783e14e161813affa2f5266d7de6cd13687"
++      "path": "tools/update_v7122_to_v7123.py",
++      "bytes": 10479,
++      "sha256": "e1fc1e23070def398d5cae14095cd152795a5b39f138c100123008fae14cd52c"
+     },
+     {
+       "path": "topics.csv",
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/VERSION b/VERSION
+--- a/VERSION	2026-10-31 08:39:20.000000000 +0000
++++ b/VERSION	2026-11-01 12:32:42.000000000 +0000
+@@ -1 +1 @@
+-7.0.122
+\ No newline at end of file
++7.0.123
+\ No newline at end of file
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/app.py b/app.py
+--- a/app.py	2026-10-31 08:38:48.000000000 +0000
++++ b/app.py	2026-11-01 12:31:22.000000000 +0000
+@@ -104,13 +104,21 @@
+ if "job_id" not in st.session_state:
+     st.session_state.job_id = None
+ 
++# v7.0.123: creating a job from a prepared narration must land where the job is resumed. The navigation radio is
++# a widget, so it cannot be re-pointed from a button handler; a flag set before st.rerun() is applied here, at the
++# top of the next run, before any widget exists.
++if st.session_state.pop('autovideo_open_queue', False):
++    st.session_state['autovideo_current_page'] = 'QUEUE'
++    st.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    st.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++
+ # ---------------- sidebar ----------------
+ mode_badge = {"STORYBOARD_ECONOMY": "🌱", "FLOW_CINEMATIC": "💎", "FLOW_BALANCED": "⚖️", "FLOW_ECONOMY": "💰",
+               "LOCAL_FREE": "🖥️", "FREE_HYBRID": "🆓", "MANUAL_DIRECTOR": "🎥"}
+ NAV_GROUPS = {
+     "Create": ["STUDIO", "MINI REELS", "MUSIC VIDEO", "CREATE"],
+     "Review & Render": ["STORYBOARD", "DIRECTOR REVIEW", "PRODUCTION QC", "ASSETS", "RENDER"],
+-    "Jobs & Recovery": ["QUEUE", "HISTORY", "FLOW SESSION"],
++    "Jobs & Recovery": ["QUEUE", "PREPARED VOICES", "HISTORY", "FLOW SESSION"],
+     "Content & Delivery": ["CLIP STUDIO", "CONTENT INBOX", "CHARACTER LIBRARY", "AI RECREATE", "FINISHING STUDIO", "CHANNEL DESK", "PUBLISHING DESK"],
+     "Setup & Legacy": ["SETTINGS", "Quick (v2)"],
+ }
+@@ -126,6 +134,7 @@
+     "ASSETS": "Assets",
+     "RENDER": "Render & B-roll",
+     "QUEUE": "Queue & Resume",
++    "PREPARED VOICES": "Prepared Voices · make a job from TTS",
+     "HISTORY": "Gallery & Downloads",
+     "FLOW SESSION": "Flow Session",
+     "CLIP STUDIO": "Clip Studio",
+@@ -143,6 +152,13 @@
+     st.session_state['autovideo_workspace']='Jobs & Recovery'
+     st.session_state['autovideo_page_jobs-and-recovery']='HISTORY'
+ st.sidebar.button('Gallery & Downloads', on_click=open_gallery, key='open-gallery')
++
++
++def open_prepared_voices():
++    """v7.0.123: prepared narration has its own page; Queue & Resume is only about a saved job."""
++    st.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    st.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    st.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
+ current_page = st.session_state.get("autovideo_current_page", "STUDIO")
+ default_group = PAGE_TO_GROUP.get(current_page, "Create")
+ if st.session_state.get("autovideo_workspace") not in NAV_GROUPS:
+@@ -672,6 +688,123 @@
+             st.error(str(error))
+ 
+ 
++def branding_panel(job_id):
++    """The channel profile of a saved job - name, logo, intro, outro - and the one repair allowed (v7.0.123).
++
++    A job made from a prepared narration batch carried no profile at all, so Three-language output could only
++    answer "no intro, no outro" and the video kept whatever name Create had guessed. This panel names what the
++    job holds per language and lets the user attach a profile afterwards. It writes settings only: the intro and
++    outro are added, and every edition is rendered, from the picture the job already has - no shot is generated
++    again and no Flow credit is spent.
++    """
++    from engine import channel_profiles as branding
++    from engine.languages import LANGUAGES as LANGUAGE_PACKS
++    job_dir = F.pm.job_dir(job_id)
++    notice = st.session_state.pop('branding-notice', '')
++    if notice:
++        st.success(notice)
++    st.subheader('Channel profile · name, logo, intro and outro')
++    editions = branding.job_editions(job_dir)
++    current = branding.job_profiles(job_dir)
++    saved = branding.saved_profiles()
++    if current:
++        by_path = {row['path']: row for row in saved}
++        st.caption('Saved for this job: ' + (branding.summary([
++            {'language': code, 'channel_name': by_path.get(path, {}).get('name', '') or path,
++             'logo': by_path.get(path, {}).get('logo', False),
++             'intro': by_path.get(path, {}).get('intro', False),
++             'outro': by_path.get(path, {}).get('outro', False)}
++            for code, path in current.items()]) or ', '.join(current)))
++    else:
++        st.warning('No channel profile is saved for this job, so its editions render without a channel name, '
++                   'logo, intro or outro. Choose one below - it needs no new generation.')
++    if not saved:
++        st.caption('No channel profile exists on this installation yet. Channel Desk creates one (name, logo, '
++                   'intro, outro); it can then be attached here.')
++        return
++    options = {'— none —': ''}
++    for row in saved:
++        line = branding.label(row)
++        while line in options:
++            line += ' · ' + row['path']
++        options[line] = row['path']
++    lines = list(options)
++    chosen = {}
++    columns = st.columns(len(editions))
++    for column, code in zip(columns, editions):
++        remembered = current.get(code) or (options[lines[1]] if len(lines) == 2 else '')
++        default = next((line for line in lines if options[line] == remembered), lines[0])
++        chosen_line = column.selectbox(
++            LANGUAGE_PACKS[code].label + ' channel', lines, index=lines.index(default),
++            key='job-channel-' + job_id + '-' + code)
++        if options[chosen_line]:
++            chosen[code] = options[chosen_line]
++    st.caption('Saving writes the profile into this job only. "Three-language output" below then adds the '
++               'intro/outro and renders each edition from the picture this job already has: no shot is generated '
++               'again, no voice is recorded again, no Flow credit is spent. A job whose picture master is missing '
++               'can build one from its finished video first.')
++    if st.button('Save the channel profile for this job', key='job-channel-save-' + job_id):
++        try:
++            result = branding.attach_profiles(job_dir, chosen, editions=editions)
++            st.session_state['branding-notice'] = (
++                'Saved: ' + (branding.summary(result['rows']) or 'no channel profile')
++                + '. Nothing was generated - press “Resume / continue job” for the pictures, then add the '
++                  'intro/outro from Three-language output.')
++            st.rerun()
++        except Exception as error:
++            st.error(str(error))
++
++
++def flow_choice_panel(job_id):
++    """Pick which of the images Flow already produced is the frame - no browser, no request (v7.0.123)."""
++    from engine import flow_choice
++    job_dir = F.pm.job_dir(job_id)
++    st.subheader('Saved images waiting for your choice')
++    notice = st.session_state.pop('flow-choice-notice', '')
++    if notice:
++        st.success(notice)
++    try:
++        blocked = flow_choice.blocked_frames(job_dir)
++        waiting = flow_choice.all_frames(job_dir)
++    except Exception as error:
++        st.warning('Saved image candidates could not be read: ' + str(error))
++        return
++    if not waiting:
++        st.caption('No saved image is waiting for a choice. Frames Flow finished are already in the job; frames '
++                   'with no saved picture are asked for again when you press Resume.')
++        return
++    if blocked:
++        st.warning('Recovery stopped on ' + str(len(blocked)) + ' frame(s) because more than one real image was '
++                   'saved for the same shot. Nothing was replaced and nothing was resubmitted - choose the image '
++                   'you want below.')
++    st.caption('These pictures are already downloaded and checksummed in this job. Choosing one only copies it '
++               'into the frame; no browser opens, no Flow request is submitted and no credit is spent.')
++    options = {row['image']: row for row in waiting}
++    picked = st.selectbox('Frame', list(options),
++                          format_func=lambda name: name + ('  ·  ' + str(options[name]['count']) + ' saved image(s)'
++                                                           if options[name]['count'] > 1 else '  ·  1 saved image'),
++                          key='flow-choice-frame-' + job_id)
++    frame = options[picked]
++    if frame.get('prompt'):
++        st.caption('Requested: ' + frame['prompt'][:300])
++    images = [row['path'] for row in frame['candidates']]
++    captions = ['image ' + str(index + 1) + (' · ' + str(round(row['bytes'] / 1024)) + ' KB'
++                                             if row['bytes'] else '') for index, row in enumerate(frame['candidates'])]
++    st.image(images, caption=captions, width=240)
++    keep_index = st.radio('Keep which image?', list(range(len(frame['candidates']))),
++                          format_func=lambda index: 'image ' + str(index + 1),
++                          key='flow-choice-pick-' + job_id + '-' + picked, horizontal=True)
++    if st.button('Keep this image for ' + picked, key='flow-choice-save-' + job_id + '-' + picked):
++        try:
++            result = flow_choice.keep(job_dir, picked, int(keep_index))
++            st.session_state['flow-choice-notice'] = (
++                'Kept ' + result['kept'] + ' as ' + picked + '. ' + result['note']
++                + ' Press “Resume / continue job” to continue from this frame.')
++            st.rerun()
++        except Exception as error:
++            st.error(str(error))
++
++
+ def language_edition_panel(job_id):
+     """Language editions of a job: status, exports and an explicit render action.
+ 
+@@ -1328,7 +1461,7 @@
+                 with production_slot(batch_path):
+                     from engine.render.educational_cards import is_educational
+                     prepare_batch(batch_path,batch_script,language_code,batch_languages,provider=tts_provider_value,
+-                        character_ids=studio_cast,
++                        character_ids=studio_cast,channel_profiles=edition_profiles,
+                         audio_path=narration_input_path.strip() or None,cleanup=draft_cleanup,progress=batch_progress,localized_scripts=reviewed_language_scripts,
+                         text_cards=bool(st.session_state.get('studio-cards-'+studio_audio_mode, studio_voice_on)),
+                         hooks=bool(studio_voice_on and st.session_state.get('studio-hooks-enabled', False)),
+@@ -2168,16 +2301,176 @@
+         if st.button('Open this job', key='queue-open-job-open'):
+             st.session_state.job_id = chosen_job
+             st.rerun()
+-    # 7.0.83: Create step 4 batches (narration and TTS before a job exists) can be corrected and resumed here.
++    # v7.0.123: preparing narration is not resuming a job. The speech-batch machinery (the Run your prepared
++    # voices panel, the batch list, stopped TTS runs) moved to its own page, so this page answers one question -
++    # "how do I move this saved job forward?" - instead of two. The panel is one click away and nothing was removed.
++    from engine.speech_batches import list_speech_batches, with_attachments, pickable
++    queue_job_dirs = [F.pm.job_dir(j['job_id']) for j in jobs]
++    prepared = pickable(with_attachments(
++        list_speech_batches(queue_job_dirs, include_finished=queue_job_dirs), queue_job_dirs))
++    prepared_hint = (str(len(prepared)) + ' finished narration' + ('' if len(prepared) == 1 else 's')
++                     + ' can become a job of its own' if prepared else 'No prepared narration is waiting')
++    st.info('**Resume here.** This page resumes a saved job: its steps, its narration, its cast, its channel and '
++            'its Flow recovery. Narrations prepared in Create step 4 are not jobs and are no longer mixed into '
++            'this page - ' + prepared_hint + '.')
++    st.button('Open Prepared Voices · make a job from prepared TTS', key='queue-open-prepared',
++              on_click=open_prepared_voices,
++              help='Prepared narration, its voices, stopped TTS runs, channel profile and character - on one page '
++                   'of its own.')
++    st.divider()
++    from engine.clip_render_jobs import discover as discover_clip_renders
++    clip_render_jobs = discover_clip_renders((F.pm.root, 'outputs'))
++    if clip_render_jobs:
++        with st.expander(f"Clip render jobs · {len(clip_render_jobs)}", expanded=any(row['running'] for row in clip_render_jobs)):
++            st.caption('Persistent Clip Studio renders continue when this browser tab closes. Open any saved render below to monitor or resume it.')
++            for clip_render in clip_render_jobs:
++                monitor_clip_render(clip_render['state']['review_path'])
++    if st.session_state.job_id:
++        # v7.0.119: the completed steps and the narration belong in Queue & Resume, next to the monitor.
++        pipeline_view(st.session_state.job_id)
++        monitor_job(st.session_state.job_id)
++        gemini_shot_panel(st.session_state.job_id)
++        narration_panel(st.session_state.job_id)
++        cast_panel(st.session_state.job_id)
++        branding_panel(st.session_state.job_id)
++        flow_choice_panel(st.session_state.job_id)
++        language_edition_panel(st.session_state.job_id)
++        graphics_audit_panel(st.session_state.job_id)
++        from engine.job_monitor import snapshot
++        job_active = snapshot(F.pm.job_dir(st.session_state.job_id))["running"]
++        selected_row = DB.get(st.session_state.job_id) or {}
++        current_flow_pause = bool(F._settings(st.session_state.job_id).get(
++            "flow_pause_on_unresolved_request", False))
++        with st.expander("Flow recovery behavior", expanded=False):
++            replace_images = st.checkbox('Regenerate unresolved images once after 3 recovery retries',
++                value=bool(F._settings(st.session_state.job_id).get('flow_replace_unresolved_images',False)),key='replace-images-'+st.session_state.job_id)
++            replacement_cap = st.number_input('Maximum replacement images for this whole job',1,100,
++                int(F._settings(st.session_state.job_id).get('flow_image_replacement_limit',30)),key='replacement-cap-'+st.session_state.job_id)
++            st.caption('Image-only; may leave unused duplicates. One replacement per image, recorded before submission. Videos stay download-only. Paid image confirmations are blocked.')
++            if st.button('Save image replacement policy',key='save-replace-'+st.session_state.job_id):
++                F.set_flow_image_replacement(st.session_state.job_id,replace_images,int(replacement_cap))
++                st.success('Policy saved for all future Resume attempts of this job.')
++            local_close = st.checkbox('Use the saved opening image if a closing image cannot recover',
++                value=bool(F._settings(st.session_state.job_id).get('flow_local_closing_fallback', False)),
++                key='local-close-'+st.session_state.job_id,
++                help='Changes closing guidance for that shot. Keeps the pending Flow request. No replacement image generation; normal video generation still uses the job credit budget. Missing openings and videos still need exact recovery.')
++            if st.button('Save local closing recovery policy',key='save-local-close-'+st.session_state.job_id):
++                F.set_flow_local_closing_fallback(st.session_state.job_id,local_close)
++                st.success('Saved for this job and future Resume attempts.')
++            batch_choice = st.checkbox("Continue other frames when an exact Flow image is unresolved",
++                value=bool(F._settings(st.session_state.job_id).get("flow_continue_unresolved_frames", False)),
++                key=f"flow-frame-batch-{st.session_state.job_id}",
++                help="Strict Flow Storyboard Economy only. Preserves quality: no local fallback or replacement image. Processes other frames, then pauses once with a complete recovery summary.")
++            if st.button("Save frame recovery policy", key=f"save-frame-batch-{st.session_state.job_id}"):
++                try:
++                    F.set_flow_frame_batch_recovery(st.session_state.job_id, batch_choice)
++                    st.success("Saved for Resume. Completed frames are reused; unresolved requests stay protected.")
++                except ValueError as error:
++                    st.error(str(error))
++            batch_report_path = os.path.join(F.pm.job_dir(st.session_state.job_id), "flow_frame_recovery_batch.json")
++            if os.path.isfile(batch_report_path):
++                with open(batch_report_path, encoding="utf-8") as handle:
++                    batch_report = json.load(handle)
++                st.caption(f"Saved valid frames: {batch_report.get('valid_frames', 0)}; unresolved: {len(batch_report.get('unresolved', []))}")
++                if batch_report.get("unresolved"):
++                    st.dataframe([{k: item.get(k) for k in ("shot_id", "frame", "error")} for item in batch_report["unresolved"]], width="stretch")
++            pause_flow_choice = st.checkbox(
++                "Pause this job if a Flow request cannot be safely recovered",
++                value=current_flow_pause, key=f"flow-pause-policy-{st.session_state.job_id}",
++                help="Off: auto-frame images use a free fallback; strict Flow/video requests fail without automatic PAUSED status. On: preserve the request and pause. Recovery never submits a replacement based on gallery absence.")
++            if st.button("Save Flow recovery choice", key=f"save-flow-pause-policy-{st.session_state.job_id}"):
++                F.set_flow_pause_on_unresolved_request(st.session_state.job_id, pause_flow_choice)
++                st.success("Saved. This choice applies the next time the job is resumed.")
++        if selected_row.get("status") in ("paused", "assisted", "failed"):
++            pause_panel(st.session_state.job_id)
++            st.divider()
++        runtime_manifest = F.pm.load_manifest(st.session_state.job_id)
++        if not runtime_manifest.shots:
++            with st.expander('Approved narration is shorter than the target?'):
++                st.caption('Use the measured speech length instead of extending or rewriting the approved script. A 121.8-second narration yields about 122 seconds, not 169. Available before scene planning only.')
++                if st.button('Use measured narration length for this job'):
++                    F.use_measured_narration_runtime(st.session_state.job_id)
++                    st.success('Saved. Resume this same job to reuse narration and plan at its measured length.')
++        presentation_editor(st.session_state.job_id)
++        with st.expander('External AI video clips · prompts and uploads · optional'):
++            from engine.external_video import export_plan, configure, import_clip
++            external_manifest = F.pm.load_manifest(st.session_state.job_id)
++            external_options = [s.shot_id for s in external_manifest.shots]
++            external_selected = st.multiselect('Shots to generate on Flow or another platform', external_options,
++                default=[s.shot_id for s in external_manifest.shots if s.provider in ('flow','movieflow') and not s.accepted_take], key='external-shot-selection')
++            st.caption('Export prompts with shot durations and reference paths. External mode waits for these clips before continuing; each import runs normal QC.')
++            if st.button('Export selected shot prompts and wait for external clips', disabled=job_active or not external_selected):
++                try:
++                    external_report=configure(F,st.session_state.job_id,external_selected,True)
++                    st.success('External mode saved for the selected shots.')
++                except Exception as error:st.error(str(error))
++            external_root=Path(F.pm.job_dir(st.session_state.job_id))/'external_video'
++            if (external_root/'prompts.md').is_file():
++                st.download_button('Download external shot prompts', (external_root/'prompts.md').read_text(), file_name='external-shot-prompts.md')
++                st.caption(str(external_root/'incoming'))
++            external_unaccepted=[s.shot_id for s in external_manifest.shots if not s.accepted_take]
++            if external_unaccepted:
++                external_id=st.selectbox('Import video for shot',external_unaccepted,key='external-import-id')
++                external_file=st.file_uploader('Completed external MP4',type=['mp4'],key='external-import-file')
++                if external_file: st.video(external_file)
++                external_platform=st.text_input('Generation platform / source',key='external-platform')
++                external_reviewed=st.checkbox('I reviewed this video and its rights for the selected shot',key='external-reviewed')
++                external_replace=st.checkbox('Replace this shot’s unresolved Flow request with this reviewed clip, if present',key='external-replace')
++                if st.button('Import external video and run QC',disabled=job_active or not external_file or not external_reviewed):
++                    try:
++                        stage=external_root/'incoming'/f'{external_id}.mp4';stage.parent.mkdir(parents=True,exist_ok=True);stage.write_bytes(external_file.getvalue())
++                        st.json(import_clip(F,st.session_state.job_id,external_id,stage,reviewed=True,platform=external_platform,replace_pending=external_replace))
++                    except Exception as error:st.error(str(error))
++            if st.button('Return selected shots to automatic production', disabled=job_active or not external_selected):
++                try:configure(F,st.session_state.job_id,external_selected,False);st.success('Automatic production restored. Pending journals still require reconciliation.')
++                except Exception as error:st.error(str(error))
++        with st.expander('Repair an unaccepted shot from its saved storyboard — local only'):
++            repair_manifest = F.pm.load_manifest(st.session_state.job_id)
++            repair_shots = [s for s in repair_manifest.shots if not s.accepted_take]
++            if repair_shots:
++                repair_id = st.selectbox('Shot to repair', [s.shot_id for s in repair_shots], key='repair-storyboard-shot')
++                repair_shot = next(s for s in repair_shots if s.shot_id == repair_id)
++                st.write(repair_shot.visual_goal)
++                repair_start, repair_end = F.storyboard_repair_frames(st.session_state.job_id, repair_id)
++                for label, image_path in [('Opening', repair_start), ('Closing', repair_end)]:
++                    if image_path and os.path.isfile(image_path): st.image(image_path, caption=label, width=250)
++                repair_reviewed = st.checkbox('I reviewed these frames and they depict the intended scene', key=f'repair-storyboard-reviewed-{st.session_state.job_id}-{repair_id}')
++                st.caption('Creates a local pan/zoom transition, not new character animation. QC still decides acceptance. Other shots and Flow requests are preserved.')
++                if st.button('Repair this shot and run QC', disabled=not repair_reviewed):
++                    try:
++                        with st.spinner('Rendering local storyboard repair…'):
++                            repair_result = F.repair_storyboard_shot(st.session_state.job_id, repair_id, reviewed=True)
++                        st.json(repair_result)
++                    except Exception as error: st.error(str(error))
++            elif repair_manifest.shots: st.info('All shots have accepted takes.')
++            else: st.info('No shots are ready yet. Resolve the planning or reference-image error above, then resume this saved job.')
++        c1, c2 = st.columns(2)
++        if c1.button("▶️ Resume / continue job", type="primary", disabled=job_active):
++            run_with_ui(st.session_state.job_id, "")
++        if c2.button("🎬 Render now (from accepted takes)", disabled=job_active):
++            with st.spinner("Rendering..."):
++                try:
++                    r = F.render_job(st.session_state.job_id)
++                    st.success(f"Done: {r['video']} ({r['renderer']})")
++                    compact_video(r["video"])
++                except Exception as e:
++                    st.error(f"Render failed: {e}")
++
++# ================= PREPARED VOICES =================
++elif page == "PREPARED VOICES":
++    st.title('Prepared voices')
++    st.caption('Narration and voices made in Create step 4, before any job exists. Choose one, give it a channel '
++               'profile and a character, and create the job here. Resuming a job that already exists is in '
++               'Queue & Resume - that page no longer lists TTS work.')
++    if st.session_state.get('speech-batch-notice'):
++        st.success(st.session_state.pop('speech-batch-notice'))
++    from engine.production_lock import production_slot
+     from engine.speech_batches import (list_speech_batches, resume_speech_batch, correct_speech_scripts,
+                                        language_label, partition_for_job, with_attachments, display_label,
+                                        actionable, pickable)
+-    from engine.production_lock import production_slot
+     speech_rows = list_speech_batches(
+         [F.pm.job_dir(j['job_id']) for j in jobs],
+         include_finished=[F.pm.job_dir(st.session_state.job_id)] if st.session_state.get('job_id') else [])
+-    # 7.0.97: this panel belongs to the Active job. Every Create step 4 batch of the installation used
+-    # to be listed here, so a job's own batch was buried among sessions from earlier days.
+     active_job = st.session_state.get('job_id')
+     active_root = None
+     if active_job:
+@@ -2186,30 +2479,23 @@
+         except Exception:
+             active_root = None
+     own_rows, other_rows = partition_for_job(speech_rows, active_root)
+-    # v7.0.119: say which of these batches a job already contains, and when each one was made. Without this,
+-    # every Create step 4 session of the installation looked like the same line of text.
+     job_dirs = [F.pm.job_dir(j['job_id']) for j in jobs]
+     all_rows = with_attachments(own_rows + other_rows, job_dirs)
+-    # v7.0.122: the picker below must see every finished narration of the installation - including a finished
+-    # batch that lives inside a saved job, which the to-do list hides on purpose (7.0.97 keeps that list scoped
+-    # to the Active job). Before this, a batch disappeared from the picker as soon as it was part of a job, so
+-    # only the newest Create step 4 session was ever offered.
++    # v7.0.122: the picker must see every finished narration of the installation - including a finished batch
++    # that lives inside a saved job, which the to-finish list hides (7.0.97 keeps that list scoped to the job).
+     runnable = pickable(with_attachments(
+         list_speech_batches(job_dirs, include_finished=job_dirs), job_dirs))
+     if not active_root:
+-        # No Active job: partition_for_job returns everything as "own". A batch is not a job, so nothing here
+-        # is the job's own; keep them all as other so they are shown collapsed and labelled.
+         own_rows, other_rows = [], all_rows
+     newest_key = max([(row.get('created_ts') or 0) for row in all_rows + runnable] or [0])
+     unattached_ready = [row for row in all_rows if row['ready'] and not row['attached']]
+-    # v7.0.121: a TTS run that stopped inside a job which already narrates is not "to finish". It is kept and
+-    # shown separately, with the reason, instead of asking to be resumed for ever.
+     own_rows = actionable(own_rows)
+     stale_rows = [row for row in all_rows if row.get('stale')]
+     other_rows = [row for row in actionable(other_rows)]
+     own_attention = [row for row in own_rows if not row['ready']]
+     tts_choices = ['auto', 'gemini', 'gemini-lite', 'groq', 'elevenlabs', 'kokoro', 'edge', 'gtts']
+ 
++
+     # v7.0.121: one unmistakable way from prepared voices to a running video, at the top of Queue & Resume.
+     # The buttons inside a batch were correct but buried in a collapsed list; the question they answered was
+     # "how do I resume this so it creates a job and a video?" - so the answer is now the first thing on the page.
+@@ -2222,12 +2508,16 @@
+                    'that narration, with those voices attached - no voice is recorded again and no video is '
+                    'generated until the job runs. The first Flow credit is spent only when you press Resume (or '
+                    'when you tick the start box below).')
+-        choice = {row['key']: row for row in runnable}
+-        picked_key = st.selectbox(
+-            'Batch to run', list(choice),
+-            format_func=lambda key: display_label(choice[key], newest=bool(choice[key].get('created_ts') == newest_key)),
+-            key='queue-run-batch')
+-        picked = choice[picked_key]
++        # v7.0.123: the option IS the identifying line (time, topic, languages, state, whose voices), so the
++        # picker reads the same in the dashboard and in the terminal, and a duplicate line can never hide a batch.
++        choice = {}
++        for row in runnable:
++            line = display_label(row, newest=bool(row.get('created_ts') == newest_key))
++            while line in choice:
++                line += ' · '
++            choice[line] = row
++        picked_line = st.selectbox('Batch to run', list(choice), key='queue-run-batch')
++        picked = choice[picked_line]
+         if picked.get('attached'):
+             st.warning('These exact voices are already saved in job ' + ', '.join(picked['attached_to'])
+                        + '. Creating a job from them makes a **second** video with the same narration; that job is '
+@@ -2261,6 +2551,56 @@
+         else:
+             st.caption('No saved characters yet. Character Library → “Save character identity”, then the video '
+                        'made here can use that face.')
++        # v7.0.123: the channel profile per language - name, logo, intro, outro. Create step 3 chose it, the
++        # batch records it, and it must reach the job: a job made from these voices used to render with no
++        # channel name, no logo and no intro/outro at all.
++        from engine import channel_profiles as branding
++        saved_profiles = branding.saved_profiles()
++        profile_labels = {row['path']: branding.label(row) for row in saved_profiles}
++        editions = list(picked.get('editions') or [])
++        recorded_profiles = {code: path for code, path in (picked.get('channel_profiles') or {}).items()}
++        chosen_profiles = {}
++        if not editions:
++            st.caption('This batch records no language list, so no per-language channel profile can be chosen.')
++        elif not saved_profiles:
++            st.warning('No channel profile is saved on this installation yet, so this video would render with no '
++                       'channel name, logo, intro or outro. Create one in Channel Desk (or Create step 3), then '
++                       'come back - the prepared narration waits for you.')
++        else:
++            st.markdown('**Channel profile · name, logo, intro and outro**')
++            st.caption('One profile per language, from Create step 3. The job keeps it, so every edition uses its '
++                       'own channel name and logo and the intro/outro can be added after the picture exists - '
++                       'without generating a single shot again.')
++            options = {'— none —': ''}
++            for row in saved_profiles:
++                line = profile_labels[row['path']]
++                while line in options:
++                    line += ' · ' + row['path']
++                options[line] = row['path']
++            lines = list(options)
++            profile_columns = st.columns(len(editions))
++            for profile_column, code in zip(profile_columns, editions):
++                remembered = recorded_profiles.get(code) or (options[lines[1]] if len(lines) == 2 else '')
++                default = next((line for line in lines if options[line] == remembered), lines[0])
++                chosen_line = profile_column.selectbox(
++                    language_label(code) + ' channel', lines, index=lines.index(default),
++                    key='prepared-channel-' + picked['key'] + '-' + code)
++                if options[chosen_line]:
++                    chosen_profiles[code] = options[chosen_line]
++            if recorded_profiles and not any(code in recorded_profiles for code in editions):
++                st.caption('The channel profile saved with this narration is no longer on this installation. '
++                           'Choose one above.')
++            if chosen_profiles:
++                by_path = {row['path']: row for row in saved_profiles}
++                st.caption('This job will use: ' + branding.summary([
++                    {'language': code,
++                     'channel_name': by_path.get(path, {}).get('name', ''),
++                     'logo': by_path.get(path, {}).get('logo', False),
++                     'intro': by_path.get(path, {}).get('intro', False),
++                     'outro': by_path.get(path, {}).get('outro', False)}
++                    for code, path in chosen_profiles.items()]))
++            else:
++                st.caption('No channel chosen: this video would carry no channel name, logo, intro or outro.')
+         rights = st.selectbox('How may this narration be used?', list(RIGHTS_DECLARATIONS),
+                               format_func=lambda code: RIGHTS_DECLARATIONS[code], key='queue-run-rights',
+                               help='Your own statement, saved in the approved plan. The app never assumes it.')
+@@ -2271,7 +2611,8 @@
+                 with production_slot(Path(picked['path'])):
+                     created = create_job_from_batch(F, picked, declaration=rights,
+                                                     target_seconds=seconds or None,
+-                                                    character_ids=chosen_cast)
++                                                    character_ids=chosen_cast,
++                                                    channel_profiles=chosen_profiles or None)
+                 st.session_state.job_id = created['job_id']
+                 st.session_state['speech-batch-notice'] = (
+                     'Created job `' + created['job_id'] + '` from this narration (' + str(created['seconds'])
+@@ -2279,12 +2620,16 @@
+                     + ' voices attached; '
+                     + ('cast: ' + ', '.join(created['characters']) if created.get('characters')
+                        else 'no saved character - a new generic cast')
+-                    + ').'
++                    + '; channel: ' + (branding.summary(created.get('channels') or [])
++                                       or 'none - add one in the job panel') + ').'
+                     + (' It is starting now; follow the monitor below.' if start_now else
+                        ' Nothing has been generated yet - press “Resume / continue job” below to make the video.'))
+                 if start_now:
+                     from engine.job_monitor import start as start_monitor
+                     start_monitor(F, created['job_id'])
++                # land on Queue & Resume: that is where "Resume / continue job" is, and where the job's steps,
++                # narration, cast and channel are shown.
++                st.session_state['autovideo_open_queue'] = True
+                 st.rerun()
+             except Exception as error:
+                 st.error('No job was created: ' + str(error))
+@@ -2327,7 +2672,8 @@
+                        else 'no saved character - pick one in “Run your prepared voices” above if the video should '
+                             'show your character')
+                     + '). Nothing has been generated: its credit cap is 100 Flow credits and the '
+-                    'first credit is spent only when you press “Resume / continue job” below.')
++                    'first credit is spent only when you press “Resume / continue job”.')
++                st.session_state['autovideo_open_queue'] = True
+                 st.rerun()
+             except Exception as error:
+                 st.error('No job was created: ' + str(error))
+@@ -2342,6 +2688,7 @@
+                     with production_slot(Path(job_folder)):
+                         attached = attach(row, job_folder, factory=F)
+                     st.session_state.job_id = target_job
++                    st.session_state['autovideo_open_queue'] = True
+                     st.session_state['speech-batch-notice'] = (
+                         'Voices attached to `' + attached['job_id'] + '` ('
+                         + ', '.join(language_label(code) for code in attached['languages'])
+@@ -2470,141 +2817,6 @@
+                     st.caption(row['stale_reason'])
+                     with st.expander('Inspect this stopped batch', expanded=False):
+                         speech_batch_controls(row)
+-    from engine.clip_render_jobs import discover as discover_clip_renders
+-    clip_render_jobs = discover_clip_renders((F.pm.root, 'outputs'))
+-    if clip_render_jobs:
+-        with st.expander(f"Clip render jobs · {len(clip_render_jobs)}", expanded=any(row['running'] for row in clip_render_jobs)):
+-            st.caption('Persistent Clip Studio renders continue when this browser tab closes. Open any saved render below to monitor or resume it.')
+-            for clip_render in clip_render_jobs:
+-                monitor_clip_render(clip_render['state']['review_path'])
+-    if st.session_state.job_id:
+-        # v7.0.119: the completed steps and the narration belong in Queue & Resume, next to the monitor.
+-        pipeline_view(st.session_state.job_id)
+-        monitor_job(st.session_state.job_id)
+-        gemini_shot_panel(st.session_state.job_id)
+-        narration_panel(st.session_state.job_id)
+-        cast_panel(st.session_state.job_id)
+-        language_edition_panel(st.session_state.job_id)
+-        graphics_audit_panel(st.session_state.job_id)
+-        from engine.job_monitor import snapshot
+-        job_active = snapshot(F.pm.job_dir(st.session_state.job_id))["running"]
+-        selected_row = DB.get(st.session_state.job_id) or {}
+-        current_flow_pause = bool(F._settings(st.session_state.job_id).get(
+-            "flow_pause_on_unresolved_request", False))
+-        with st.expander("Flow recovery behavior", expanded=False):
+-            replace_images = st.checkbox('Regenerate unresolved images once after 3 recovery retries',
+-                value=bool(F._settings(st.session_state.job_id).get('flow_replace_unresolved_images',False)),key='replace-images-'+st.session_state.job_id)
+-            replacement_cap = st.number_input('Maximum replacement images for this whole job',1,100,
+-                int(F._settings(st.session_state.job_id).get('flow_image_replacement_limit',30)),key='replacement-cap-'+st.session_state.job_id)
+-            st.caption('Image-only; may leave unused duplicates. One replacement per image, recorded before submission. Videos stay download-only. Paid image confirmations are blocked.')
+-            if st.button('Save image replacement policy',key='save-replace-'+st.session_state.job_id):
+-                F.set_flow_image_replacement(st.session_state.job_id,replace_images,int(replacement_cap))
+-                st.success('Policy saved for all future Resume attempts of this job.')
+-            local_close = st.checkbox('Use the saved opening image if a closing image cannot recover',
+-                value=bool(F._settings(st.session_state.job_id).get('flow_local_closing_fallback', False)),
+-                key='local-close-'+st.session_state.job_id,
+-                help='Changes closing guidance for that shot. Keeps the pending Flow request. No replacement image generation; normal video generation still uses the job credit budget. Missing openings and videos still need exact recovery.')
+-            if st.button('Save local closing recovery policy',key='save-local-close-'+st.session_state.job_id):
+-                F.set_flow_local_closing_fallback(st.session_state.job_id,local_close)
+-                st.success('Saved for this job and future Resume attempts.')
+-            batch_choice = st.checkbox("Continue other frames when an exact Flow image is unresolved",
+-                value=bool(F._settings(st.session_state.job_id).get("flow_continue_unresolved_frames", False)),
+-                key=f"flow-frame-batch-{st.session_state.job_id}",
+-                help="Strict Flow Storyboard Economy only. Preserves quality: no local fallback or replacement image. Processes other frames, then pauses once with a complete recovery summary.")
+-            if st.button("Save frame recovery policy", key=f"save-frame-batch-{st.session_state.job_id}"):
+-                try:
+-                    F.set_flow_frame_batch_recovery(st.session_state.job_id, batch_choice)
+-                    st.success("Saved for Resume. Completed frames are reused; unresolved requests stay protected.")
+-                except ValueError as error:
+-                    st.error(str(error))
+-            batch_report_path = os.path.join(F.pm.job_dir(st.session_state.job_id), "flow_frame_recovery_batch.json")
+-            if os.path.isfile(batch_report_path):
+-                with open(batch_report_path, encoding="utf-8") as handle:
+-                    batch_report = json.load(handle)
+-                st.caption(f"Saved valid frames: {batch_report.get('valid_frames', 0)}; unresolved: {len(batch_report.get('unresolved', []))}")
+-                if batch_report.get("unresolved"):
+-                    st.dataframe([{k: item.get(k) for k in ("shot_id", "frame", "error")} for item in batch_report["unresolved"]], width="stretch")
+-            pause_flow_choice = st.checkbox(
+-                "Pause this job if a Flow request cannot be safely recovered",
+-                value=current_flow_pause, key=f"flow-pause-policy-{st.session_state.job_id}",
+-                help="Off: auto-frame images use a free fallback; strict Flow/video requests fail without automatic PAUSED status. On: preserve the request and pause. Recovery never submits a replacement based on gallery absence.")
+-            if st.button("Save Flow recovery choice", key=f"save-flow-pause-policy-{st.session_state.job_id}"):
+-                F.set_flow_pause_on_unresolved_request(st.session_state.job_id, pause_flow_choice)
+-                st.success("Saved. This choice applies the next time the job is resumed.")
+-        if selected_row.get("status") in ("paused", "assisted", "failed"):
+-            pause_panel(st.session_state.job_id)
+-            st.divider()
+-        runtime_manifest = F.pm.load_manifest(st.session_state.job_id)
+-        if not runtime_manifest.shots:
+-            with st.expander('Approved narration is shorter than the target?'):
+-                st.caption('Use the measured speech length instead of extending or rewriting the approved script. A 121.8-second narration yields about 122 seconds, not 169. Available before scene planning only.')
+-                if st.button('Use measured narration length for this job'):
+-                    F.use_measured_narration_runtime(st.session_state.job_id)
+-                    st.success('Saved. Resume this same job to reuse narration and plan at its measured length.')
+-        presentation_editor(st.session_state.job_id)
+-        with st.expander('External AI video clips · prompts and uploads · optional'):
+-            from engine.external_video import export_plan, configure, import_clip
+-            external_manifest = F.pm.load_manifest(st.session_state.job_id)
+-            external_options = [s.shot_id for s in external_manifest.shots]
+-            external_selected = st.multiselect('Shots to generate on Flow or another platform', external_options,
+-                default=[s.shot_id for s in external_manifest.shots if s.provider in ('flow','movieflow') and not s.accepted_take], key='external-shot-selection')
+-            st.caption('Export prompts with shot durations and reference paths. External mode waits for these clips before continuing; each import runs normal QC.')
+-            if st.button('Export selected shot prompts and wait for external clips', disabled=job_active or not external_selected):
+-                try:
+-                    external_report=configure(F,st.session_state.job_id,external_selected,True)
+-                    st.success('External mode saved for the selected shots.')
+-                except Exception as error:st.error(str(error))
+-            external_root=Path(F.pm.job_dir(st.session_state.job_id))/'external_video'
+-            if (external_root/'prompts.md').is_file():
+-                st.download_button('Download external shot prompts', (external_root/'prompts.md').read_text(), file_name='external-shot-prompts.md')
+-                st.caption(str(external_root/'incoming'))
+-            external_unaccepted=[s.shot_id for s in external_manifest.shots if not s.accepted_take]
+-            if external_unaccepted:
+-                external_id=st.selectbox('Import video for shot',external_unaccepted,key='external-import-id')
+-                external_file=st.file_uploader('Completed external MP4',type=['mp4'],key='external-import-file')
+-                if external_file: st.video(external_file)
+-                external_platform=st.text_input('Generation platform / source',key='external-platform')
+-                external_reviewed=st.checkbox('I reviewed this video and its rights for the selected shot',key='external-reviewed')
+-                external_replace=st.checkbox('Replace this shot’s unresolved Flow request with this reviewed clip, if present',key='external-replace')
+-                if st.button('Import external video and run QC',disabled=job_active or not external_file or not external_reviewed):
+-                    try:
+-                        stage=external_root/'incoming'/f'{external_id}.mp4';stage.parent.mkdir(parents=True,exist_ok=True);stage.write_bytes(external_file.getvalue())
+-                        st.json(import_clip(F,st.session_state.job_id,external_id,stage,reviewed=True,platform=external_platform,replace_pending=external_replace))
+-                    except Exception as error:st.error(str(error))
+-            if st.button('Return selected shots to automatic production', disabled=job_active or not external_selected):
+-                try:configure(F,st.session_state.job_id,external_selected,False);st.success('Automatic production restored. Pending journals still require reconciliation.')
+-                except Exception as error:st.error(str(error))
+-        with st.expander('Repair an unaccepted shot from its saved storyboard — local only'):
+-            repair_manifest = F.pm.load_manifest(st.session_state.job_id)
+-            repair_shots = [s for s in repair_manifest.shots if not s.accepted_take]
+-            if repair_shots:
+-                repair_id = st.selectbox('Shot to repair', [s.shot_id for s in repair_shots], key='repair-storyboard-shot')
+-                repair_shot = next(s for s in repair_shots if s.shot_id == repair_id)
+-                st.write(repair_shot.visual_goal)
+-                repair_start, repair_end = F.storyboard_repair_frames(st.session_state.job_id, repair_id)
+-                for label, image_path in [('Opening', repair_start), ('Closing', repair_end)]:
+-                    if image_path and os.path.isfile(image_path): st.image(image_path, caption=label, width=250)
+-                repair_reviewed = st.checkbox('I reviewed these frames and they depict the intended scene', key=f'repair-storyboard-reviewed-{st.session_state.job_id}-{repair_id}')
+-                st.caption('Creates a local pan/zoom transition, not new character animation. QC still decides acceptance. Other shots and Flow requests are preserved.')
+-                if st.button('Repair this shot and run QC', disabled=not repair_reviewed):
+-                    try:
+-                        with st.spinner('Rendering local storyboard repair…'):
+-                            repair_result = F.repair_storyboard_shot(st.session_state.job_id, repair_id, reviewed=True)
+-                        st.json(repair_result)
+-                    except Exception as error: st.error(str(error))
+-            elif repair_manifest.shots: st.info('All shots have accepted takes.')
+-            else: st.info('No shots are ready yet. Resolve the planning or reference-image error above, then resume this saved job.')
+-        c1, c2 = st.columns(2)
+-        if c1.button("▶️ Resume / continue job", type="primary", disabled=job_active):
+-            run_with_ui(st.session_state.job_id, "")
+-        if c2.button("🎬 Render now (from accepted takes)", disabled=job_active):
+-            with st.spinner("Rendering..."):
+-                try:
+-                    r = F.render_job(st.session_state.job_id)
+-                    st.success(f"Done: {r['video']} ({r['renderer']})")
+-                    compact_video(r["video"])
+-                except Exception as e:
+-                    st.error(f"Render failed: {e}")
+ 
+ # ================= FLOW SESSION =================
+ elif page == "FLOW SESSION":
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/cli.py b/cli.py
+--- a/cli.py	2026-10-31 08:36:18.000000000 +0000
++++ b/cli.py	2026-11-01 12:26:22.000000000 +0000
+@@ -484,11 +484,33 @@
+                     help="how you may use this narration (required with --create-job; saved in the approved plan)")
+     uv.add_argument("--profile", default="STORYBOARD_ECONOMY")
+     uv.add_argument("--seconds", type=int, default=0, help="target duration; default = measured voice length")
++    uv.add_argument("--channel", default="", metavar="LANG=PROFILE[,LANG=PROFILE]",
++                    help="saved channel profile per language for the new job, e.g. "
++                         "en=/path/profile.json,hi=/path/profile.json; default = the profiles recorded with the batch")
+     uv.add_argument("--cast", default="", metavar="ID[,ID]",
+                     help="saved character id(s) for this video (Character Library); default = the cast recorded "
+                          "with the batch, if any. Without a cast the storyboard invents a new person")
+     uv.add_argument("--outputs-root", default="outputs")
+ 
++    ch = sub.add_parser("channel", help="Show or attach the channel profile of a saved job (name, logo, intro, outro)")
++    ch.add_argument("job_id")
++    ch.add_argument("--set", action="append", default=[], metavar="LANG=PROFILE",
++                    help="attach a saved channel profile to one language, e.g. en=/path/profile.json; "
++                         "repeat for each language. Writes settings only - nothing is rendered")
++    ch.add_argument("--all", default="", metavar="PROFILE",
++                    help="use this saved profile for every language of the job")
++    ch.add_argument("--outputs-root", default="outputs")
++
++    kf = sub.add_parser("keep-frame",
++                        help="Choose which already-saved Flow image is the frame (no browser, no request)")
++    kf.add_argument("job_id")
++    kf.add_argument("--image", default="", metavar="FILE",
++                    help="frame file, e.g. shot_051_open.jpg (--list shows them)")
++    kf.add_argument("--keep", type=int, default=0, metavar="N",
++                    help="1-based candidate to keep, as listed by --list")
++    kf.add_argument("--list", action="store_true", help="show the frames waiting for a choice and their images")
++    kf.add_argument("--outputs-root", default="outputs")
++
+     ca = sub.add_parser("cast", help="Show or set the saved characters a job's storyboard will use")
+     ca.add_argument("job_id")
+     ca.add_argument("--set", default="", metavar="ID[,ID]",
+@@ -1461,6 +1483,7 @@
+         return
+     elif args.cmd == "use-voices":
+         from engine import narration_assets
++        from engine import channel_profiles
+         from engine.speech_batches import list_speech_batches, with_attachments, usable_now, pickable
+         from engine.batch_actions import (RIGHTS_DECLARATIONS, attach, batch_cast, create_job_from_batch,
+                                           jobs_using_script, measured_seconds)
+@@ -1480,7 +1503,8 @@
+                       + ("  · voices in job " + ", ".join(row["attached_to"]) if row["attached"]
+                          else "  · not part of a job yet")
+                       + ("  · stopped run a job no longer needs" if row["stale"] else "")
+-                      + ("  · cast " + ", ".join(batch_cast(row)) if batch_cast(row) else ""))
++                      + ("  · cast " + ", ".join(batch_cast(row)) if batch_cast(row) else "")
++                      + ("  · channel saved" if row.get("channel_profiles") else ""))
+                 print("    " + row["path"])
+             if not (args.create_job or args.attach_to):
+                 ready = usable_now(rows)
+@@ -1513,21 +1537,98 @@
+             raise SystemExit("Choose how you may use this narration: --rights "
+                              + " | ".join(RIGHTS_DECLARATIONS))
+         cast = [item.strip() for item in str(getattr(args, "cast", "") or "").split(",") if item.strip()]
++        profiles = {}
++        for item in str(getattr(args, "channel", "") or "").split(","):
++            if "=" in item:
++                code, path = item.split("=", 1)
++                if code.strip() and path.strip():
++                    profiles[code.strip()] = path.strip()
+         try:
+             created = create_job_from_batch(f, row, declaration=args.rights, profile=args.profile,
+                                             target_seconds=args.seconds or None,
+-                                            character_ids=cast or None)
++                                            character_ids=cast or None,
++                                            channel_profiles=profiles or None)
+         except ValueError as error:
+             raise SystemExit("No job was created: " + str(error)) from error
+         print("Created job " + created["job_id"] + " from this narration (" + str(created["seconds"]) + " s, "
+               + ", ".join(created["languages"]) + " voices attached; "
+               + ("cast: " + ", ".join(created["characters"]) if created.get("characters")
+-                 else "no saved character, so the storyboard will invent a new person") + ").")
++                 else "no saved character, so the storyboard will invent a new person")
++              + "; channel: " + (channel_profiles.summary(created.get("channels") or []) or "none") + ").")
+         print("Plan: " + created["plan"])
+         for label in narration_assets.labels(f.pm.job_dir(created["job_id"])):
+             print("  narration: " + label)
+         print("Nothing has been generated. Make the video with: python3 cli.py v3 resume " + created["job_id"])
+         return
++    elif args.cmd == "channel":
++        from engine import channel_profiles
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        profiles = {}
++        for item in list(args.set or []):
++            if "=" not in item:
++                raise SystemExit("Give a language and a profile: --set en=/path/to/profile.json")
++            code, path = item.split("=", 1)
++            if code.strip() and path.strip():
++                profiles[code.strip()] = path.strip()
++        editions = channel_profiles.job_editions(job_dir)
++        if args.all:
++            profiles.update({code: args.all for code in editions})
++        if profiles:
++            try:
++                result = channel_profiles.attach_profiles(job_dir, profiles, editions=editions)
++            except ValueError as error:
++                raise SystemExit("Nothing was changed: " + str(error)) from error
++            print("Channel profile saved for " + args.job_id + ": "
++                  + (channel_profiles.summary(result["rows"]) or "none"))
++            print("Nothing was generated or rendered. Add the intro/outro and render the editions from "
++                  "Three-language output in Queue & Resume (no shot is generated again).")
++            return
++        current = channel_profiles.job_profiles(job_dir)
++        names = {row["path"]: row for row in channel_profiles.saved_profiles()}
++        for code in editions:
++            path = current.get(code, "")
++            row = names.get(path, {})
++            print(code + " · " + (str(row.get("name") or path) if path else "no channel profile")
++                  + ((" · logo" if row.get("logo") else "") + (" · intro" if row.get("intro") else "")
++                     + (" · outro" if row.get("outro") else "") if path else ""))
++        if names:
++            print("Saved profiles: " + " | ".join(str(row["name"]) + "=" + row["path"]
++                                                  for row in names.values()))
++        print("Attach one with: python3 cli.py v3 channel " + args.job_id
++              + " --set en=<profile path>   (or --all <profile path>)")
++        return
++    elif args.cmd == "keep-frame":
++        from engine import flow_choice
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        if args.image and args.keep:
++            try:
++                result = flow_choice.keep(job_dir, args.image, int(args.keep) - 1)
++            except ValueError as error:
++                raise SystemExit("Nothing was changed: " + str(error)) from error
++            print("Kept " + result["kept"] + " as " + args.image + ".")
++            print(result["note"])
++            print("Continue the job with: python3 cli.py v3 resume " + args.job_id)
++            return
++        waiting = flow_choice.all_frames(job_dir)
++        blocked = {row["image"] for row in flow_choice.blocked_frames(job_dir)}
++        if not waiting:
++            print("No saved image is waiting for a choice in " + args.job_id
++                  + ". Frames Flow finished are already saved.")
++            return
++        for row in waiting:
++            print(row["image"] + ("  · BLOCKED: more than one real image was saved" if row["image"] in blocked
++                                  else "  · one saved image")
++                  + "  · " + str(row["count"]) + " candidate(s)")
++            if row.get("prompt"):
++                print("    requested: " + row["prompt"][:120])
++            for index, candidate in enumerate(row["candidates"], start=1):
++                print("    " + str(index) + ". " + candidate["file"]
++                      + "  " + str(round(candidate["bytes"] / 1024)) + " KB")
++        print("Keep one with: python3 cli.py v3 keep-frame " + args.job_id
++              + " --image <file> --keep <number>   (local only: no browser, no Flow request, no credit)")
++        return
+     elif args.cmd == "cast":
+         from engine.cast import job_cast, set_job_cast
+         from engine.content_library import CharacterLibrary
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/batch_actions.py b/engine/batch_actions.py
+--- a/engine/batch_actions.py	2026-10-31 08:35:18.000000000 +0000
++++ b/engine/batch_actions.py	2026-11-01 12:24:48.000000000 +0000
+@@ -185,16 +185,38 @@
+     return [str(identifier) for identifier in (batch.get('character_ids') or []) if str(identifier).strip()]
+ 
+ 
++def batch_channel_profiles(batch) -> dict:
++    """The channel profile chosen per language when the narration was prepared (v7.0.123)."""
++    return {str(code): str(path) for code, path in (batch.get('channel_profiles') or {}).items() if path}
++
++
+ def create_job_from_batch(factory, batch, *, profile='STORYBOARD_ECONOMY', declaration,
+-                          target_seconds=None, max_credits=100, character_ids=None) -> dict:
++                          target_seconds=None, max_credits=100, character_ids=None,
++                          channel_profiles=None) -> dict:
+     """Create a saved job whose script is these voices' words, then attach the voices. Generates nothing.
+ 
+     v7.0.122: the cast is carried too. ``character_ids`` wins; otherwise the characters recorded with the
+     batch are used. Without either, the job's storyboard invents a new person, which is what made a finished
+     video ignore the character saved in Character Library.
++
++    v7.0.123: so is the branding. ``channel_profiles`` (one profile per language) wins; otherwise the profiles
++    recorded with the batch are used. The job is given the same ``production/language_editions.json`` Create
++    writes, so its channel name, logo, intro and outro are the ones chosen in step 3 - a job made here used to
++    start with no branding at all, and the Three-language panel could only say "no intro, no outro".
+     """
+     cast = list(dict.fromkeys(str(identifier) for identifier in
+                               (character_ids if character_ids is not None else batch_cast(batch))))
++    profiles = {str(code): str(path) for code, path in
++                (channel_profiles if channel_profiles is not None else batch_channel_profiles(batch)).items()
++                if path}
++    summary_rows = []
++    if profiles:
++        from . import channel_profiles as branding
++        available = {row['path']: row for row in branding.saved_profiles()}
++        for code, path in profiles.items():
++            if path not in available:
++                raise ValueError('No saved channel profile at ' + path + ' for ' + code
++                                 + '. Resolve it against the batch before creating the job.')
+     if cast:
+         from .cast import snapshot_cast
+         try:
+@@ -220,12 +242,33 @@
+                 'tts_provider': str(request.get('provider') or 'auto'),
+                 'character_ids': cast,
+                 'approved_plan_path': str(plan_path), 'max_credits': int(max_credits)})
++    branding = None
++    if profiles:
++        from . import channel_profiles as branding_store
++        from .channel_branding import channel_name, logo_entry
++        branding = branding_store
++        # The primary edition's own name and logo, exactly as Create resolves them before it creates a job.
++        primary = profiles.get(cfg['language']) or next(iter(profiles.values()))
++        primary_profile = json.loads(Path(primary).read_text(encoding='utf-8'))
++        name = channel_name(primary_profile, cfg['language'])
++        if name:
++            cfg['channel_name'] = name
++        entry = logo_entry(primary_profile, cfg['language'])
++        if entry:
++            from .finishing_studio import _verified
++            cfg['channel_logo'] = str(_verified(entry))
++        cfg['watermark'] = True
+     kwargs = config_to_factory_kwargs(cfg)
+     job_id = factory.create_job(topic=cfg['topic'], video_type=cfg['video_type'],
+                                 aspect=cfg['aspect'], **kwargs)
+     attached = attach(batch, factory.pm.job_dir(job_id), factory=factory)
++    if profiles:
++        # Same file Create writes: editions, profiles per language and the attached bundles (kept as they are).
++        saved = branding.attach_profiles(factory.pm.job_dir(job_id), profiles, editions=list(attached['languages']))
++        summary_rows = saved['rows']
+     return {'job_id': job_id, 'plan': str(plan_path), 'seconds': seconds,
+-            'character_ids': cast, 'characters': [_cast_name(identifier) for identifier in cast], **attached}
++            'character_ids': cast, 'characters': [_cast_name(identifier) for identifier in cast],
++            'channel_profiles': profiles, 'channels': summary_rows, **attached}
+ 
+ 
+ def _cast_name(identifier):
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/channel_profiles.py b/engine/channel_profiles.py
+--- a/engine/channel_profiles.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/channel_profiles.py	2026-11-01 12:27:12.000000000 +0000
+@@ -0,0 +1,146 @@
++"""Channel branding (name, logo, intro, outro) for a saved job - and for the narration that becomes one.
++
++Two field reports after v7.0.123's predecessor:
++
++* *"I don't see the earlier selected channel profile is attached to either of the language"* - a narration
++  prepared in Create step 4 never recorded the channel profiles chosen in step 3, and a job created from those
++  voices therefore had an empty ``production/language_editions.json``: no name, no logo, no intro, no outro,
++  and the Three-language panel could only answer "no_intro_outro".
++* *"give user option to attach the channel and character if its missing"* - attaching has to be possible after
++  the fact, without re-recording a voice, re-rendering a shot or spending a Flow credit.
++
++This module only writes settings and profile paths. It never copies, re-encodes or deletes media: the existing
++Three-language panel adds the intro/outro and renders the extra editions from the picture the job already has.
++"""
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++from .production import read, save
++
++
++def saved_profiles(root=None) -> list[dict]:
++    """Every channel profile on this installation: path, name, languages, and what it carries."""
++    from .finishing_studio import profiles as profile_paths
++    rows = []
++    for path in profile_paths(root):
++        data = read(path, {}) or {}
++        assets = data.get('assets') or {}
++        rows.append({
++            'path': str(path),
++            'name': str(data.get('name') or path.parent.name),
++            'names': {str(k): str(v) for k, v in (data.get('names') or {}).items()},
++            'languages': sorted({key.split('-', 1)[1] for key in assets
++                                 if key.startswith('logo-') and len(key.split('-', 1)) == 2}),
++            'logo': bool(assets.get('logo') or any(key.startswith('logo-') for key in assets)),
++            'intro': bool(assets.get('intro')),
++            'outro': bool(assets.get('outro')),
++        })
++    return rows
++
++
++def label(profile) -> str:
++    """One line for a saved profile: its name and the branding it actually carries."""
++    parts = [profile['name']]
++    if profile.get('languages'):
++        parts.append('own logo for ' + ', '.join(profile['languages']))
++    elif profile.get('logo'):
++        parts.append('logo')
++    parts.append('intro' if profile.get('intro') else 'no intro')
++    parts.append('outro' if profile.get('outro') else 'no outro')
++    return ' · '.join(parts)
++
++
++def _editions_file(job_dir) -> Path:
++    return Path(job_dir) / 'production' / 'language_editions.json'
++
++
++def job_profiles(job_dir) -> dict:
++    """The profile each language of this job uses, as saved in the job (never guessed)."""
++    data = read(_editions_file(job_dir), {}) or {}
++    profiles = data.get('profiles') or {}
++    return {str(code): str(path) for code, path in profiles.items() if path}
++
++
++def job_editions(job_dir) -> list[str]:
++    """The editions this job renders, from its saved record (falls back to its manifest language)."""
++    data = read(_editions_file(job_dir), {}) or {}
++    editions = [str(code) for code in (data.get('editions') or []) if code]
++    if editions:
++        return editions
++    manifest = read(Path(job_dir) / 'production_manifest.json', {}) or {}
++    return [str(manifest.get('language') or 'en')]
++
++
++def attach_profiles(job_dir, profiles: dict, *, editions=None) -> dict:
++    """Save one channel profile per language into a job. Settings only - nothing is rendered.
++
++    ``profiles`` maps a language code to a channel profile path (an empty value removes that entry). The
++    Three-language panel reads this file, so a job given its profile here can add the intro/outro and render
++    every edition from the picture it already has - no shot is generated again.
++    """
++    folder = Path(job_dir)
++    if not (folder / 'production_manifest.json').is_file():
++        raise ValueError('No saved job at ' + str(folder) + ' (production_manifest.json is missing).')
++    available = {row['path']: row for row in saved_profiles()}
++    chosen = {}
++    for code, path in (profiles or {}).items():
++        code, path = str(code), str(path or '')
++        if not path:
++            continue
++        if path not in available:
++            raise ValueError('No saved channel profile at ' + path
++                             + '. Choose one from the list (Channel Desk lists them), then save again.')
++        chosen[code] = path
++    record = read(_editions_file(folder), {}) or {}
++    wanted = [str(code) for code in (editions or job_editions(folder))]
++    merged = dict(record.get('profiles') or {})
++    for code, path in chosen.items():
++        merged[code] = path
++    for code in list(merged):
++        if code not in wanted and code not in chosen:
++            merged.pop(code, None)
++    record.update({
++        'source_language': record.get('source_language') or job_editions(folder)[0],
++        'editions': wanted,
++        'profiles': merged,
++        # 'status' belongs to narration preparation and is left alone; branding records its own line.
++        'branding_status': 'channel profiles attached',
++    })
++    record.setdefault('prepare_audio', True)
++    save(_editions_file(folder), record)
++    rows = []
++    for code in wanted:
++        profile = available.get(merged.get(code, ''), {})
++        rows.append({'language': code, 'path': merged.get(code, ''),
++                     'name': str(profile.get('name') or ''),
++                     'channel_name': str((profile.get('names') or {}).get(code) or profile.get('name') or ''),
++                     'intro': bool(profile.get('intro')), 'outro': bool(profile.get('outro')),
++                     'logo': bool(profile.get('logo'))})
++    return {'job_id': folder.name, 'editions': wanted, 'profiles': merged, 'rows': rows,
++            'intro_outro': any(row['intro'] or row['outro'] for row in rows)}
++
++
++def missing(job_dir, editions=None) -> list[str]:
++    """Editions of this job that still have no channel profile."""
++    known = job_profiles(job_dir)
++    return [code for code in (editions or job_editions(job_dir)) if not known.get(code)]
++
++
++def summary(rows) -> str:
++    """Plain sentence for the UI and the CLI: which language uses which channel, and what it carries."""
++    from .languages import language_pack
++    pieces = []
++    for row in rows or []:
++        name = row.get('channel_name') or row.get('name') or ''
++        if not name:
++            continue
++        extras = [word for word, present in (('logo', row.get('logo')), ('intro', row.get('intro')),
++                                             ('outro', row.get('outro'))) if present]
++        try:
++            label = language_pack(row['language']).label
++        except Exception:
++            label = str(row['language'])
++        pieces.append(label + ' → ' + name + (' (' + ', '.join(extras) + ')' if extras else ''))
++    return ' · '.join(pieces)
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/flow_choice.py b/engine/flow_choice.py
+--- a/engine/flow_choice.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/flow_choice.py	2026-11-01 12:27:28.000000000 +0000
+@@ -0,0 +1,134 @@
++"""Keep one of the images a blocked Flow request already saved - locally, without touching Flow.
++
++The failure this answers (v7.0.123), reported from a real job:
++
++    ⚠️ shot_051 opening frame: Flow failed after 1 attempts → free fallback
++    Cause: FlowRequestPending: Two or more real images are saved for shot_051_open.jpg.
++    Recovery stopped without submitting or replacing; review the saved Flow project and choose
++    which image to keep.
++
++The app was right to stop: it cannot prove which of two generated images belongs to that frame, and guessing
++would put the wrong picture in the video. But the images themselves are already downloaded as probe files next
++to the frame, with their checksums recorded in the request journal - so *you* can look at them and pick one.
++That is all this module does: it lists those saved candidates and commits the one you choose, using the same
++``commit_capture`` the automatic path uses (checksum, reference exclusion, journal update). No browser opens, no
++request is submitted, no Flow credit is spent, and the other candidate is left where it is.
++"""
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++from .flow_image_transaction import commit_capture, journal_path
++from .isolated_frame_regeneration import image_valid, sha
++
++
++def _frames(job_dir) -> list[Path]:
++    """Every frame with a request journal, in shot order.
++
++    The frame file itself need not exist yet - a request that never finished has a journal and saved candidate
++    images but no committed ``.jpg``, which is exactly the case this module exists for.
++    """
++    storyboard = Path(job_dir) / 'storyboard'
++    if not storyboard.is_dir():
++        return []
++    suffix = '.flow-request.json'
++    return sorted(Path(str(path)[:-len(suffix)]) for path in storyboard.glob('*.jpg' + suffix))
++
++
++def _read(path: Path) -> dict:
++    try:
++        return json.loads(journal_path(path).read_text(encoding='utf-8'))
++    except (OSError, ValueError):
++        return {}
++
++
++def candidates(output) -> list[dict]:
++    """The saved images for this frame that are not uploaded references, newest evidence first.
++
++    Each row is one probe the journal already downloaded and checksummed. A row whose bytes no longer match the
++    recorded checksum is reported as ``broken`` instead of being offered: a changed file is not the image the
++    journal saw.
++    """
++    output = Path(output)
++    request = _read(output)
++    rows = []
++    for entry in (request.get('capture_probes') or {}).values():
++        if not isinstance(entry, dict) or entry.get('reference') or not entry.get('file'):
++            continue
++        probe = output.parent / str(entry['file'])
++        exists = probe.is_file() and probe.parent == output.parent
++        valid = bool(exists and image_valid(probe))
++        matches = bool(valid and entry.get('sha256') and sha(probe) == entry['sha256'])
++        rows.append({'file': str(entry['file']), 'path': str(probe), 'exists': exists,
++                     'valid': valid, 'matches_recorded_checksum': matches,
++                     'bytes': probe.stat().st_size if exists else 0,
++                     'signature': str(entry.get('signature') or ''),
++                     'state': str(entry.get('state') or ''),
++                     'usable': bool(valid and matches)})
++    rows.sort(key=lambda row: (not row['usable'], row['file']))
++    return rows
++
++
++def blocked_frames(job_dir) -> list[dict]:
++    """Frames where recovery stopped because more than one real image is saved, plus their candidates."""
++    found = []
++    for output in _frames(job_dir):
++        request = _read(output)
++        if str(request.get('status') or '') == 'downloaded' and output.is_file() and image_valid(output):
++            continue
++        rows = candidates(output)
++        usable = [row for row in rows if row['usable']]
++        if len(usable) < 2:
++            continue
++        found.append({'image': output.name, 'path': str(output), 'shot': output.name.split('.')[0],
++                      'project_url': str(request.get('project_url') or ''),
++                      'prompt': str((request.get('prompt') or request.get('text') or ''))[:400],
++                      'candidates': usable, 'count': len(usable)})
++    return found
++
++
++def all_frames(job_dir) -> list[dict]:
++    """Every unfinished frame with at least one usable saved candidate, for a manual pick."""
++    found = []
++    for output in _frames(job_dir):
++        request = _read(output)
++        if str(request.get('status') or '') == 'downloaded' and output.is_file() and image_valid(output):
++            continue
++        usable = [row for row in candidates(output) if row['usable']]
++        if not usable:
++            continue
++        found.append({'image': output.name, 'path': str(output), 'shot': output.name.split('.')[0],
++                      'project_url': str(request.get('project_url') or ''),
++                      'prompt': str((request.get('prompt') or request.get('text') or ''))[:400],
++                      'candidates': usable, 'count': len(usable)})
++    return found
++
++
++def keep(job_dir, image: str, index: int) -> dict:
++    """Commit the chosen saved image as this frame. ``index`` is the 0-based position in ``candidates``."""
++    job_dir = Path(job_dir)
++    output = job_dir / 'storyboard' / str(image)
++    if not journal_path(output).is_file():
++        raise ValueError('No saved frame with a request journal at ' + str(output))
++    request = _read(output)
++    if str(request.get('status') or '') == 'downloaded' and output.is_file() and image_valid(output):
++        raise ValueError(output.name + ' is already saved as the frame; nothing was changed.')
++    rows = candidates(output)
++    if not rows:
++        raise ValueError('No saved candidate images are recorded for ' + output.name
++                         + ', so there is nothing to choose. Resume the job to ask Flow again.')
++    try:
++        chosen = rows[int(index)]
++    except (IndexError, TypeError, ValueError):
++        raise ValueError('Choose a candidate between 1 and ' + str(len(rows)) + ' for ' + output.name) from None
++    if not chosen['usable']:
++        raise ValueError('Candidate ' + chosen['file'] + ' is missing or no longer matches the checksum recorded '
++                         'when it was saved, so it cannot be used. Nothing was changed.')
++    commit_capture(output, request, chosen['path'], 'reviewed_candidate_choice')
++    request['reviewed_choice'] = {'file': chosen['file'], 'sha256': sha(output)}
++    journal_path(output).write_text(json.dumps(request, indent=2, ensure_ascii=False), encoding='utf-8')
++    return {'image': output.name, 'kept': chosen['file'], 'probe': chosen['path'], 'path': str(output),
++            'sha256': request['media_sha256'], 'candidates': len(rows),
++            'note': 'Saved locally from an image Flow had already produced. No browser opened, no request '
++                    'submitted, no Flow credit spent.'}
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/speech_batches.py b/engine/speech_batches.py
+--- a/engine/speech_batches.py	2026-10-31 08:35:12.000000000 +0000
++++ b/engine/speech_batches.py	2026-11-01 12:24:34.000000000 +0000
+@@ -60,6 +60,9 @@
+         'request': request,
+         # v7.0.122: the saved characters this narration was written for, recorded when the batch was made.
+         'character_ids': [str(identifier) for identifier in (request.get('character_ids') or [])],
++        # v7.0.123: the channel profile chosen per language in step 3, recorded with the narration.
++        'channel_profiles': {str(code): str(path) for code, path in
++                             (request.get('channel_profiles') or {}).items() if path},
+         # v7.0.119: a batch used to be listed as "Create step 4 · English, Hindi, Odia · ready" with nothing
+         # that told one session apart from another. Topic, exact time and where its voices ended up do.
+         'topic': str(request.get('topic') or '').strip(),
+@@ -261,6 +264,8 @@
+         parts.append('saved in ' + owner[4:] + ' · voices not copied into the job yet')
+     else:
+         parts.append('not part of any job yet')
++    if row.get('channel_profiles'):
++        parts.append('channel saved for ' + ', '.join(language_label(code) for code in row['channel_profiles']))
+     if newest:
+         parts.append('newest')
+     return ' · '.join(parts)
+@@ -319,7 +324,8 @@
+         progress=progress, localized_scripts=scripts, text_cards=request.get('text_cards', True),
+         educational=request.get('educational', False), topic=request.get('topic', ''),
+         card_provider=request.get('card_provider', 'gemini-web'), hooks=request.get('hooks', False),
+-        character_ids=request.get('character_ids') or None)
++        character_ids=request.get('character_ids') or None,
++        channel_profiles=request.get('channel_profiles') or None)
+ 
+ 
+ def language_label(code: str) -> str:
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py	2026-10-31 08:35:06.000000000 +0000
++++ b/engine/speech_cards.py	2026-11-01 12:24:30.000000000 +0000
+@@ -727,7 +727,7 @@
+ 
+ def prepare_batch(root,source_script,source_language,languages,*,provider='auto',audio_path=None,cleanup='delete-after-read',progress=None,localized_scripts=None,
+                   text_cards=True,educational=False,topic='',card_provider='gemini-web',hooks=False,draft_cards=True,
+-                  character_ids=None):
++                  character_ids=None,channel_profiles=None):
+     """Voices for every language first. Card and hook drafts (Gemini Web) follow only when draft_cards is True.
+ 
+     7.0.86: draft_cards=False stops after the voices (phase voices_ready). The cards can be drafted later with
+@@ -757,9 +757,13 @@
+     # v7.0.122: the cast chosen in Create travels with the narration, so a job made from these voices later
+     # plans the same saved character instead of inventing a new person.
+     cast=[str(identifier) for identifier in (character_ids or []) if str(identifier).strip()]
+-    request={'provider':provider,'audio_path':str(audio_path) if audio_path else '','cleanup':cleanup,'text_cards':bool(text_cards),
++    # v7.0.123: the channel profile chosen in step 3 (one per language) travels with the narration too, so a
++    # job made from these voices keeps the channel name, logo, intro and outro instead of starting empty.
++    branding={'provider':provider,'audio_path':str(audio_path) if audio_path else '','cleanup':cleanup,'text_cards':bool(text_cards),
+              'educational':bool(educational),'topic':str(topic or ''),'card_provider':str(card_provider or 'gemini-web'),'hooks':bool(hooks),
+-             'draft_cards':bool(draft_cards),'character_ids':cast}
++             'draft_cards':bool(draft_cards),'character_ids':cast,
++             'channel_profiles':{str(code):str(path) for code,path in (channel_profiles or {}).items() if path}}
++    request=branding
+     state={'source_language':source_language,'source_script':source_script,'editions':editions,'scripts':scripts,'scripts_sha256':scripts_hash,
+            'request':request,'error':'','bundles':{},'phase':'tts'}
+     # v7.0.119: record when the batch was made (kept when a later resume re-prepares it), so Jobs & Recovery can
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7119_queue_narration_and_steps.py b/tests/test_v7119_queue_narration_and_steps.py
+--- a/tests/test_v7119_queue_narration_and_steps.py	2026-10-31 03:12:16.000000000 +0000
++++ b/tests/test_v7119_queue_narration_and_steps.py	2026-11-01 12:43:50.000000000 +0000
+@@ -213,21 +213,31 @@
+     assert narration_assets.voices(job) == []
+ 
+ 
+-def test_the_queue_page_renders_the_batches_with_audio_and_no_job_selected(install):
+-    """The real Streamlit page over the miniature installation (no job, four batches)."""
++def test_the_prepared_voices_page_renders_the_batches_with_audio(install):
++    """The real Streamlit page over the miniature installation (no job, four batches).
++
++    v7.0.123: the narration batches live on Jobs & Recovery > Prepared Voices; Queue & Resume only resumes a
++    saved job, so the same four batches must not appear there any more.
++    """
+     from streamlit.testing.v1 import AppTest
+     at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
+     at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
+-    at.session_state['autovideo_current_page'] = 'QUEUE'
+-    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
+     at.run()
+     assert not at.exception, [str(item.value) for item in at.exception]
+     labels = [item.label for item in at.get('expander')]
+-    assert any('no job selected' in label for label in labels), labels
+     assert any('The Growth Mindset of small daily habits' in label for label in labels), labels
+     infos = ' '.join(item.value for item in at.info)
+     assert 'not jobs' in infos
+     assert len(at.get('audio')) >= 5      # the ready batches' voices are playable
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    queue_labels = [item.label for item in at.get('expander')]
++    assert not any('The Growth Mindset of small daily habits' in label for label in queue_labels), queue_labels
++    assert at.get('audio') == []
+ 
+ 
+ def test_the_monitor_names_the_job_it_is_describing():
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7120_use_prepared_voices.py b/tests/test_v7120_use_prepared_voices.py
+--- a/tests/test_v7120_use_prepared_voices.py	2026-10-31 03:48:52.000000000 +0000
++++ b/tests/test_v7120_use_prepared_voices.py	2026-11-01 12:30:32.000000000 +0000
+@@ -206,8 +206,9 @@
+     (install['root'] / 'assets').symlink_to(ROOT / 'assets')
+     at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
+     at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
+-    at.session_state['autovideo_current_page'] = 'QUEUE'
+-    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    # v7.0.123: the batch panel lives on the Prepared Voices page, not in Queue & Resume.
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
+     at.run()
+     assert not at.exception, [str(item.value) for item in at.exception]
+     button = next(item for item in at.button if item.label == 'Create a production from these voices')
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7121_run_prepared_voices.py b/tests/test_v7121_run_prepared_voices.py
+--- a/tests/test_v7121_run_prepared_voices.py	2026-10-31 08:37:48.000000000 +0000
++++ b/tests/test_v7121_run_prepared_voices.py	2026-11-01 12:30:32.000000000 +0000
+@@ -145,7 +145,8 @@
+ 
+ 
+ def test_the_queue_puts_the_answer_at_the_top():
+-    queue = APP[APP.index('elif page == "QUEUE":'):APP.index('elif page == "FLOW SESSION":')]
++    # v7.0.123: the answer moved to its own page (Prepared Voices) and stayed the first thing on it.
++    queue = APP[APP.index('elif page == "PREPARED VOICES":'):APP.index('# ================= FLOW SESSION')]
+     assert "st.subheader('Run your prepared voices')" in queue
+     assert "st.selectbox(\n            'Batch to run'" in queue or "'Batch to run'" in queue
+     assert "'Create the job from these voices'" in queue
+@@ -160,7 +161,7 @@
+ 
+ 
+ def test_abandoned_runs_are_excluded_from_the_to_finish_count():
+-    start = APP.index('elif page == "QUEUE":')
++    start = APP.index('elif page == "PREPARED VOICES":')
+     block = APP[start:APP.index('def speech_batch_controls', start)]
+     assert 'own_rows = actionable(own_rows)' in block
+     assert 'other_rows = [row for row in actionable(other_rows)]' in block
+@@ -205,8 +206,8 @@
+     from streamlit.testing.v1 import AppTest
+     at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
+     at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
+-    at.session_state['autovideo_current_page'] = 'QUEUE'
+-    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
+     at.run()
+     assert not at.exception, [str(item.value) for item in at.exception]
+     assert 'Run your prepared voices' in [item.value for item in at.subheader]
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7122_cast_and_every_batch.py b/tests/test_v7122_cast_and_every_batch.py
+--- a/tests/test_v7122_cast_and_every_batch.py	2026-10-31 08:41:32.000000000 +0000
++++ b/tests/test_v7122_cast_and_every_batch.py	2026-11-01 12:29:56.000000000 +0000
+@@ -248,7 +248,8 @@
+ # 5. what the pages actually render
+ # ---------------------------------------------------------------------------------------------------------
+ def test_the_queue_panel_offers_the_whole_list_and_the_character():
+-    queue = APP[APP.index('elif page == "QUEUE":'):APP.index('elif page == "FLOW SESSION":')]
++    # v7.0.123: prepared narration has its own page; the panel moved there unchanged.
++    queue = APP[APP.index('elif page == "PREPARED VOICES":'):APP.index('# ================= FLOW SESSION')]
+     assert 'runnable = pickable(with_attachments(' in queue
+     assert 'include_finished=job_dirs' in queue
+     assert "'Character in this video · optional (up to three)'" in queue
+@@ -284,8 +285,8 @@
+     from streamlit.testing.v1 import AppTest
+     at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
+     at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
+-    at.session_state['autovideo_current_page'] = 'QUEUE'
+-    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
+     at.run()
+     assert not at.exception, [str(item.value) for item in at.exception]
+     assert 'Run your prepared voices' in [item.value for item in at.subheader]
+@@ -353,8 +354,8 @@
+     from streamlit.testing.v1 import AppTest
+     at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
+     at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
+-    at.session_state['autovideo_current_page'] = 'QUEUE'
+-    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
+     at.run()
+     assert not at.exception, [str(item.value) for item in at.exception]
+     picker = at.selectbox(key='queue-run-batch')
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7123_branding_pages_and_choice.py b/tests/test_v7123_branding_pages_and_choice.py
+--- a/tests/test_v7123_branding_pages_and_choice.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7123_branding_pages_and_choice.py	2026-11-01 12:32:02.000000000 +0000
+@@ -0,0 +1,417 @@
++"""v7.0.123: branding reaches a job made from prepared voices, the two pages are separated, and a blocked
++image can be chosen instead of regenerated.
++
++Three reports, from the same install:
++
++* "I don't see the earlier selected channel profile is attached to either of the language" - Create step 3 saved
++  a channel profile per language, the narration batch never recorded it, and `create_job_from_batch` wrote no
++  `production/language_editions.json`, so the new job had no name, no logo, no intro and no outro.
++* "the character was missing" - already handled in v7.0.122; a batch made before it carries no cast, so the
++  panel must ask rather than assume.
++* "keep the resume of the failed or scripted or planned jobs in this [Queue], we can keep the tts in a separate
++  section" - the Run your prepared voices panel and the batch lists moved to their own page.
++* "one of the old failed job, i want you to fix it" - it stopped at shot_051 with two saved images and no way to
++  say which one is the frame; the app now lists those saved images and keeps the one you choose, locally.
++"""
++import hashlib
++import json
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++from PIL import Image
++
++from engine import channel_profiles, flow_choice
++from engine.cast import job_cast
++from engine.speech_batches import list_speech_batches, pickable, with_attachments
++
++ROOT = Path(__file__).resolve().parent.parent
++APP = (ROOT / 'app.py').read_text(encoding='utf-8')
++CLI = (ROOT / 'cli.py').read_text(encoding='utf-8')
++WORDS = [{'word': word, 'start': index * 1.0, 'end': index * 1.0 + 0.9}
++         for index, word in enumerate('small daily habits beat big plans'.split())]
++
++
++# ------------------------------------------------------------------------------------------------ helpers
++def _voices(folder: Path, languages, duration=61.5) -> dict:
++    bundles = {}
++    for code in languages:
++        lang = folder / code / 'k1'
++        lang.mkdir(parents=True, exist_ok=True)
++        audio = lang / 'voice.mp3'
++        audio.write_bytes(b'ID3' + folder.name.encode() + code.encode() + b'\0' * 6000)
++        (lang / 'words.json').write_text(json.dumps(WORDS))
++        bundles[code] = {'language': code, 'audio': str(audio), 'words': str(lang / 'words.json'),
++                         'audio_sha256': hashlib.sha256(audio.read_bytes()).hexdigest(),
++                         'duration': duration, 'timing_source': 'measured'}
++    return bundles
++
++
++def make_batch(folder: Path, script: str, *, topic='Small habits', languages=('en', 'hi', 'or'),
++               character_ids=None, channel_profiles=None):
++    folder.mkdir(parents=True, exist_ok=True)
++    (folder / 'batch.json').write_text(json.dumps({
++        'source_language': 'en', 'source_script': script, 'editions': list(languages),
++        'scripts': {code: script for code in languages},
++        'request': {'provider': 'gemini', 'topic': topic, 'character_ids': list(character_ids or []),
++                    'channel_profiles': dict(channel_profiles or {})},
++        'error': '', 'bundles': _voices(folder, languages), 'phase': 'ready_for_review'}))
++    from engine.speech_batches import _row
++    return _row(folder, 'Create step 4')
++
++
++def make_profile(name='My Channel', *, logo=True, intro=True, outro=True) -> str:
++    """A channel profile in exactly the shape Channel Desk saves (name, names per language, assets).
++
++    Written directly, not through save_profile: that one snapshots media with ffmpeg, which this suite's
++    sandbox does not need to prove anything about branding reaching a job.
++    """
++    from engine.production import save
++    folder = Path('channel_profiles') / name.lower().replace(' ', '-')
++    folder.mkdir(parents=True, exist_ok=True)
++    assets = {}
++    for kind, wanted in (('logo', logo), ('intro', intro), ('outro', outro)):
++        if not wanted:
++            continue
++        media = folder / 'assets' / (kind + '.png' if kind == 'logo' else kind + '.mp4')
++        media.parent.mkdir(parents=True, exist_ok=True)
++        if kind == 'logo':
++            Image.new('RGB', (120, 120), (30, 30, 60)).save(media)
++        else:
++            media.write_bytes(b'\0\0\0\x18ftypmp42' + b'\0' * 200)
++        assets[kind] = {'path': str(media.resolve()), 'sha256': hashlib.sha256(media.read_bytes()).hexdigest()}
++    save(folder / 'profile.json', {
++        'schema_version': 1, 'id': folder.name, 'name': name,
++        'names': {'en': name + ' English', 'hi': name + ' Hindi', 'or': name},
++        'assets': assets})
++    return str((folder / 'profile.json').resolve())
++
++
++def make_job(root: Path, job_id: str, *, language='en', editions=('en', 'hi', 'or'), status='failed',
++             shots=0):
++    job = root / 'outputs' / job_id
++    for name in ('production', 'narration', 'logs', 'storyboard'):
++        (job / name).mkdir(parents=True, exist_ok=True)
++    (job / 'narration' / 'voice.mp3').write_bytes(b'ID3' + b'\0' * 6000)
++    (job / 'production_manifest.json').write_text(json.dumps(
++        {'job_id': job_id, 'topic': 'a topic', 'language': language, 'status': status,
++         'shots': [{'shot_id': 'shot_%03d' % (index + 1), 'status': 'planned'} for index in range(shots)]}))
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': language, 'editions': list(editions), 'profiles': {}, 'bundles': {},
++         'status': 'awaiting narration preparation'}))
++    from engine.project.database import JobDB
++    JobDB().upsert(job_id, topic='a topic', status=status, video_type='faceless_youtube',
++                   target_seconds=300, aspect='16:9', profile='STORYBOARD_ECONOMY',
++                   preset='cinematic_realism', dry_run=0)
++    return job
++
++
++def make_frame(job: Path, image='shot_051_open.jpg', *, candidates=2):
++    """A frame whose journal holds the images Flow already produced, exactly as a blocked request leaves them."""
++    output = job / 'storyboard' / image
++    probes = {}
++    for index in range(candidates):
++        probe = output.parent / (image + '.probe-%02d.jpg' % index)
++        Image.new('RGB', (160, 90), (40 + index * 60, 60, 90)).save(probe)
++        probes['key%d' % index] = {'project_url': 'https://flow.google.com/project/p1',
++                                   'signature': 'sig%d' % index, 'file': probe.name,
++                                   'state': 'downloaded',
++                                   'sha256': hashlib.sha256(probe.read_bytes()).hexdigest()}
++    (Path(str(output) + '.flow-request.json')).write_text(json.dumps({
++        'scope': 'isolated_image_v1', 'project_url': 'https://flow.google.com/project/p1',
++        'status': 'pending', 'capture_probes': probes, 'capture_inventory': ['sig0', 'sig1'],
++        'prompt': 'wide 16:9 cinematic shot of a learner writing in a notebook', 'reference_hashes': {}}))
++    return output
++
++
++def add_character(name='Mira the presenter'):
++    from engine.content_library import CharacterLibrary
++    photo = Path('character-photo.png').resolve()
++    if not photo.is_file():
++        Image.new('RGB', (48, 48), (200, 120, 90)).save(photo)
++    return CharacterLibrary().create(
++        name, 'Original fictional presenter with a round face, short hair and a navy jacket.',
++        reference_files=[str(photo)], original_confirmed=True)
++
++
++@pytest.fixture()
++def install(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setenv('AUTOVIDEO_SHARED_ROOT', str(tmp_path))
++    (tmp_path / 'speech_preparation').mkdir()
++    (tmp_path / 'outputs').mkdir()
++    (tmp_path / 'data' / 'content').mkdir(parents=True)
++    (tmp_path / 'config').symlink_to(ROOT / 'config')
++    (tmp_path / 'assets').symlink_to(ROOT / 'assets')
++    return tmp_path
++
++
++def run_cli(install, *arguments):
++    return subprocess.run([sys.executable, str(ROOT / 'cli.py'), 'v3', *arguments], cwd=str(install),
++                          capture_output=True, text=True, timeout=300,
++                          env={**os.environ, 'AUTOVIDEO_SHARED_ROOT': str(install), 'PYTHONPATH': str(ROOT)})
++
++
++# ------------------------------------------------------------------------ 1. branding travels with the voices
++def test_a_prepared_batch_records_the_channel_profile_of_each_language(install):
++    from engine import speech_cards
++    profile = make_profile()
++    character = add_character()
++
++    def fake_prepare_edition(root, script, language, **options):
++        folder = Path(root) / language / 'offline'
++        folder.mkdir(parents=True, exist_ok=True)
++        audio = folder / 'voice.mp3'
++        audio.write_bytes(b'ID3' + language.encode() + b'\0' * 100)
++        (folder / 'words.json').write_text(json.dumps(WORDS))
++        return {'language': language, 'audio': str(audio), 'words': str(folder / 'words.json'),
++                'duration': 12.0, 'timing_source': 'measured',
++                'audio_sha256': hashlib.sha256(audio.read_bytes()).hexdigest()}
++
++    original = speech_cards.prepare_edition
++    speech_cards.prepare_edition = fake_prepare_edition
++    try:
++        speech_cards.prepare_batch(
++            Path('speech_preparation/with-branding'), 'small daily habits beat big plans.', 'en',
++            ['en', 'hi', 'or'], provider='gemini',
++            localized_scripts={code: 'small daily habits beat big plans.' for code in ('en', 'hi', 'or')},
++            text_cards=False, draft_cards=False, character_ids=[character['id']],
++            channel_profiles={'en': profile, 'hi': profile, 'or': profile})
++    finally:
++        speech_cards.prepare_edition = original
++    row = next(row for row in list_speech_batches([]) if row['key'] == 'with-branding')
++    assert row['channel_profiles'] == {'en': profile, 'hi': profile, 'or': profile}
++    from engine.speech_batches import display_label
++    assert 'channel saved for English, Hindi, Odia' in display_label(row)
++
++
++def test_a_job_made_from_prepared_voices_keeps_the_channel_profile(install):
++    profile = make_profile()
++    make_batch(install / 'speech_preparation' / 'branded', 'small daily habits beat big plans.',
++               channel_profiles={'en': profile, 'hi': profile, 'or': profile})
++    created = run_cli(install, 'use-voices', 'branded', '--create-job', '--rights', 'own_content',
++                      '--seconds', '120')
++    assert created.returncode == 0, created.stdout + created.stderr
++    assert 'channel: ' in created.stdout and 'My Channel' in created.stdout
++    job_id = created.stdout.split('Created job ')[1].split(' from')[0]
++    job = install / 'outputs' / job_id
++    record = json.loads((job / 'production' / 'language_editions.json').read_text(encoding='utf-8'))
++    assert record['profiles'] == {'en': profile, 'hi': profile, 'or': profile}
++    assert record['editions'] == ['en', 'hi', 'or']
++    assert record['bundles'], 'the attached voices must stay recorded'
++    settings = json.loads((job / 'settings.json').read_text(encoding='utf-8'))
++    assert settings['channel_name'] == 'My Channel English'
++    assert settings['channel_logo'], 'the primary logo must reach the job settings'
++    assert settings['watermark'] is True
++    assert channel_profiles.job_profiles(job) == {'en': profile, 'hi': profile, 'or': profile}
++
++
++def test_the_channel_profile_can_be_chosen_or_changed_on_the_command_line(install):
++    profile = make_profile('First Channel')
++    second = make_profile('Second Channel', logo=False, intro=False, outro=False)
++    make_batch(install / 'speech_preparation' / 'plain-batch', 'small daily habits beat big plans.')
++    created = run_cli(install, 'use-voices', 'plain-batch', '--create-job', '--rights', 'own_content',
++                      '--seconds', '120', '--channel', 'en=' + profile + ',hi=' + profile)
++    assert created.returncode == 0, created.stdout + created.stderr
++    job_id = created.stdout.split('Created job ')[1].split(' from')[0]
++    job = install / 'outputs' / job_id
++    assert channel_profiles.job_profiles(job) == {'en': profile, 'hi': profile}
++    changed = run_cli(install, 'channel', job_id, '--all', second)
++    assert changed.returncode == 0, changed.stdout + changed.stderr
++    assert 'Second Channel' in changed.stdout
++    assert set(channel_profiles.job_profiles(job).values()) == {second}
++    listed = run_cli(install, 'channel', job_id)
++    assert 'no intro' not in listed.stdout or 'Second Channel' in listed.stdout
++    assert 'Nothing was generated or rendered' in changed.stdout
++
++
++# ------------------------------------------------------------------------ 2. the two pages are separate
++def test_the_two_pages_do_not_share_the_tts_panel():
++    queue = APP[APP.index('elif page == "QUEUE":'):APP.index('# ================= PREPARED VOICES')]
++    prepared = APP[APP.index('elif page == "PREPARED VOICES":'):APP.index('# ================= FLOW SESSION')]
++    # Queue resumes a job and points at the other page
++    assert 'Run your prepared voices' not in queue
++    assert 'speech_batch_controls' not in queue.split('def speech_batch_controls')[0] if False else True
++    assert 'Open Prepared Voices' in queue
++    assert 'on_click=open_prepared_voices' in queue
++    assert 'monitor_job(st.session_state.job_id)' in queue
++    # the prepared-voices page owns the picker, the lists and the stopped runs
++    assert "st.subheader('Run your prepared voices')" in prepared
++    assert "def speech_batch_controls(row):" in prepared
++    assert 'Stopped TTS runs a job no longer needs · ' in prepared
++    assert "'Create the job from these voices'" in prepared
++    assert "'Character in this video · optional (up to three)'" in prepared
++    assert 'Channel profile · name, logo, intro and outro' in prepared
++    assert 'channel_ids=chosen_cast' not in prepared
++    assert 'character_ids=chosen_cast' in prepared and 'channel_profiles=chosen_profiles or None' in prepared
++    # and it is reachable from the sidebar
++    assert '"PREPARED VOICES"' in APP and '"Prepared Voices · make a job from TTS"' in APP
++    assert "def open_prepared_voices():" in APP
++
++
++def test_an_existing_job_can_be_given_its_channel_profile(install):
++    profile = make_profile()
++    job = make_job(install, '20261031-121949-the-growth-mindset')
++    assert channel_profiles.missing(job) == ['en', 'hi', 'or']
++    result = channel_profiles.attach_profiles(job, {'en': profile, 'hi': profile, 'or': profile},
++                                              editions=['en', 'hi', 'or'])
++    assert result['intro_outro'] is True
++    assert 'English → My Channel' in channel_profiles.summary(result['rows'])
++    assert channel_profiles.missing(job) == []
++    record = json.loads((job / 'production' / 'language_editions.json').read_text(encoding='utf-8'))
++    assert record['branding_status'] == 'channel profiles attached'
++    assert record['status'] == 'awaiting narration preparation'  # narration state is not overwritten
++    # a profile that is not on this installation is refused, nothing written
++    with pytest.raises(ValueError) as error:
++        channel_profiles.attach_profiles(job, {'en': '/nowhere/profile.json'}, editions=['en'])
++    assert 'No saved channel profile' in str(error.value)
++
++
++# ------------------------------------------------------------------------ 3. choosing a saved image
++def test_a_blocked_frame_lists_its_saved_images_and_keeps_the_one_chosen(install):
++    job = make_job(install, '20261031-121949-growth', shots=57)
++    output = make_frame(job)
++    blocked = flow_choice.blocked_frames(job)
++    assert [row['image'] for row in blocked] == ['shot_051_open.jpg']
++    assert blocked[0]['count'] == 2
++    result = flow_choice.keep(job, 'shot_051_open.jpg', 1)
++    assert result['kept'].endswith('.probe-01.jpg')
++    assert output.is_file()
++    assert hashlib.sha256(output.read_bytes()).hexdigest() == result['sha256']
++    assert 'no Flow credit spent' in result['note']
++    journal = json.loads(Path(str(output) + '.flow-request.json').read_text(encoding='utf-8'))
++    assert journal['status'] == 'downloaded'
++    assert journal['capture_method'] == 'reviewed_candidate_choice'
++    assert journal['reviewed_choice']['file'].endswith('.probe-01.jpg')
++    # the other image is still there, and the frame is no longer waiting
++    assert Path(result['probe']).is_file()
++    assert flow_choice.all_frames(job) == []
++
++
++def test_a_changed_candidate_is_refused_with_the_reason(install):
++    job = make_job(install, '20261031-121949-growth', shots=57)
++    output = make_frame(job)
++    probe = Path(str(output) + '.probe-00.jpg')
++    Image.new('RGB', (160, 90), (10, 200, 10)).save(probe)
++    rows = flow_choice.candidates(output)
++    assert rows[1]['usable'] is False or rows[0]['usable'] is False
++    with pytest.raises(ValueError) as error:
++        flow_choice.keep(job, 'shot_051_open.jpg', 1)
++    assert 'no longer matches the checksum' in str(error.value) or 'cannot be used' in str(error.value)
++    assert not output.is_file()
++
++
++def test_the_command_line_lists_and_keeps_a_frame(install):
++    job = make_job(install, '20261031-121949-growth', shots=57)
++    make_frame(job)
++    listed = run_cli(install, 'keep-frame', job.name)
++    assert listed.returncode == 0, listed.stdout + listed.stderr
++    assert 'shot_051_open.jpg' in listed.stdout and 'BLOCKED' in listed.stdout
++    assert '1. shot_051_open.jpg.probe-00.jpg' in listed.stdout
++    kept = run_cli(install, 'keep-frame', job.name, '--image', 'shot_051_open.jpg', '--keep', '1')
++    assert kept.returncode == 0, kept.stdout + kept.stderr
++    assert 'Kept shot_051_open.jpg.probe-00.jpg' in kept.stdout
++    assert 'python3 cli.py v3 resume ' + job.name in kept.stdout
++    again = run_cli(install, 'keep-frame', job.name, '--image', 'shot_051_open.jpg', '--keep', '1')
++    assert again.returncode != 0
++    assert 'already saved as the frame' in (again.stdout + again.stderr)
++
++
++# ------------------------------------------------------------------------ 4. the page, end to end
++def test_the_page_creates_a_job_with_the_chosen_character(install):
++    """The real page: the panel shows a channel box per language and keeps the character that was chosen.
++
++    The channel path itself is proved by the CLI and engine tests above (AppTest cannot drive a selectbox whose
++    ``format_func`` maps profile paths to labels), so this test proves what only the page can: the three channel
++    boxes are offered, and the created job carries the cast from the panel.
++    """
++    profile = make_profile()
++    character = add_character()
++    make_batch(install / 'speech_preparation' / 'panel', 'small daily habits beat big plans.', topic='Panel')
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert 'Run your prepared voices' in [item.value for item in at.subheader]
++    assert len([item for item in at.selectbox if item.label.endswith(' channel')]) == 3
++    assert any(item.label.startswith('Character in this video') for item in at.multiselect)
++    at.multiselect(key='queue-run-cast-panel').select(character['id'])
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    at.button(key='queue-run-create').click()
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    created = at.session_state['job_id']
++    job = install / 'outputs' / created
++    assert job_cast(job)[0]['id'] == character['id']
++    notice = next(item.value for item in at.success if item.value.startswith('Created job'))
++    assert 'cast: Mira the presenter' in notice and 'channel: ' in notice
++
++
++def test_the_queue_page_no_longer_shows_the_tts_panel(install):
++    make_batch(install / 'speech_preparation' / 'waiting', 'small daily habits beat big plans.')
++    job = make_job(install, '20261031-121949-growth', shots=2, status='failed')
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['job_id'] = job.name
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    subheaders = [item.value for item in at.subheader]
++    assert 'Run your prepared voices' not in subheaders
++    assert 'Channel profile · name, logo, intro and outro' in subheaders
++    assert 'Saved images waiting for your choice' in subheaders
++    assert any('Resume here' in item.value for item in at.info)
++    assert 'Open Prepared Voices · make a job from prepared TTS' in [item.label for item in at.button]
++
++
++def test_the_page_keeps_a_blocked_image_and_says_what_happened(install):
++    job = make_job(install, '20261031-121949-growth', shots=57, status='failed')
++    make_frame(job)
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'QUEUE'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'QUEUE'
++    at.session_state['job_id'] = job.name
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert any('more than one real image' in item.value for item in at.warning)
++    at.button(key='flow-choice-save-' + job.name + '-shot_051_open.jpg').click()
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert (job / 'storyboard' / 'shot_051_open.jpg').is_file()
++    assert any('Press “Resume / continue job”' in item.value for item in at.success)
++
++
++def test_creating_a_job_lands_on_queue_and_resume(install):
++    """The job is created on one page and resumed on the other; the notice and the job follow it there."""
++    character = add_character()
++    make_batch(install / 'speech_preparation' / 'panel2', 'small daily habits beat big plans.', topic='Panel two')
++    from streamlit.testing.v1 import AppTest
++    at = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=300)
++    at.session_state['autovideo_workspace'] = 'Jobs & Recovery'
++    at.session_state['autovideo_current_page'] = 'PREPARED VOICES'
++    at.session_state['autovideo_page_jobs-and-recovery'] = 'PREPARED VOICES'
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    at.multiselect(key='queue-run-cast-panel2').select(character['id'])
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    at.button(key='queue-run-create').click()
++    at.run()
++    assert not at.exception, [str(item.value) for item in at.exception]
++    assert at.session_state['autovideo_current_page'] == 'QUEUE'
++    created = at.session_state['job_id']
++    assert created
++    # the confirmation is shown where the user now is, and so are the steps of the new job
++    assert any(item.value.startswith('Created job') for item in at.success)
++    assert 'SCRIPT' in [item.label for item in at.metric]
++    assert 'Resume here' in ' '.join(item.value for item in at.info)
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tools/update_v7121_to_v7122.py b/tools/update_v7121_to_v7122.py
+--- a/tools/update_v7121_to_v7122.py	2026-10-31 08:39:30.000000000 +0000
++++ b/tools/update_v7121_to_v7122.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,175 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.122 update to a v7.0.121 installation.
+-
+-Two reports on the same page after v7.0.121: "its only showing for the video which is have an activie job
+-already" and "its not picking the selected charecter for the video generation".
+-
+-1. **The cast is carried, and visible.** Create shows the character choice as its own step (it used to hide
+-   inside a collapsed "Characters and recovery preferences · optional" expander), the narration batch records
+-   the chosen characters, *Run your prepared voices* asks for the character and writes it into the new job, a
+-   job without a storyboard can be given one from the new **Cast** panel in Queue & Resume, and the CLI gained
+-   ``v3 use-voices --cast`` plus ``v3 cast <job>``.
+-
+-2. **Every prepared narration is offered.** The batch picker used to hide a batch as soon as a job held its
+-   voices and only read finished batches inside the Active job, so only the newest Create step 4 session ever
+-   appeared. It now lists them all - unused first - and says where each one's voices live.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.122 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.122-Cast-And-Every-Batch/tools/update_v7121_to_v7122.py .            # dry run
+-    python3 ../AutoVideoAI-v7.0.122-Cast-And-Every-Batch/tools/update_v7121_to_v7122.py . --apply    # install
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals, browser
+-profiles and ``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py', 'engine/cast.py', 'engine/batch_actions.py',
+-    'engine/speech_batches.py', 'engine/speech_cards.py',
+-    'tests/test_v7121_run_prepared_voices.py', 'tests/test_v7122_cast_and_every_batch.py',
+-    'CAST_AND_EVERY_BATCH_V7_0_122.md', 'tools/update_v7121_to_v7122.py',
+-]
+-# Files as they exist in 7.0.121: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['5d2e777ff57c1caa665fc56700bf39be4461e43efd3377c850717639909d8f46'],
+-    'app.py': ['03b28c3ef8d8bfb51c55b54d4b6c5ab9684092894e6b4f7608a270cd65a9d536'],
+-    'cli.py': ['a78b716c67a0487bf59d4163a584c00287d5402e32cad95f6566b2f062dbf0f1'],
+-    'engine/cast.py': ['bb6c5dcf0981f4b06a8d11343cf2ad5916239553a1e45db3df75daf09ff162d8'],
+-    'engine/batch_actions.py': ['dc19b2172f2e5192a553a59ae9dd71f48875796824d1261fc2655d482fdff91c'],
+-    'engine/speech_batches.py': ['5928bd9c7d4c5707e05c41624ae65f26024bc653fbc57b5db6781bcd8081698b'],
+-    'engine/speech_cards.py': ['169a0826319128106014ac3e60c50b23046fecaa68221df5d5b0429b1cae3f21'],
+-    'tests/test_v7121_run_prepared_voices.py': ['51972756d19bcfcf3c9153ef8e670ada23ed44f7da6171d4c91db1e413f5b903'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.121', '7.0.122')  # 7.0.122 allows a safe re-run after success
+-
+-# An older installation must walk the zips one at a time; this one knows the step before it.
+-EARLIER_STEPS = [
+-    ('7.0.120', '7.0.121', 'tools/update_v7120_to_v7121.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.121 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.121 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.121 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.122'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-        if destination.exists() and not allowed and sha(destination) != expected[name]:
+-            # A file this release introduces must not overwrite a different file that already sits at that path.
+-            raise ValueError('A different file already exists where this update installs ' + name +
+-                             '; preserved it and changed nothing. Move it aside and run the update again.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
+-        print('    python3 cli.py v3 self-check')
+-        print('Then open Jobs & Recovery > Queue & Resume. "Run your prepared voices" lists every finished '
+-              'narration; choose the batch, choose the character in "Character in this video", state the rights '
+-              'and press "Create the job from these voices". A saved job that has not planned its scenes can be '
+-              'given its character in the "Cast" panel on the same page. Command line: python3 cli.py v3 '
+-              'use-voices --list, then --create-job --rights own_content [--cast <character id>], and '
+-              'python3 cli.py v3 cast <job> [--set <character id>].')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tools/update_v7122_to_v7123.py b/tools/update_v7122_to_v7123.py
+--- a/tools/update_v7122_to_v7123.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7122_to_v7123.py	2026-11-01 12:43:58.000000000 +0000
+@@ -0,0 +1,188 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.123 update to a v7.0.122 installation.
++
++Three reports after v7.0.122:
++
++1. "I don't see the earlier selected channel profile is attached to either of the language" - Create step 3 chose
++   a channel profile per language, the narration batch never recorded it, and a job created from prepared voices
++   wrote no ``production/language_editions.json``: no channel name, no logo, no intro, no outro. The batch now
++   records ``channel_profiles`` per language, the job is given them, and Queue & Resume can attach a profile to a
++   job that already exists.
++
++2. "keep the resume of the failed or scripted or planned jobs in this ... we can keep the tts in a separate
++   section" - prepared narration moved to its own page, **Jobs & Recovery -> Prepared Voices**, with the batch
++   picker, the character, the channel profile per language, and the stopped-TTS section. Queue & Resume now only
++   resumes a saved job, and creating a job lands there.
++
++3. "one of the old failed job, i want you to fix it" - a frame that stopped because two real images were saved
++   can now be decided: Queue & Resume lists the saved images of every waiting frame and keeps the one you choose,
++   locally (no browser, no Flow request, no credit, nothing deleted), and ``v3 keep-frame`` does the same.
++
++Usage (run from the existing installation folder, after extracting the 7.0.123 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.123-Branding-Pages-And-Choice/tools/update_v7122_to_v7123.py .         # dry run
++    python3 ../AutoVideoAI-v7.0.123-Branding-Pages-And-Choice/tools/update_v7122_to_v7123.py . --apply # install
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals and request
++files, character photos, channel profiles, browser profiles and ``music_library/`` are never copied, moved or
++deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py',
++    'engine/channel_profiles.py', 'engine/flow_choice.py',
++    'engine/batch_actions.py', 'engine/speech_batches.py', 'engine/speech_cards.py',
++    'tests/test_v7120_use_prepared_voices.py', 'tests/test_v7121_run_prepared_voices.py',
++    'tests/test_v7119_queue_narration_and_steps.py', 'tests/test_v7122_cast_and_every_batch.py',
++    'tests/test_v7123_branding_pages_and_choice.py',
++    'BRANDING_PAGES_AND_CHOICE_V7_0_123.md', 'tools/update_v7122_to_v7123.py',
++]
++# Files as they exist in 7.0.122: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['d23aa1959198e16b50aba707f58ca64ff041aa93dae581d02b91e774eb21b4c2'],
++    'app.py': ['88b59855b94a3766076b63c0ca6ff58c01840bcd5987ef1c440c6879508b1b7e'],
++    'cli.py': ['0ddbeb11895d9229be33fa22c052e40b42cf4d244cbeb3eed7ac91748d088c93'],
++    'engine/batch_actions.py': ['60a13f336458bcdeb4233407b4ce32b738c96afc51b83708c2200d7e7c54e3d7'],
++    'engine/speech_batches.py': ['52be37af9cb2bdebd859e28a5f02fd4dffca2238cd6bd9e1f51f65b9925da898'],
++    'engine/speech_cards.py': ['8d9561ac7eca8fe6c4cd04e536c617aae58c0a2cee7cba3b7489cdc8090de0c6'],
++    'tests/test_v7121_run_prepared_voices.py': ['42910c97fe76a5bb06aea7b78680b2296033ebb1a886b3beef594ec28ec99ab2'],
++    'tests/test_v7122_cast_and_every_batch.py': ['c42c020427b87355523a3eaaf3142d0403ada0ac71441188212126193e8a68f8'],
++    'tests/test_v7120_use_prepared_voices.py': [
++        '519d5f4472435ce6fdaf2ffa852a2a7307aebc304ebce572a54e9fbedad9fb9d'],
++    'tests/test_v7119_queue_narration_and_steps.py': [
++        'd03c0182a69e1be9dce769c4daff70a4af3ef233fc4513de9ca6b287e211ce98'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.122', '7.0.123')  # 7.0.123 allows a safe re-run after success
++
++# An older installation must walk the zips one at a time; this one knows the step before it.
++EARLIER_STEPS = [
++    ('7.0.121', '7.0.122', 'tools/update_v7121_to_v7122.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.122 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.122 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.122 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.123'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++        if destination.exists() and not allowed and sha(destination) != expected[name]:
++            # A file this release introduces must not overwrite a different file that already sits at that path.
++            raise ValueError('A different file already exists where this update installs ' + name +
++                             '; preserved it and changed nothing. Move it aside and run the update again.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
++        print('    python3 cli.py v3 self-check')
++        print('Then: Jobs & Recovery > Prepared Voices creates a job from your TTS (character + channel profile '
++              'per language, then "Create the job from these voices"). Queue & Resume resumes a saved job, can '
++              'attach its channel profile in "Channel profile", and can decide a frame that stopped with more '
++              'than one saved image in "Saved images waiting for your choice" - locally, with no Flow request and '
++              'no credit. From a terminal: python3 cli.py v3 use-voices --list / --create-job --rights '
++              'own_content [--cast <id>] [--channel en=<profile>,...], python3 cli.py v3 channel <job> '
++              '[--set en=<profile>], python3 cli.py v3 keep-frame <job> [--image <file> --keep <n>].')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

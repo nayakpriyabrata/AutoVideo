@@ -1,0 +1,770 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/JOB_REFERENCE_V7_0_100.md b/JOB_REFERENCE_V7_0_100.md
+--- a/JOB_REFERENCE_V7_0_100.md	1970-01-01 00:00:00.000000000 +0000
++++ b/JOB_REFERENCE_V7_0_100.md	2026-10-26 12:39:24.000000000 +0000
+@@ -0,0 +1,99 @@
++# AutoVideoAI 7.0.100 · the commands take a job id, and a wrong one says what to type
++
++Your three attempts failed for one reason that had nothing to do with Flow:
++
++```
++python3 cli.py v3 recover-flow-video outputs/20261022-143856-7-small-daily-habits-tha-9729
++
++FileNotFoundError: .../AutoVideoAI-v7/outputs/outputs/20261022-143856-7-small-daily-habits-tha-9729/production_manifest.json
++```
++
++The app already prefixes `outputs/`, so the pasted folder became `outputs/outputs/…`. The trailing-slash
++retry failed identically, and the traceback never said what to type instead.
++
++**The correct command is just the job id:**
++
++```
++python3 cli.py v3 recover-flow-video 20261022-143856-7-small-daily-habits-tha-9729 \
++    --shot-id shot_014 --wait-seconds 180
++```
++
++(run it from `/mnt/c/Users/eiyanpr/Downloads/Auto/AutoVideoAI-v7`).
++
++## Where your job actually stands now
++
++Your new screenshot shows Flow answered the approval with
++
++> Your video generation has been scheduled and is waiting in the queue due to high demand. Feel free to check
++> back shortly to check its progress.
++
++So the 5 credits were spent and the generation **is accepted — it is queued, not finished**. Nothing is
++downloadable yet, which is exactly what the recovery scan reported. Also note the Flow UI shows the approval as
++*chosen* (the faded row) with a separate **Approve** button at the bottom right: that button submits the choice.
++Your queue message means it did submit.
++
++**Do not resume yet.** Resume reopens the project, finds no video, waits, and pauses again — harmless, but it
++burns the browser round-trip and changes nothing.
++
++The order is:
++
++1. **Wait** for the queue (5–30 minutes is normal at "high demand"; the clip appears in the project's media
++   grid, and a `360p` tile appears in the chat). Waiting costs nothing.
++2. **Download it** (0 credits, QC still runs):
++
++   ```
++   python3 cli.py v3 recover-flow-video 20261022-143856-7-small-daily-habits-tha-9729 \
++       --shot-id shot_014 --wait-seconds 180
++   ```
++
++   If it still says no verified match, open the new thumbnail, copy its
++   `https://flow.google.com/project/37d8cf57-…/edit/<id>` URL and add `--asset-url <url> --asset-reviewed`.
++   The same download is available in the Queue panel under
++   *"Recover a visually reviewed video if its old fingerprint no longer matches"*.
++3. **Resume** — from the UI is fine now, because the shot is downloaded and the manifest knows it. Resume will
++   continue from shot_014 to the remaining shots.
++
++Resuming **before** the clip exists is what would put you back in the loop you were in.
++
++## What 7.0.100 changes
++
++| Piece | Behaviour |
++|---|---|
++| `engine/job_ref.py` (new) | `normalize_job_id()` accepts `2026…`, `outputs/2026…`, `outputs/2026…/`, `./outputs/2026…`, `outputs/outputs/2026…` (the mistake itself), `C:\…\outputs\2026…` and any absolute path to the job folder |
++| Wrong id | `job_lookup_error()` says commands take the **bare** id, explains why `outputs/<id>` becomes `outputs/outputs/<id>`, and lists the jobs that do exist (or suggests `--outputs-root` when none are found) |
++| CLI | every command with a job id normalizes it first — and never blocks an offline command on a reference it cannot resolve |
++| `recover-flow-video` | a missing production now raises that message instead of `FileNotFoundError` from inside the loader; the "no downloadable video" message names the queued/high-demand case and says waiting costs no credits |
++
++## Tests
++
++`tests/test_v7100_job_reference.py` — 18 tests: every accepted reference shape (bare, trailing slash, `outputs/`,
++`outputs/outputs/`, `./outputs/`, Windows path, absolute path, quoted path), the typo path and its message, an
++empty outputs folder, an empty reference; the CLI handing the Factory the bare id for `recover-flow-video` and
++`approve-request`; the CLI never blocking an unresolved reference (offline commands keep working); the Factory
++reporting an unknown job as a message rather than a traceback; and the queued-generation wording.
++
++`tests/test_cli_content_commands.py` (the offline CLI suite that caught my first, too-strict version) passes
++unchanged.
++
++## Install
++
++1. Stop the dashboard (all tabs).
++2. Extract `AutoVideoAI-v7.0.100-Job-Reference.zip` beside your installation.
++3. From inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.100/tools/update_v799_to_v7100.py .            # dry run
++   python3 ../AutoVideoAI-v7.0.100/tools/update_v799_to_v7100.py . --apply    # installs the code
++   ```
++
++   Accepts an installed 7.0.99 (or an already-updated 7.0.100), backs replaced files up under
++   `code-update-backups/v7.0.99-to-v7.0.100-<timestamp>`, and never touches outputs, jobs, Flow journals,
++   browser profiles or Clip Studio folders.
++
++You do not need 7.0.100 to make progress: the bare-id command above works on the version you have.
++
++## Not verified live
++
++No Flow project was opened and no credit was spent here. The reference handling, the messages and the queued
++wording are covered by tests; whether the queued clip has appeared can only be settled by looking at the
++project.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 11:57:04.000000000 +0000
++++ b/VERSION	2026-10-26 12:39:34.000000000 +0000
+@@ -1 +1 @@
+-7.0.99
++7.0.100
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/cli.py b/cli.py
+--- a/cli.py	2026-10-26 11:54:18.000000000 +0000
++++ b/cli.py	2026-10-26 12:38:58.000000000 +0000
+@@ -484,6 +484,12 @@
+     finish_render = sub.add_parser('finish-render', help='Render one approved language edition locally without changing its source')
+     finish_render.add_argument('plan');finish_render.add_argument('--language',choices=['en','hi','or'],required=True)
+     args = ap.parse_args(argv)
++    # v7.0.100: `outputs/<id>`, `outputs/<id>/`, `outputs/outputs/<id>` and absolute paths are reduced to the
++    # bare id the Factory expects. A reference that resolves to nothing is passed on untouched, so offline
++    # commands keep working and job-loading commands report the friendly message instead of a traceback.
++    if getattr(args, 'job_id', None):
++        from engine.job_ref import normalize_job_id
++        args.job_id = normalize_job_id(args.job_id, getattr(args, 'outputs_root', None) or 'outputs')
+ 
+     if args.cmd in ('channel-profile','finish-plan','finish-edition','finish-render'):
+         from engine import finishing_studio as finish
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 12:01:00.000000000 +0000
++++ b/engine/factory.py	2026-10-26 12:37:22.000000000 +0000
+@@ -4013,12 +4013,14 @@
+         approve``. ``inspect_only`` opens the project, reads the card and clicks nothing.
+         """
+         from .flow_pending_approval import approval_decision, evidence_for
++        from .job_ref import job_lookup_error
+ 
+         try:
+             m = self.pm.load_manifest(job_id)
+         except (OSError, ValueError) as error:
+-            raise ValueError(f"No saved production for job {job_id!r} "
+-                             f"({type(error).__name__}); nothing was opened or clicked.")
++            raise ValueError(job_lookup_error(job_id, getattr(self.pm, "root", "outputs"),
++                                              f"The saved production could not be read "
++                                              f"({type(error).__name__}); nothing was opened or clicked."))
+         unfinished = [s for s in m.shots if not s.accepted_take]
+         if shot_id:
+             shot = next((s for s in m.shots if s.shot_id == shot_id), None)
+@@ -4092,8 +4094,14 @@
+         first, is limited to the stated cost, and the download that follows is free.
+         """
+         from .providers.flow_browser import FlowBrowserProvider
++        from .job_ref import job_lookup_error
+ 
+-        m = self.pm.load_manifest(job_id)
++        try:
++            m = self.pm.load_manifest(job_id)
++        except (OSError, ValueError) as error:
++            raise ValueError(job_lookup_error(job_id, getattr(self.pm, "root", "outputs"),
++                                              f"The saved production could not be read "
++                                              f"({type(error).__name__}); nothing was opened or downloaded."))
+         candidates = [s for s in m.shots
+                       if not s.accepted_take and s.status in
+                       ("failed", "generating", "planned", "approved", "qc")]
+@@ -4191,7 +4199,10 @@
+             if not result or not result.get("path"):
+                 raise RuntimeError(
+                     f"No downloadable video tile became available in {int(wait_seconds)}s. "
+-                    "The project is unchanged; wait for Flow to finish/reset, then run this recovery again.")
++                    "The project is unchanged; wait for Flow to finish/reset, then run this recovery again. "
++                    "If the saved project says the generation is queued because of high demand, there is nothing "
++                    "to download yet: wait for the clip to appear (waiting costs no credits), then run this "
++                    "command again.")
+             bound = self._remember_flow_project_url(
+                 job_id, result.get("project_url") or provider.current_project_url())
+             associated = self.associate_download(job_id, shot.shot_id, result["path"])
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/engine/job_ref.py b/engine/job_ref.py
+--- a/engine/job_ref.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/job_ref.py	2026-10-26 12:38:58.000000000 +0000
+@@ -0,0 +1,102 @@
++"""v7.0.100: accept the job reference people actually type, and say what to type when it is wrong.
++
++Field case (2026-10-26, job ``20261022-143856-7-small-daily-habits-tha-9729``): every recovery command
++failed with a bare ``FileNotFoundError``:
++
++    python3 cli.py v3 recover-flow-video outputs/20261022-143856-7-small-daily-habits-tha-9729 ...
++
++    FileNotFoundError: .../AutoVideoAI-v7/outputs/outputs/20261022-143856-.../production_manifest.json
++
++The Factory already prefixes ``outputs/``, so the pasted path became ``outputs/outputs/...``. The user then
++tried a trailing slash, which failed the same way, and the traceback never said what to do instead.
++
++``normalize_job_id`` turns the common shapes - ``<id>``, ``outputs/<id>``, ``outputs/<id>/``,
++``./outputs/<id>``, ``C:\\...\\outputs\\<id>`` or any absolute path to the job folder - into the bare id, and
++``job_lookup_error`` explains an unknown one with the correct command and the ids that do exist.
++"""
++from __future__ import annotations
++
++import os
++
++
++def _parts(value: str) -> list[str]:
++    return [part for part in value.replace('\\', '/').split('/') if part not in ('', '.')]
++
++
++def normalize_job_id(value, outputs_root='outputs', strict=False) -> str:
++    """Return the bare job id for ``value``.
++
++    ``strict=False`` (the CLI) never raises: a reference that does not resolve is reduced to its last path
++    component and handed on, so commands that deliberately work offline keep their own behaviour and the
++    ones that load a job report the friendly ``job_lookup_error`` message. ``strict=True`` raises as soon as
++    there is no such job.
++    """
++    if strict:
++        return _normalize(value, outputs_root, strict=True)
++    try:
++        return _normalize(value, outputs_root, strict=True)
++    except ValueError:
++        parts = _parts(str(value or '').strip().strip('"').strip("'"))
++        return (parts[-1] if parts else str(value or '').strip())
++
++
++def _normalize(value, outputs_root, strict=False) -> str:
++    raw = str(value or '').strip().strip('"').strip("'")
++    if not raw:
++        raise ValueError(job_lookup_error(value, outputs_root))
++    expanded = os.path.expanduser(raw)
++    # 1. A real path to the job folder (absolute, or relative to the current directory).
++    if os.path.isdir(expanded) and os.path.isfile(os.path.join(expanded, 'production_manifest.json')):
++        bare = os.path.basename(os.path.normpath(expanded))
++        if _resolve(bare, outputs_root):
++            return bare
++    parts = _parts(raw)
++    if not parts:
++        raise ValueError(job_lookup_error(value, outputs_root))
++    # 2. A path that mentions outputs/<id> (or outputs/<id>/).
++    for index in range(len(parts) - 1, -1, -1):
++        if parts[index].lower() == 'outputs':
++            if index + 1 < len(parts):
++                candidate = parts[index + 1]
++                resolved = _resolve(candidate, outputs_root)
++                if resolved:
++                    return resolved
++            raise ValueError(job_lookup_error(value, outputs_root))
++    # 3. A bare id, with or without a trailing separator.
++    resolved = _resolve(parts[-1], outputs_root)
++    if resolved:
++        return resolved
++    raise ValueError(job_lookup_error(value, outputs_root))
++
++
++def _resolve(candidate: str, outputs_root) -> str:
++    """The real id when ``outputs_root/candidate`` is a job folder, else ''."""
++    root = os.path.abspath(str(outputs_root or 'outputs'))
++    path = os.path.join(root, candidate)
++    return candidate if os.path.isdir(path) else ''
++
++
++def job_ids(outputs_root='outputs', limit: int = 8) -> list[str]:
++    root = os.path.abspath(str(outputs_root or 'outputs'))
++    try:
++        names = sorted((name for name in os.listdir(root)
++                        if os.path.isdir(os.path.join(root, name)) and not name.startswith('.')),
++                       reverse=True)
++    except OSError:
++        return []
++    return names[:limit]
++
++
++def job_lookup_error(value, outputs_root='outputs', extra: str = '') -> str:
++    root = os.path.abspath(str(outputs_root or 'outputs'))
++    message = (f"No saved job for {str(value or '').strip()!r}. Commands take the bare job id, without a path: "
++               f"`python3 cli.py v3 <command> <job-id>` (the app adds outputs/ itself, so `outputs/<job-id>` "
++               f"becomes outputs/outputs/<job-id>).")
++    found = job_ids(outputs_root)
++    if found:
++        message += " Saved job ids in " + root + ": " + ", ".join(found) + (
++            " (most recent first; raise the limit by looking at " + root + ")" if len(found) >= 8 else "") + "."
++    else:
++        message += (" No job folders were found in " + root + "; run the command from the AutoVideoAI "
++                    "installation folder, or pass --outputs-root <folder> if the jobs live elsewhere.")
++    return message + ((' ' + extra) if extra else '')
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/tests/test_v7100_job_reference.py b/tests/test_v7100_job_reference.py
+--- a/tests/test_v7100_job_reference.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7100_job_reference.py	2026-10-26 12:39:04.000000000 +0000
+@@ -0,0 +1,163 @@
++"""v7.0.100: the job reference people type is accepted, and a wrong one explains itself.
++
++Field case (2026-10-26, job 20261022-143856-7-small-daily-habits-tha-9729): the recovery commands were run with
++the folder pasted in, so the Factory's own ``outputs/`` prefix produced
++
++    FileNotFoundError: .../outputs/outputs/20261022-143856-.../production_manifest.json
++
++The same happened with a trailing slash, and the traceback never named the fix. These tests pin the accepted
++shapes, the guidance for an unknown one, and that the CLI hands the Factory the bare id.
++
++No browser, no Flow request, no credits.
++"""
++import json
++
++import pytest
++
++from engine import job_ref
++from engine.job_ref import job_lookup_error, normalize_job_id
++
++JOB = '20261022-143856-7-small-daily-habits-tha-9729'
++
++
++@pytest.fixture()
++def root(tmp_path):
++    outputs = tmp_path / 'outputs'
++    job = outputs / JOB
++    job.mkdir(parents=True)
++    (job / 'production_manifest.json').write_text('{"job_id": "%s"}' % JOB)
++    (outputs / '20261001-090000-older-job-abcd').mkdir()
++    return outputs
++
++
++@pytest.mark.parametrize('value', [
++    JOB,
++    JOB + '/',
++    'outputs/' + JOB,
++    'outputs/' + JOB + '/',
++    './outputs/' + JOB,
++    'outputs//' + JOB,
++])
++def test_every_common_job_reference_shape_resolves_to_the_bare_id(root, value):
++    assert normalize_job_id(value, str(root)) == JOB
++
++
++def test_a_windows_style_path_resolves(root):
++    windows = 'C:\\Users\\eiyanpr\\Downloads\\Auto\\AutoVideoAI-v7\\outputs\\' + JOB
++    assert normalize_job_id(windows, str(root)) == JOB
++
++
++def test_an_absolute_path_to_the_job_folder_resolves(root):
++    assert normalize_job_id(str(root / JOB), str(root)) == JOB
++    assert normalize_job_id('"' + str(root / JOB) + '"', str(root)) == JOB
++
++
++def test_a_double_outputs_prefix_is_forgiven(root):
++    """The exact shape that failed in the field: the app added its own outputs/ to a pasted path."""
++    assert normalize_job_id('outputs/outputs/' + JOB, str(root)) == JOB
++
++
++def test_a_double_outputs_prefix_with_a_typo_still_explains_itself(root):
++    assert normalize_job_id('outputs/outputs/does-not-exist', str(root)) == 'does-not-exist'
++    with pytest.raises(ValueError) as error:
++        normalize_job_id('outputs/outputs/does-not-exist', str(root), strict=True)
++    message = str(error.value)
++    assert 'becomes outputs/outputs/' in message
++    assert JOB in message                      # the ids that do exist are listed
++
++
++def test_an_unknown_id_lists_what_does_exist(root):
++    with pytest.raises(ValueError) as error:
++        normalize_job_id('outputs/does-not-exist', str(root), strict=True)
++    message = str(error.value)
++    assert 'No saved job for' in message
++    assert '<job-id>' in message               # the shape of a correct command
++    assert JOB in message and 'older-job' in message
++
++
++def test_an_empty_outputs_folder_says_where_to_run_from(tmp_path):
++    empty = tmp_path / 'nothing-here'
++    empty.mkdir()
++    message = job_lookup_error('x', str(empty))
++    assert '--outputs-root' in message and str(empty) in message
++
++
++def test_an_empty_reference_is_reported(root):
++    with pytest.raises(ValueError):
++        normalize_job_id('   ', str(root), strict=True)
++    assert normalize_job_id('   ', str(root)) == ''      # the CLI hands it on; the Factory reports it
++
++
++# ----------------------------------------------------------------- the CLI hands over the bare id
++
++class _StubFactory:
++    last = None
++
++    def __init__(self, *args, **kwargs):
++        pass
++
++    def recover_flow_video(self, job_id, **kwargs):
++        _StubFactory.last = ('recover', job_id, kwargs)
++        return {'ok': True}
++
++    def approve_flow_request(self, job_id, **kwargs):
++        _StubFactory.last = ('approve', job_id, kwargs)
++        return {'ok': True}
++
++
++@pytest.fixture()
++def cli_in(root, monkeypatch):
++    import os
++    import cli
++    from engine import factory as factory_module
++    monkeypatch.setattr(factory_module, 'Factory', _StubFactory)
++    monkeypatch.chdir(root.parent)
++    _StubFactory.last = None
++    return cli
++
++
++def test_the_cli_strips_a_pasted_folder_from_recover_flow_video(cli_in):
++    cli_in.main_v3(['recover-flow-video', 'outputs/' + JOB + '/', '--shot-id', 'shot_014'])
++    kind, job_id, kwargs = _StubFactory.last
++    assert (kind, job_id) == ('recover', JOB)
++    assert kwargs['shot_id'] == 'shot_014'
++
++
++def test_the_cli_strips_a_pasted_folder_from_approve_request(cli_in):
++    cli_in.main_v3(['approve-request', 'outputs/' + JOB, '--shot-id', 'shot_014', '--confirm-credits', '5'])
++    kind, job_id, kwargs = _StubFactory.last
++    assert (kind, job_id) == ('approve', JOB)
++    assert kwargs['confirm_credits'] == 5
++
++
++def test_the_cli_never_blocks_offline_commands_with_a_reference_it_cannot_resolve(cli_in):
++    """Offline commands must keep working; the friendly message belongs to the loader, not the parser."""
++    cli_in.main_v3(['recover-flow-video', 'outputs/typo-job'])
++    kind, job_id, _ = _StubFactory.last
++    assert (kind, job_id) == ('recover', 'typo-job')      # reduced to the last component, unchanged otherwise
++
++
++def test_the_factory_reports_an_unknown_job_instead_of_a_traceback(tmp_path, monkeypatch):
++    from engine.factory import Factory
++    monkeypatch.setattr(Factory, '_settings', lambda self, job_id: {})
++    factory = Factory.__new__(Factory)
++
++    class Manager:
++        root = str(tmp_path / 'outputs')
++
++        def load_manifest(self, job_id):
++            raise FileNotFoundError('missing')
++
++    factory.pm = Manager()
++    with pytest.raises(ValueError) as error:
++        Factory.recover_flow_video(factory, 'not-a-job', shot_id='shot_014')
++    message = str(error.value)
++    assert 'No saved job for' in message
++    assert 'nothing was opened or downloaded' in message
++
++
++def test_the_queued_generation_is_named_in_the_no_video_message():
++    from pathlib import Path
++    source = Path('engine/factory.py').read_text(encoding='utf-8')
++    assert 'queued because of high demand' in source
++    assert 'waiting costs no credits' in source
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/tools/update_v798_to_v799.py b/tools/update_v798_to_v799.py
+--- a/tools/update_v798_to_v799.py	2026-10-26 11:57:04.000000000 +0000
++++ b/tools/update_v798_to_v799.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,161 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.99 update to a v7.0.98 installation.
+-
+-A Flow *video* request is confirmed by a click, not by a wait. v7.0.98 named the right request but only
+-offered download-only recovery, so a job whose card was never approved paused again and again ("0 fresh
+-candidates, no verified match"). v7.0.99 makes the card visible and resolvable:
+-
+-- new ``engine/flow_pending_approval``: read-only evidence (submit ledger + journal reservations) that a
+-  submitted video request was never approved, so a card is probably still waiting;
+-- the Queue panel, the blocked-Resume message and ``tools/flow_resume_preflight.py`` say so, and offer the
+-  approve command;
+-- ``flow_browser.pending_approval_card()`` reads the newest card's cost without clicking;
+-- ``cli.py v3 approve-request <job> --shot-id <shot> --confirm-credits N`` approves ONE card
+-  (``Approve``, never ``Always approve``) after every guard has passed, then downloads it for free;
+-  ``--inspect`` is read-only.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.99 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.99/tools/update_v798_to_v799.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.99/tools/update_v798_to_v799.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['VIDEO_APPROVAL_PENDING_V7_0_99.md', 'VERSION', 'app.py', 'cli.py',
+-           'engine/factory.py', 'engine/flow_pending_approval.py', 'engine/flow_resume_safety.py',
+-           'engine/providers/flow_browser.py', 'tests/test_v799_approval_pending.py',
+-           'tools/flow_resume_preflight.py', 'tools/update_v798_to_v799.py']
+-# Files as they exist in 7.0.98: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['32b1d7eec2cf5ccb1d26e5ecffbdf1f6ccc8412cad8d8631e1ae1d064bd32bec'],
+-    'app.py': ['e3b89efcfed9e85bad707dfcb75b57211861f86e9a37823489ad44f5f2c17171'],
+-    'cli.py': ['ea0f73b25a2d6e9c438a9c6c40872ef04464ffbd550474b75c46656717a9c85f'],
+-    'engine/factory.py': ['6a0f1e1c4638e1857c792a966478f7c6c04a6dc9f4e09bcc37ba0933b2471ddc'],
+-    'engine/flow_resume_safety.py': ['6848a974a84cb46fd470d2fefff283bedcb4894923ced6b457e722efe3f0320f'],
+-    'engine/providers/flow_browser.py': ['66edec36373e60477eaccb162aa3e5e2a6961b48027e3913d122f09ab9350e8d'],
+-    'tools/flow_resume_preflight.py': ['b03b2f1e25bfb8599cf3fe791d7a3b8b65c04eb43f76e73e6652317b35a72769'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.98', '7.0.99')  # 7.0.99 allows a safe re-run after success
+-
+-# The 7.0.98 zip carries the 7.0.97 to 7.0.98 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.97', '7.0.98', 'tools/update_v797_to_v798.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.98 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.98 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.98 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.99 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.99 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.99 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.98-to-v7.0.99-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.99. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs a/tools/update_v799_to_v7100.py b/tools/update_v799_to_v7100.py
+--- a/tools/update_v799_to_v7100.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v799_to_v7100.py	2026-10-26 12:39:34.000000000 +0000
+@@ -0,0 +1,155 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.100 update to a v7.0.99 installation.
++
++Every Factory CLI command takes a **bare** job id, because the app prefixes ``outputs/`` itself. Pasting the
++job folder in produced ``outputs/outputs/<id>/production_manifest.json`` and a bare ``FileNotFoundError``
++(field case 2026-10-26). v7.0.100:
++
++- new ``engine/job_ref``: ``normalize_job_id()`` accepts ``<id>``, ``outputs/<id>``, ``outputs/<id>/``,
++  ``./outputs/<id>``, ``outputs/outputs/<id>``, Windows-style paths and absolute paths to the job folder;
++- ``job_lookup_error()`` explains an unknown reference, says commands take the bare id, and lists the jobs
++  that do exist (or suggests ``--outputs-root``);
++- ``cli.py`` normalizes the id for every command that takes one, and never blocks an offline command on a
++  reference it cannot resolve;
++- ``recover-flow-video`` reports an unreadable production as that message instead of a traceback, and its
++  "no downloadable video" text names the queued/high-demand case (waiting costs no credits).
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.100 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.100/tools/update_v799_to_v7100.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.100/tools/update_v799_to_v7100.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['JOB_REFERENCE_V7_0_100.md', 'VERSION', 'cli.py', 'engine/factory.py', 'engine/job_ref.py',
++           'tests/test_v7100_job_reference.py', 'tools/update_v799_to_v7100.py']
++# Files as they exist in 7.0.99: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['48b53e858c1ae0cf01d436d2388f0a08802e06a6335acffa6e21a8bab9bc66c7'],
++    'cli.py': ['b3d4632e07a38a37eae5b3b7d95827168c3fdf143a1469e160fc26f6a18f9769'],
++    'engine/factory.py': ['9ca7468b15abf18ba17a3f029eadf0b180ddad2808bb3c4577684034202b9dc6'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.99', '7.0.100')  # 7.0.100 allows a safe re-run after success
++
++# The 7.0.99 zip carries the 7.0.98 to 7.0.99 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.98', '7.0.99', 'tools/update_v798_to_v799.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.99 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.99 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.99 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.100 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.100 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.100 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.99-to-v7.0.100-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.100. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

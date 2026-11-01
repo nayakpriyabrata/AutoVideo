@@ -1,0 +1,1616 @@
+diff --git a/TRANSCRIPT_EDIT_AND_GEMINI_PICKER_V7_0_110.md b/TRANSCRIPT_EDIT_AND_GEMINI_PICKER_V7_0_110.md
+new file mode 100644
+index 0000000..390113e
+--- /dev/null
++++ b/TRANSCRIPT_EDIT_AND_GEMINI_PICKER_V7_0_110.md
+@@ -0,0 +1,144 @@
++# AutoVideoAI v7.0.110 — Fix the transcript text, and pick Gemini's shots in the app
++
++Two things you asked for after v7.0.109. Neither of them records anything or spends Flow credits.
++
++* **You can see the transcript, fix a spelling, and burn the fixed text** — for one language at a time, without
++  re-recording the voice.
++* **The Gemini shot picker is in the app**, not only on the command line.
++
++---
++
++## 1. The transcript, in your own words
++
++The v7.0.109 screenshot showed Odia captions where the *words* were right and the *spellings* were not. v7.0.109
++answered that by taking the caption text from the reviewed script and by switching Odia transcripts off by
++default. That is a good default, and it is still the default. It is not the same as letting you fix the word
++that is wrong.
++
++v7.0.110 adds the third route.
++
++### What you see
++
++In the job panel (**Queue**, **Create**, or **Storyboard**), open
++**Languages and editions → Fix the transcript text (optional · the narration is never re-recorded)**.
++
++1. Pick the language. Only languages whose narration has already been measured are offered, because those are
++   the only ones with word timings to show.
++2. The editor lists the transcript **as captions**, in the same 6-word lines the video shows, with the start
++   time of each line. Edit the text in place.
++3. **Save corrected text** stores the correction for that language only.
++4. **Render language editions** (or “Render all languages”) then burns the corrected text. **Only that language is
++   re-rendered**; Hindi and English keep their existing files, and the earlier export of the corrected language
++   stays on disk as well.
++
++The same thing on the command line, for a long transcript or a scripted fix:
++
++```bash
++python3 cli.py v3 transcript outputs/<job> --show                 # read it
++python3 cli.py v3 transcript outputs/<job> --export or.txt        # a plain text file to edit anywhere
++python3 cli.py v3 transcript outputs/<job> --apply or.txt         # save the corrected text
++python3 cli.py v3 transcript outputs/<job> --set-word 12=ସ୍ୱାସ୍ଥ୍ୟ   # one word, by index
++python3 cli.py v3 transcript outputs/<job> --clear                # drop the correction
++python3 cli.py v3 transcript outputs/<job> --script               # same thing, named for the reviewed script
++python3 cli.py v3 transcript outputs/<job> --render               # render that language with the correction
++```
++
++`--language` defaults to the extra language when the job has exactly one; pass `--language hi` or `or`
++otherwise. `outputs/<id>` paths and trailing slashes are accepted, as everywhere else.
++
++### What a correction does and does not change
++
++| | |
++|---|---|
++| The narration file | **unchanged** — byte for byte, never re-recorded, no text-to-speech |
++| The measured word times | **kept exactly**, as long as the word count stays the same |
++| The word count changes (a word split or merged) | accepted, but the timings are **re-estimated** and the editor says so before you render |
++| Text cards and hooks | unchanged — they keep the timings they were drafted from, so a spelling fix cannot move a card |
++| Flow credits | **none** — no video is requested |
++| Other languages | untouched; their exports are not re-rendered |
++| The version you already had | kept on disk next to the new one |
++
++A correction lives in `production/transcripts/<language>.json` (`"schema": "transcript-edit-v1"`), and the
++renderer copies it into the plan's `assets/` before burning, so a later edit cannot change a render that is
++already running. Its checksum is part of the “is this export current?” test, which is why exactly one spelling
++fix re-renders exactly one language.
++
++### The three routes, side by side
++
++| Route | What the captions say | What it costs | When to use it |
++|---|---|---|---|
++| **Leave it off** (default for Odia) | nothing burned | nothing | the fastest, safest answer to today's bad spelling |
++| **Use the reviewed script** | the script's words, at the measured times | nothing | the script is already right and only the recogniser was wrong |
++| **Fix the spellings** | exactly what you typed | nothing | you want the transcript, and you want it right |
++
++Nothing here is mandatory. If you never open the editor, the job behaves exactly as it did in 7.0.109.
++
++### When a correction is refused
++
++Every message names the word and the file, and says nothing was changed:
++
++* “Word 4 (ଧ୍ୟାନ) ends before it starts (1.85s → 1.40s). Fix its timing and save again; nothing was changed.”
++* “Word 3 (…) starts before the word before it ends. Keep the words in order and save again; nothing was
++  changed.”
++* “An empty transcript cannot be saved; nothing was changed. Use `--clear` to remove a correction and go back to
++  the measured words.”
++
++---
++
++## 2. Gemini's shots are chosen in the app
++
++v7.0.109 added the choice, but only `cli.py v3 gemini-shots` could change it, and Create still only asked for a
++number — which silently took the first eligible shots. Now:
++
++* **Create** still asks for the cap (“Use Gemini Web for up to this many AI video shots”), and now says where the
++  shots are chosen once the storyboard exists.
++* The job panel (**Queue** and **Create**), and **Storyboard**, show
++  **Gemini Web video shots · shot_003 · 2 eligible**: a multiselect of exactly the shots Gemini may take (maximum
++  four), a table of **every** shot with its verdict and its reason, and **Save Gemini choice** / **Clear the
++  choice**.
++* Reasons are stated, never implied: *eligible* · *not a Flow shot* · *already has an accepted take* · *a Flow
++  request journal exists (never resubmitted)*.
++
++Saving a choice submits **nothing** — an empty journal, no request, no credit. A shot with an accepted take or an
++existing Flow request is never offered, so it cannot be generated twice. Opening the panel is free.
++
++```bash
++python3 cli.py v3 gemini-shots outputs/<job> --show                 # the plan and every verdict
++python3 cli.py v3 gemini-shots outputs/<job> --choose shot_003,shot_007
++```
++
++---
++
++## Updating
++
++Stop the dashboard, extract this zip **beside** your installation, then:
++
++```bash
++python3 ../AutoVideoAI-v7.0.110/tools/update_v7109_to_v7110.py /path/to/AutoVideoAI-v7.0.109         # dry run
++python3 ../AutoVideoAI-v7.0.110/tools/update_v7109_to_v7110.py /path/to/AutoVideoAI-v7.0.109 --apply
++```
++
++The updater replaces code, docs and tests only. Your `outputs/`, saved jobs, Flow journals, browser profiles and
++`music_library/` are never touched, and a file you edited yourself is preserved instead of overwritten (the run
++stops and names it). It refuses an installation older than 7.0.109 and tells you which earlier update to apply
++first. Code backups go to `code-update-backups/v7.0.109-to-v7.0.110-<stamp>/`, and a second run says “already up
++to date”.
++
++---
++
++## Verification
++
++New tests: `tests/test_v7110_transcript_edit.py` (17) and `tests/test_v7110_gemini_picker_ui.py` (8).
++
++* the editor shows exactly the words that would be burned, with their times;
++* fixing a spelling keeps every measured time and writes **only** `production/transcripts/<language>.json`;
++* a changed word count is accepted and reported as `estimated`;
++* empty, reversed and out-of-order corrections are refused with the word index named, and nothing is written;
++* the correction is what FFmpeg burns — the plan's `assets/captions-<code>.json` snapshot holds the corrected
++  word, the provenance records `captions_from_correction: true`, and the previous export stays on disk;
++* a second render with nothing changed produces no new file; a new correction re-renders that language;
++* the picker is one shared function, reachable from the Queue panel, the Create pipeline view and Storyboard, and
++  saving a choice is described as submitting nothing.
++
++The full suite is unchanged against a pristine 7.0.109 tree: **44 failed / 1 762 passed / 5 skipped** on this
++build and the same 44 pre-existing, environment-caused failures on 7.0.109 (identical failure lists).
+diff --git a/VERSION b/VERSION
+index a5c7dbc..14999e2 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-7.0.109
+\ No newline at end of file
++7.0.110
+\ No newline at end of file
+diff --git a/app.py b/app.py
+index 82a1779..d646ae2 100644
+--- a/app.py
++++ b/app.py
+@@ -643,6 +643,55 @@ def language_edition_panel(job_id):
+                           'otherwise correct, and a wrong transcript is worse than none. Turn it on to burn the '
+                           'reviewed script instead.' if code == 'or' else
+                           'Burn the reviewed script into this edition, word-timed from its own narration.'))
++    # 7.0.110: read the exact words that would be burned, fix a spelling, re-render only that language.
++    from engine import transcript_edit
++    editable = transcript_edit.languages(job_dir)
++    if editable:
++        with st.expander('Fix the transcript text (optional · the narration is never re-recorded)', expanded=False):
++            st.caption('These are the words the transcript would burn, straight from this language\'s measured '
++                       'narration. Correct a spelling and only the on-screen text changes: no text-to-speech, '
++                       'no video request, no Flow credits. Keeping the same number of words keeps every '
++                       'measured timing exactly.')
++            edit_code = st.selectbox('Language', list(editable), key=f'transcript-edit-lang-{job_id}',
++                                     format_func=lambda code: LANGUAGE_PACKS.get(code, code))
++            row = transcript_edit.state(job_dir, edit_code)
++            st.caption(f"{row['word_count']} words · "
++                       + ('text edited on ' + (row['edited_at'] or 'an earlier change') +
++                          (' (timing re-estimated)' if row['timing'] == 'estimated' else ' (timing kept)')
++                          if row['edited'] else 'text from the measured words (a render aligns it to the reviewed script)'))
++            index = {i: word for i, word in enumerate(row['words'])}
++            # Edit whole caption lines: that is what the viewer sees, not single words.
++            lines = transcript_edit.caption_lines(row['words'])
++            line_text = {n: ' '.join(index[w['index']]['word'] for w in group) for n, group in enumerate(lines)}
++            edited_lines = st.data_editor(
++                [{'line': n + 1, 'starts': round(index[group[0]['index']]['start'], 2), 'text': text}
++                 for n, (group, text) in enumerate(zip(lines, [line_text[n] for n in sorted(line_text)]))],
++                width='stretch', hide_index=True, key=f'transcript-lines-{job_id}-{edit_code}',
++                column_config={'line': st.column_config.NumberColumn('line', disabled=True),
++                               'starts': st.column_config.NumberColumn('at (s)', disabled=True),
++                               'text': st.column_config.TextColumn('caption text', width='large')})
++            new_text = ' '.join(str(entry.get('text') or '') for entry in edited_lines)
++            st.caption('Saving writes production/transcripts/' + edit_code + '.json and marks this language for '
++                       'the next render.')
++            left, middle = st.columns(2)
++            if left.button('Save corrected text', key=f'transcript-save-{job_id}-{edit_code}'):
++                try:
++                    saved = transcript_edit.save_text(job_dir, edit_code, new_text, note='edited in the app')
++                    st.success('Saved ' + str(saved['word_count']) + ' words'
++                               + (' with every measured timing kept.' if saved['timing'] == 'unchanged'
++                                  else '; the word count changed, so the timing was re-estimated.'))
++                    st.rerun()
++                except ValueError as error:
++                    st.error(str(error))
++            if middle.button('Use the reviewed script instead', key=f'transcript-script-{job_id}-{edit_code}',
++                             disabled=not row['edited'],
++                             help='Drops your correction. The next render burns the reviewed script, word-timed '
++                                  'from this narration.'):
++                transcript_edit.clear(job_dir, edit_code)
++                st.success('Correction removed. The next render burns the reviewed script again.')
++                st.rerun()
++            st.caption('Command line equivalent: `python3 cli.py v3 transcript ' + job_id + ' --language ' +
++                       edit_code + ' --export transcript.txt`, fix the file, then `--apply transcript.txt`.')
+     st.caption('The primary ' + LANGUAGE_PACKS[diagnosis.get('source_language') or selected[0]].label +
+                ' video keeps the captions Create chose. To rebuild it locally without a transcript (accepted '
+                'takes only, no Flow credits): `python3 cli.py v3 render <job> --caption-display none`; with the '
+@@ -678,6 +727,60 @@ def language_edition_panel(job_id):
+             st.error(str(error))
+ 
+ 
++def gemini_shot_panel(job_id, *, expanded=False):
++    """Choose exactly which shots Gemini Web generates instead of Flow (v7.0.109, surfaced in the job panel).
++
++    The setting used to be a number only: "use Gemini for up to N shots", and the first N eligible Flow shots
++    were taken silently. This panel lists every shot with its verdict, saves the user's choice, and submits
++    nothing - a shot with an accepted take or an existing Flow request is never offered.
++    """
++    from engine.providers.gemini_video import choose_shots, gemini_shot_plan
++    from engine.production_lock import production_slot
++    job_dir = Path(F.pm.job_dir(job_id))
++    manifest = F.pm.load_manifest(job_id)
++    cap = int((F._settings(job_id) or {}).get('gemini_video_count', 0) or 0)
++    plan = gemini_shot_plan(job_dir, manifest.shots, cap)
++    chosen = plan['chosen']
++    heading = 'Gemini Web video shots · ' + (', '.join(chosen) if chosen else 'none chosen') + \
++              f' · {len(plan["eligible"])} eligible'
++    with st.expander(heading, expanded=expanded):
++        st.caption(f'This job sends up to **{cap}** shot(s) to Gemini Web instead of Flow '
++                   f'(Create · "Use Gemini Web for up to this many AI video shots"). '
++                   + (f'Choice: {plan["source"]}. ' if cap else
++                      'The cap is 0, so every shot goes to Flow. Raise it in Create to offer shots here. ')
++                   + 'A shot with an accepted take or an existing Flow request is never offered, so nothing can '
++                     'be generated twice.')
++        eligible = plan['eligible']
++        if eligible:
++            picked = st.multiselect('Shots for Gemini (maximum 4)', options=eligible,
++                                    default=[shot for shot in chosen if shot in eligible],
++                                    key=f'gemini-shots-{job_id}')
++            left, right = st.columns([1, 1])
++            if left.button('Save Gemini choice', key=f'gemini-save-{job_id}'):
++                try:
++                    with production_slot(job_dir):
++                        saved = choose_shots(job_dir, manifest.shots, picked)
++                    st.success('Gemini will generate: ' + (', '.join(saved['chosen']) or 'nothing') +
++                               '. Saved in ' + saved['selection_file'] + '; no request was submitted.')
++                    st.rerun()
++                except ValueError as error:
++                    st.error(str(error))
++            if right.button('Clear the choice', key=f'gemini-clear-{job_id}',
++                            disabled=not plan['selection_saved']):
++                with production_slot(job_dir):
++                    choose_shots(job_dir, manifest.shots, [])
++                st.success('Choice cleared; the first eligible shots are used again.')
++                st.rerun()
++        else:
++            st.info('No shot is eligible for Gemini in this job: every Flow shot has an accepted take or a '
++                    'pending request of its own.')
++        rows = [{'shot': row['shot_id'], 'chosen': row['shot_id'] in chosen,
++                 'eligible': row['eligible'], 'why': row['reason'], 'prompt': row['prompt'][:90]}
++                for row in plan['shots']]
++        st.dataframe(rows, width='stretch', hide_index=True)
++        st.caption('Command line: `python3 cli.py v3 gemini-shots ' + job_id + ' --choose shot_003,shot_007`')
++
++
+ def graphics_audit_panel(job_id):
+     """Why on-screen cards and hooks did or did not appear (v7.0.107).
+ 
+@@ -1075,7 +1178,12 @@ if page == "STUDIO":
+             except Exception as error:st.error(str(error))
+     with st.expander('Gemini video and project cleanup', expanded=False):
+         gemini_video_count = st.number_input('Use Gemini Web for up to this many AI video shots', min_value=0, max_value=4, value=0,
+-            help='Zero uses existing providers. Requests approximately 10 seconds per shot; duration and quota depend on Gemini. Resume recovers unfinished requests without resubmission.')
++            help='Zero uses existing providers. Requests approximately 10 seconds per shot; duration and quota depend on Gemini. Resume recovers unfinished requests without resubmission. '
++                 'Which shots get it is your choice: once the storyboard exists, open the job (Queue or Storyboard) and use '
++                 '"Gemini Web video shots" to tick specific shots, or run `python3 cli.py v3 gemini-shots <job> --choose shot_003,shot_007`.')
++        if gemini_video_count:
++            st.caption('Finished the storyboard? Pick the exact ' + str(int(gemini_video_count)) +
++                       ' shot(s) for Gemini in the job panel ("Gemini Web video shots"), not just the first ones.')
+         flow_auto_cleanup_images = st.checkbox('Delete captured image-only Flow projects automatically', value=False,
+             help='After this job finishes, deletes isolated image-only Flow projects whose downloaded image and request record are verified locally. Video, mixed, pending and changed projects are retained. Off by default because deletion removes the Flow copy.')
+     with st.expander('Characters and recovery preferences · optional', expanded=False):
+@@ -1278,6 +1386,7 @@ if page == "STUDIO":
+     if st.session_state.job_id:
+         st.divider()
+         pipeline_view(st.session_state.job_id)
++        gemini_shot_panel(st.session_state.job_id)
+         language_edition_panel(st.session_state.job_id)
+         graphics_audit_panel(st.session_state.job_id)
+ 
+@@ -1766,32 +1875,7 @@ elif page == "STORYBOARD":
+                 F.pm.update_shot(m.job_id, s)
+             st.success("Saved. Resume from QUEUE to generate with these settings.")
+         # 7.0.109: which shots Gemini Web may generate instead of Flow is now a visible, editable choice.
+-        with st.expander("Gemini Web video shots · choose which ones (no request is sent here)", expanded=False):
+-            from engine.providers.gemini_video import choose_shots, gemini_shot_plan
+-            from engine.production_lock import production_slot
+-            cap = int((F._settings(m.job_id) or {}).get("gemini_video_count", 0) or 0)
+-            plan = gemini_shot_plan(D["root"], m.shots, cap)
+-            st.caption(f"This job sends up to **{cap}** shot(s) to Gemini Web instead of Flow. "
+-                       f"Choice: {plan['source']}. A shot with an accepted take or an existing Flow request "
+-                       "is never offered, so nothing can be generated twice.")
+-            eligible = plan["eligible"]
+-            if eligible:
+-                picked = st.multiselect("Shots for Gemini (maximum 4)", options=eligible,
+-                                        default=[x for x in plan["chosen"] if x in eligible],
+-                                        key=f"gemini-shots-{m.job_id}")
+-                if st.button("Save Gemini choice", key=f"gemini-save-{m.job_id}"):
+-                    try:
+-                        with production_slot(Path(D["root"])):
+-                            saved = choose_shots(D["root"], m.shots, picked)
+-                        st.success("Gemini will generate: " + (", ".join(saved["chosen"]) or "nothing") +
+-                                   ". Saved in " + saved["selection_file"] + "; no request was submitted.")
+-                    except ValueError as error:
+-                        st.error(str(error))
+-            else:
+-                st.info("No shot is eligible for Gemini in this job: every Flow shot has an accepted take or a "
+-                        "pending request of its own.")
+-            st.dataframe([{"shot": row["shot_id"], "eligible": row["eligible"], "why": row["reason"]}
+-                          for row in plan["shots"]], width="stretch", hide_index=True)
++        gemini_shot_panel(m.job_id)
+         script_p = os.path.join(D["root"], "script.md")
+         if os.path.exists(script_p):
+             st.download_button("📜 Download full script (markdown)",
+@@ -1962,6 +2046,7 @@ elif page == "QUEUE":
+                 monitor_clip_render(clip_render['state']['review_path'])
+     if st.session_state.job_id:
+         monitor_job(st.session_state.job_id)
++        gemini_shot_panel(st.session_state.job_id)
+         language_edition_panel(st.session_state.job_id)
+         graphics_audit_panel(st.session_state.job_id)
+         from engine.job_monitor import snapshot
+diff --git a/cli.py b/cli.py
+index 4337a8f..3e1f2c1 100644
+--- a/cli.py
++++ b/cli.py
+@@ -420,6 +420,25 @@ def main_v3(argv):
+                     help="Sample the finished video now and update production/graphics_audit.json")
+     ga.add_argument("--json", action="store_true", help="Print the stored audit JSON instead of a summary")
+ 
++    tr = sub.add_parser("transcript",
++                        help="Read, fix and re-render the burned transcript of a saved language edition")
++    tr.add_argument("job_id")
++    tr.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    tr.add_argument("--language", default="", help="Language code (or/hi/en); default: every saved language")
++    tr.add_argument("--show", action="store_true", help="Print the caption words and lines (default action)")
++    tr.add_argument("--export", default="", metavar="FILE",
++                    help="Write the transcript as editable text, one caption line per line")
++    tr.add_argument("--apply", default="", metavar="FILE",
++                    help="Save corrected text from FILE (or '-' for stdin) for use in the next render")
++    tr.add_argument("--set-word", action="append", default=[], metavar="INDEX=TEXT",
++                    help="Fix one word in place, keeping its exact timing (repeatable)")
++    tr.add_argument("--script", action="store_true",
++                    help="Drop the correction and burn the reviewed script again")
++    tr.add_argument("--clear", action="store_true", help="Drop the correction and use the measured words")
++    tr.add_argument("--render", action="store_true",
++                    help="Render the language edition(s) after saving, so the video matches this transcript")
++    tr.add_argument("--json", action="store_true", help="Machine-readable output")
++
+     gs = sub.add_parser("gemini-shots",
+                         help="Choose which 0-4 AI video shots Gemini Web generates instead of Flow")
+     gs.add_argument("job_id")
+@@ -1246,6 +1265,102 @@ def main_v3(argv):
+                               indent=2))
+             return
+         print(explain(job_dir))
++    elif args.cmd == "transcript":
++        import json as _json
++        from engine import transcript_edit
++        from engine.language_editions import render_language_outputs, transcript_for, transcript_plan
++        from engine.production_lock import production_slot
++        from engine.support_report import resolve_job_dir
++        job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        saved = transcript_edit.languages(job_dir)
++        if args.language:
++            wanted = [args.language]
++        else:
++            wanted = sorted(saved) or []
++        if not wanted:
++            raise SystemExit("No saved narration word timings in this job, so there is no transcript to edit. "
++                             "Its words appear after the narration is prepared (Create step 4, or Speech "
++                             "batches for an older job).")
++        unknown = [code for code in wanted if code not in saved]
++        if unknown:
++            raise SystemExit("No narration word timings for " + ", ".join(unknown) + " in this job. Saved: "
++                             + (", ".join(sorted(saved)) or "none") + ".")
++        if args.export:
++            if len(wanted) != 1:
++                raise SystemExit("--export needs one --language, so the file is unambiguous.")
++            row = transcript_edit.state(job_dir, wanted[0])
++            lines = []
++            for group in transcript_edit.caption_lines(row["words"]):
++                lines.append(" ".join(word["word"] for word in group))
++            target = Path(args.export).expanduser()
++            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
++            print("Transcript written to " + str(target) + " (" + str(len(lines)) + " caption lines, "
++                  + str(row["word_count"]) + " words). Fix the spellings there, then run:")
++            print("  python3 cli.py v3 transcript " + args.job_id + " --language " + wanted[0] +
++                  " --apply " + str(target))
++            return
++        if args.set_word or args.apply or args.script or args.clear:
++            for code in wanted:
++                row = transcript_edit.state(job_dir, code)
++                if args.clear or args.script:
++                    # --script is the same file with no correction: the render aligns to the reviewed script.
++                    row = transcript_edit.clear(job_dir, code)
++                    print(code + ": correction removed; the reviewed script is burned again when rendered.")
++                if args.set_word:
++                    words = [dict(word) for word in row["words"]]
++                    for change in args.set_word:
++                        if "=" not in change:
++                            raise SystemExit("--set-word takes INDEX=TEXT, for example 12=ସ୍ୱାସ୍ଥ୍ୟ")
++                        index_text, text = change.split("=", 1)
++                        try:
++                            index = int(index_text)
++                        except ValueError:
++                            raise SystemExit("--set-word index must be a number: " + index_text)
++                        if not 0 <= index < len(words):
++                            raise SystemExit("--set-word " + str(index) + " is out of range; this language has "
++                                             + str(len(words)) + " words (0-" + str(len(words) - 1) + ").")
++                        words[index] = dict(words[index], word=text)
++                    row = transcript_edit.save_words(job_dir, code, words, note="edited on the command line")
++                    print(code + ": saved " + str(row["word_count"]) + " words to " + row["edit_file"])
++                if args.apply:
++                    path = Path(args.apply).expanduser()
++                    text = sys.stdin.read() if args.apply == "-" else path.read_text(encoding="utf-8")
++                    row = transcript_edit.save_text(job_dir, code, " ".join(text.split("\n")),
++                                                    note="edited in " + (args.apply if args.apply != "-" else "stdin"))
++                    print(code + ": saved " + str(row["word_count"]) + " words"
++                          + (" (timing kept exactly)" if row["timing"] == "unchanged"
++                             else " (word count changed, so timing was re-estimated)"))
++            if args.render:
++                wanted_transcript = [code for code in wanted]
++                with production_slot(job_dir):
++                    report = render_language_outputs(job_dir)
++                print(_json.dumps(report.get("editions", {}), indent=2, ensure_ascii=False)[:4000])
++            else:
++                print("Render it with: python3 cli.py v3 language-outputs " + args.job_id)
++            return
++        rows = []
++        burned_plan = transcript_plan(job_dir)["editions"]
++        for code in wanted:
++            row = transcript_edit.state(job_dir, code)
++            rows.append({"language": code, "edited": row["edited"], "timing": row["timing"],
++                         "burned": burned_plan.get(code, True),
++                         "words": row["word_count"], "file": row["edit_file"]})
++        if args.json:
++            print(_json.dumps({"languages": rows,
++                               "words": {code: transcript_edit.state(job_dir, code)["words"] for code in wanted}},
++                              ensure_ascii=False, indent=2))
++            return
++        for row in rows:
++            print(f"{row['language']}: {row['words']} words · transcript "
++                  f"{'on' if row['burned'] else 'off'} · text "
++                  f"{'edited (' + row['timing'] + ' timing)' if row['edited'] else 'from measured words'}")
++            print("   file: " + row["file"])
++            print("   lines: " + " | ".join(" ".join(w["word"] for w in group)[:60]
++                                             for group in transcript_edit.caption_lines(
++                                                 transcript_edit.state(job_dir, row["language"])["words"])[:4]))
++        print("Fix it with: python3 cli.py v3 transcript " + args.job_id +
++              " --language <code> --set-word 12=correct-spelling   (or --export / --apply)")
++        return
+     elif args.cmd == "gemini-shots":
+         from engine.providers.gemini_video import choose_shots, gemini_shot_plan
+         from engine.support_report import resolve_job_dir
+diff --git a/engine/finishing_studio.py b/engine/finishing_studio.py
+index 45cf3b6..a0b08cc 100644
+--- a/engine/finishing_studio.py
++++ b/engine/finishing_studio.py
+@@ -508,6 +508,12 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+     voice = edition.get('narration')
+     words_path = _verified(edition['words']) if edition.get('words') and plan.get('captions') else None
+     words_src = _verified(edition['words']) if edition.get('words') else None
++    # v7.0.110: a corrected transcript (production/transcripts/<language>.json, snapshotted into the plan)
++    # replaces the word text for captions only. Cards and hooks keep the timings they were drafted from.
++    caption_edit = None
++    if words_path and edition.get('caption_words'):
++        caption_edit = _verified(edition['caption_words'])
++        words_path = caption_edit
+     info, duration = _probe(src)
+     vstream = next(s for s in info['streams'] if s['codec_type']=='video')
+     width, height = int(vstream['width']), int(vstream['height'])
+@@ -586,9 +592,11 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                   '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
+             picture_seconds = voice_seconds
+             if words_src and abs(tempo - 1.0) > 1e-6:
+-                # Cards, hooks and captions are anchored to the narration: retime them with it.
++                # Cards, hooks and captions are anchored to the narration: retime them with it. Captions follow
++                # whichever word file this render burns (a correction, when one exists).
+                 from engine.narration_fit import scale_words
+-                scaled = scale_words(json.loads(Path(words_src).read_text(encoding='utf8')), tempo)
++                scaled_source = caption_edit or Path(words_src)
++                scaled = scale_words(json.loads(Path(scaled_source).read_text(encoding='utf8')), tempo)
+                 words_for_render = tmp_dir/'words-fitted.json'
+                 words_for_render.write_text(json.dumps(scaled, ensure_ascii=False), encoding='utf8')
+                 words_path = words_for_render
+@@ -656,7 +664,11 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+             # machine-translated script) can disagree with the approved script while the word itself is right,
+             # which is what the field screenshots showed. Timing comes from the saved word file; the text comes
+             # from the reviewed script.
+-            if edition.get('script'):
++            if caption_edit:
++                # The user read these words and fixed them; do not overwrite that with the script again.
++                caption_note = 'Caption text from the saved correction (' + str(caption_edit.name) + ').'
++                caption_corrected = 0
++            elif edition.get('script'):
+                 from engine.captions import script_accurate_words
+                 words, caption_report = script_accurate_words(edition['script'], words, picture_seconds)
+                 caption_note = caption_report.get('note') or ''
+@@ -731,7 +743,9 @@ def render(plan_path, language, *, progress=None, fit_policy=None):
+                      'narration_sha256': voice['sha256'] if voice else None,
+                      'narration_fitted_picture': fit, 'narration_fit': fit_report,
+                      'captions_burned': bool(caption_ass),
+-                     'captions_from_reviewed_script': bool(caption_ass) and bool(edition.get('script')),
++                     'captions_from_reviewed_script': bool(caption_ass) and bool(edition.get('script'))
++                                                   and not caption_edit,
++                     'captions_from_correction': bool(caption_ass) and bool(caption_edit),
+                      'captions_corrected': caption_corrected, 'captions_note': caption_note,
+                      'music_volume': float(plan.get('music_volume', .12)) if music else 0.0,
+                      'music_duck': sound if music else None,
+diff --git a/engine/language_editions.py b/engine/language_editions.py
+index bea7271..fd2182d 100644
+--- a/engine/language_editions.py
++++ b/engine/language_editions.py
+@@ -139,6 +139,7 @@ def transcript_plan(job_root):
+         return {'editions': {}, 'default': True, 'languages': {}, 'saved': False}
+     prefs = transcript_settings(state)
+     return {'editions': {code: transcript_for(state, code) for code in extra},
++            'edited': {code: caption_signature(job_root, code)[1] == 'edited' for code in extra},
+             'default': prefs['default'], 'languages': prefs['languages'],
+             'saved': isinstance(state.get('transcript'), dict),
+             'worksheet': str(Path(job_root) / 'production' / STATE_NAME)}
+@@ -262,7 +263,23 @@ def record_narration_error(job_root, message):
+     return path
+ 
+ 
+-def _bundle_is_current(job_root, code, bundle, entry, *, verify=True, transcript=None):
++def caption_signature(job_root, code):
++    """What the burned caption text is made of for this language (v7.0.110).
++
++    A saved correction in ``production/transcripts/<language>.json`` wins over the measured words, and its
++    bytes are part of "is this video current?" - so fixing one spelling re-renders that edition (and only it).
++    """
++    from . import transcript_edit
++    path = transcript_edit.edit_path(job_root, code)
++    if not path.is_file():
++        return '', 'measured'
++    try:
++        return finish._hash(path), 'edited'
++    except OSError:
++        return '', 'measured'
++
++
++def _bundle_is_current(job_root, code, bundle, entry, *, verify=True, transcript=None, captions_sha=None):
+     """A finished export that still matches the reviewed narration and its bytes.
+ 
+     ``verify=False`` only checks that the file exists. The dashboard passes it so a
+@@ -276,6 +293,8 @@ def _bundle_is_current(job_root, code, bundle, entry, *, verify=True, transcript
+         return False
+     if transcript is not None and bool(entry.get('captions', True)) != bool(transcript):
+         return False
++    if captions_sha is not None and str(entry.get('caption_words_sha256') or '') != str(captions_sha):
++        return False
+     export = Path(entry.get('path') or '')
+     if not bool(entry.get('path')) or not export.is_file():
+         return False
+@@ -374,11 +393,13 @@ def edition_diagnosis(job_root, *, verify=True):
+         bundle = bundles.get(code)
+         want_transcript = transcript_for(state, code)
+         burned = bool(entry.get('captions', True))
++        caption_sha, caption_source = caption_signature(job_root, code)
+         if (entry.get('status') == 'exported'
+-                and _bundle_is_current(job_root, code, bundle, entry, verify=verify, transcript=want_transcript)):
++                and _bundle_is_current(job_root, code, bundle, entry, verify=verify, transcript=want_transcript,
++                                       captions_sha=caption_sha)):
+             editions[code] = {'status': 'exported', 'path': entry.get('path'),
+                               'render_copy': entry.get('render_copy'),
+-                              'transcript': burned,
++                              'transcript': burned, 'transcript_source': caption_source,
+                               'message': _label(code) + ' edition is exported '
+                                          + ('with its transcript.' if burned else 'without a transcript.'),
+                               'warning': entry.get('warning') or entry.get('cards_warning') or ''}
+@@ -406,12 +427,12 @@ def edition_diagnosis(job_root, *, verify=True):
+                       if 'refresh-cards' in detail else
+                       'Fix the message above, then press "Add primary intro/outro and render pending '
+                       'language editions".')
+-            editions[code] = {'status': 'failed', 'error': detail, 'transcript': want_transcript,
++            editions[code] = {'status': 'failed', 'error': detail, 'transcript': want_transcript, 'transcript_source': caption_source,
+                               'message': _label(code) + ' edition failed: ' + detail[:900],
+                               'next_action': repair}
+             continue
+         editions[code] = {'status': entry.get('status') or 'pending',
+-                          'transcript': want_transcript,
++                          'transcript': want_transcript, 'transcript_source': caption_source,
+                           'message': _label(code) + ' narration is ready; the edition has not been rendered yet '
+                                      + ('with its transcript.' if want_transcript else 'and a transcript is '
+                                         'switched off for it.'),
+@@ -463,9 +484,11 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+     record['schema_version'] = 1
+ 
+     wants = {code: transcript_for(state, code) for code in extra}
++    captions = {code: caption_signature(job_root, code) for code in extra}
+     pending = [code for code in extra if not _bundle_is_current(job_root, code, bundles.get(code),
+                                                                 record['editions'].get(code, {}),
+-                                                                transcript=wants[code])]
++                                                                transcript=wants[code],
++                                                                captions_sha=captions[code][0])]
+     if not pending:
+         if _sync_render_copies(job_root, record):
+             _save_record(job_root, record)
+@@ -498,6 +521,7 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+         # The previous export stays on disk in its own language_editions/<stamp>/exports/ folder, so switching
+         # the transcript back and forth never destroys the version the user already had.
+         entry = {'status': 'rendering', 'audio_sha256': bundle.get('audio_sha256'), 'captions': wants[code],
++                 'caption_words_sha256': captions[code][0], 'caption_source': captions[code][1],
+                  'channel': {}, 'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+         record['editions'][code] = entry
+         _save_record(job_root, record)
+@@ -510,6 +534,15 @@ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+                 source_language=source, require_profiles=False, fit_narration=True, captions=wants[code],
+                 fit_policy=fit_policy)
+             plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
++            # v7.0.110: burn the corrected transcript when the user saved one, from an immutable snapshot.
++            if captions[code][1] == 'edited':
++                from . import transcript_edit
++                snapshot, report = transcript_edit.snapshot_for_plan(
++                    job_root, code, Path(plan_path).parent / 'assets' / ('captions-' + code + '.json'))
++                plan['editions'][code]['caption_words'] = {'path': str(snapshot),
++                                                           'sha256': report['sha256']}
++                plan['editions'][code]['caption_words_source'] = 'edited'
++                finish._atomic_json(plan_path, plan)
+             finish.set_edition(plan_path, code, reviewed=True)
+             entry.update(plan=str(plan_path), channel=plan['editions'][code].get('channel', {}),
+                          warning=(plan['editions'][code].get('cards_warning')
+diff --git a/engine/transcript_edit.py b/engine/transcript_edit.py
+new file mode 100644
+index 0000000..d1720b8
+--- /dev/null
++++ b/engine/transcript_edit.py
+@@ -0,0 +1,246 @@
++"""Edit the words a burned transcript shows, without touching the narration (v7.0.110).
++
++Field report: the Odia transcript's words were right and its spellings were not. v7.0.109 made the caption
++text follow the reviewed script, and switched Odia transcripts off by default. This module is the third,
++optional route: let the user read the exact words that would be burned, fix them, and render that.
++
++The important constraint is that **the audio never changes here** - no text-to-speech, no video request, no
++Flow credit. The narration file and its measured word times stay byte-identical; only the text drawn on screen
++changes. That is why a correction is safe to make after the video exists.
++
++A correction is stored per language in ``production/transcripts/<language>.json``::
++
++    {"schema": "transcript-edit-v1", "language": "or",
++     "source_words": ".../words.json", "source_sha256": "...",
++     "timing": "unchanged", "edited_at": "...",
++     "words": [{"word": "...", "start": 0.0, "end": 0.0}, ...]}
++
++The renderer reads it for captions only. Cards and hooks keep using the saved word timings they were drafted
++from, so a spelling fix cannot move a card.
++
++Rules, stated in every message instead of raising a bare error:
++
++* the text is edited word by word, so **the number of words stays the same** and every measured timing is kept;
++* if the word count changes (a word split or merged), the timing has to be re-estimated, and that is reported
++  as ``timing: estimated`` so the user knows before rendering;
++* a correction that matches the reviewed script is not needed at all - ``--script`` clears it.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import time
++from pathlib import Path
++
++SCHEMA = "transcript-edit-v1"
++
++
++def _read(path, default=None):
++    try:
++        path = Path(path)
++        if not path.is_file():
++            return default
++        return json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, ValueError):
++        return default
++
++
++def _atomic(path, data):
++    path = Path(path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(path.name + ".saving")
++    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
++    temporary.replace(path)
++    return path
++
++
++def _sha(path):
++    digest = hashlib.sha256()
++    with Path(path).open("rb") as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def edit_path(job_root, language):
++    return Path(job_root) / "production" / "transcripts" / (str(language) + ".json")
++
++
++def languages(job_root):
++    """Languages this job can offer a transcript editor for, and where their words live."""
++    root = Path(job_root)
++    state = _read(root / "production" / "language_editions.json") or {}
++    found = {}
++    for code, bundle in (state.get("bundles") or {}).items():
++        words = str(bundle.get("words") or "")
++        if words and Path(words).is_file():
++            found[str(code)] = {"kind": "edition", "words": words,
++                                "audio": str(bundle.get("audio") or ""),
++                                "script": str(bundle.get("script") or "")}
++    primary = root / "narration" / "voice.mp3.words.json"
++    if primary.is_file():
++        code = str(state.get("source_language") or "en")
++        found.setdefault(code, {"kind": "primary", "words": str(primary),
++                                "audio": str(root / "narration" / "voice.mp3"),
++                                "script": str(_read(root / "script.md", "") or "")[:0]})
++    return found
++
++
++def _words_path(job_root, language):
++    entry = languages(job_root).get(str(language))
++    if not entry:
++        raise ValueError(
++            "No narration word timings are saved for " + str(language) + " in this job, so there is nothing to "
++            "edit. Saved languages: " + (", ".join(sorted(languages(job_root))) or "none") +
++            ". Prepare the language narration first (Create step 4, or Jobs & Recovery > Speech batches).")
++    return Path(entry["words"]), entry
++
++
++def source_words(job_root, language):
++    """The measured words exactly as the narration produced them."""
++    path, _entry = _words_path(job_root, language)
++    words = _read(path) or []
++    return [{"word": str(w.get("word", "")), "start": float(w.get("start", 0) or 0),
++             "end": float(w.get("end", 0) or 0)} for w in words if str(w.get("word", "")).strip()]
++
++
++def state(job_root, language):
++    """Everything the editor and the CLI need to describe one language's transcript."""
++    path, entry = _words_path(job_root, language)
++    saved = _read(edit_path(job_root, language))
++    edited = (saved or {}).get("words") or []
++    words = edited or source_words(job_root, language)
++    return {
++        "language": str(language),
++        "kind": entry["kind"],
++        "words_file": str(path),
++        "words_sha256": _sha(path),
++        "edit_file": str(edit_path(job_root, language)),
++        "edited": bool(edited),
++        "edited_at": (saved or {}).get("edited_at", ""),
++        "timing": (saved or {}).get("timing", "measured"),
++        "source_sha256": (saved or {}).get("source_sha256", ""),
++        "words": words,
++        "word_count": len(words),
++        "text": " ".join(w["word"] for w in words),
++    }
++
++
++def caption_lines(words, max_words=6, max_seconds=3.2):
++    """The transcript split the way it appears on screen, so the editor shows captions, not a word soup."""
++    lines, current = [], []
++    for index, word in enumerate(words or []):
++        current.append({'index': index, 'word': str(word.get('word', ''))})
++        long_enough = len(current) >= int(max_words)
++        held = (current and float(word.get('end', 0) or 0) - float(words[index - len(current) + 1].get('start', 0) or 0)
++                >= float(max_seconds))
++        ends_sentence = str(word.get('word', '')).rstrip().endswith(('.', '?', '!', '।'))
++        if long_enough or held or ends_sentence:
++            lines.append(current)
++            current = []
++    if current:
++        lines.append(current)
++    return lines
++
++
++def _validate(words):
++    cleaned, previous_end = [], 0.0
++    for index, word in enumerate(words or []):
++        text = " ".join(str(word.get("word", "")).split())
++        if not text:
++            continue
++        try:
++            start = float(word.get("start", 0) or 0)
++            end = float(word.get("end", start) or start)
++        except (TypeError, ValueError):
++            raise ValueError("Word " + str(index + 1) + " (" + text + ") has a timing that is not a number. "
++                             "Fix it in the editor and save again; nothing was changed.")
++        if start < 0 or end < start:
++            raise ValueError("Word " + str(index + 1) + " (" + text + ") ends before it starts (" +
++                             f"{start:.2f}s → {end:.2f}s). Fix its timing and save again; nothing was changed.")
++        if start < previous_end - 0.02:
++            raise ValueError("Word " + str(index + 1) + " (" + text + ") starts before the word before it ends (" +
++                             f"{start:.2f}s after {previous_end:.2f}s). Keep the words in order and save again; "
++                             "nothing was changed.")
++        cleaned.append({"word": text, "start": round(start, 3), "end": round(end, 3)})
++        previous_end = end
++    if not cleaned:
++        raise ValueError("An empty transcript cannot be saved; nothing was changed. Use `--clear` to remove a "
++                         "correction and go back to the measured words.")
++    return cleaned
++
++
++def save_words(job_root, language, words, *, note="", timing="unchanged"):
++    """Store a corrected word list for one language; returns the new state."""
++    job_root = Path(job_root)
++    clean = _validate(words)
++    source, _entry = _words_path(job_root, language)
++    payload = {
++        "schema": SCHEMA, "language": str(language), "edited_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++        "source_words": str(source), "source_sha256": _sha(source),
++        "timing": str(timing or "unchanged"), "note": str(note or "")[:300], "words": clean,
++    }
++    _atomic(edit_path(job_root, language), payload)
++    return state(job_root, language)
++
++
++def save_text(job_root, language, text, *, note=""):
++    """Save a corrected transcript given as plain text, one caption line per line.
++
++    The common case - fixing spellings - keeps the word count, so every measured timing is kept exactly. A
++    different word count is accepted but reported as estimated timing, because the audio cannot be re-timed to
++    text that has more or fewer words in it.
++    """
++    from .captions import align_words_to_script
++    original = source_words(job_root, language)
++    tokens = str(text or "").split()
++    if not tokens:
++        raise ValueError("The corrected transcript is empty. Use `--clear` to remove the correction instead.")
++    if len(tokens) == len(original):
++        corrected = [{"word": token, "start": w["start"], "end": w["end"]} for token, w in zip(tokens, original)]
++        return save_words(job_root, language, corrected, note=note, timing="unchanged")
++    duration = max([float(w["end"]) for w in original] + [0.0])
++    aligned = align_words_to_script(" ".join(tokens), original, duration) or []
++    if not aligned:
++        raise ValueError("This text has " + str(len(tokens)) + " words but the narration has " +
++                         str(len(original)) + ", and it could not be timed against it. Keep the same number of "
++                         "words (fix spellings only) and save again; nothing was changed.")
++    return save_words(job_root, language, aligned, note=note, timing="estimated")
++
++
++def clear(job_root, language):
++    """Remove a correction and go back to the measured words."""
++    path = edit_path(job_root, language)
++    path.unlink(missing_ok=True)
++    return state(job_root, language)
++
++
++def words_for_render(job_root, language):
++    """The words a render should burn for this language: the correction when there is one.
++
++    Returns ``(words, report)`` where ``report`` names the file the text came from, so an export can say which
++    words it burned.
++    """
++    path = edit_path(job_root, language)
++    saved = _read(path)
++    if saved and saved.get("words"):
++        return [{"word": str(w["word"]), "start": float(w["start"]), "end": float(w["end"])}
++                for w in saved["words"]], {"source": "edited", "file": str(path),
++                                            "edited_at": saved.get("edited_at", ""),
++                                            "timing": saved.get("timing", "unchanged")}
++    measured = source_words(job_root, language)
++    return measured, {"source": "measured", "file": str(_words_path(job_root, language)[0]), "timing": "measured"}
++
++
++def snapshot_for_plan(job_root, language, dest):
++    """Write the words a render must burn to ``dest`` and return ``(path, sha, report)``.
++
++    The renderer plans work from immutable snapshots, so an in-place edit while a render runs cannot change its
++    output halfway through.
++    """
++    words, report = words_for_render(job_root, language)
++    dest = Path(dest)
++    dest.parent.mkdir(parents=True, exist_ok=True)
++    dest.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
++    report = dict(report, sha256=_sha(dest), words=len(words))
++    return dest, report
+diff --git a/tests/test_v7110_gemini_picker_ui.py b/tests/test_v7110_gemini_picker_ui.py
+new file mode 100644
+index 0000000..df0eb5c
+--- /dev/null
++++ b/tests/test_v7110_gemini_picker_ui.py
+@@ -0,0 +1,68 @@
++"""v7.0.110: choosing Gemini's shots happens in the app, not only on the command line.
++
++Field request: "I want to pick which shots Gemini generates, and do it in the UI." v7.0.109 added the choice
++(``engine/providers/gemini_video.choose_shots``) but the only way to use it was ``cli.py v3 gemini-shots`` or a
++number typed in Create that silently took the first N eligible shots.
++
++These tests hold the UI to three promises:
++
++* the picker is reachable from the job panel (Queue and Storyboard) and from the Create page's own help text,
++* it lists every shot with a verdict and a reason, so an ineligible shot explains itself,
++* it only saves a choice - it never submits a request, so opening the panel costs nothing.
++"""
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++APP = (ROOT / 'app.py').read_text(encoding='utf-8')
++
++
++def test_the_picker_is_one_function_and_not_pasted_into_each_page():
++    assert APP.count('def gemini_shot_panel(') == 1
++    # Create/Queue panel, Storyboard, and the second job panel share the same expander.
++    assert APP.count('gemini_shot_panel(') >= 4
++    assert APP.count("multiselect('Shots for Gemini") == 1
++
++
++def test_the_job_panel_shows_the_picker_next_to_the_other_job_panels():
++    for neighbour in ('language_edition_panel(st.session_state.job_id)',
++                      'graphics_audit_panel(st.session_state.job_id)'):
++        assert neighbour in APP
++    blocks = [block for block in APP.split('gemini_shot_panel(st.session_state.job_id)')]
++    assert len(blocks) >= 3, 'the picker is only wired into one job panel'
++    # Both job-panel call sites (Queue and the Create-page pipeline view) carry it.
++    for needle in ('monitor_job(st.session_state.job_id)\n        gemini_shot_panel(st.session_state.job_id)',
++                   'pipeline_view(st.session_state.job_id)\n        gemini_shot_panel(st.session_state.job_id)'):
++        assert needle in APP, needle
++
++
++def test_the_storyboard_still_offers_it_per_job():
++    assert 'gemini_shot_panel(m.job_id)' in APP
++
++
++def test_the_create_page_says_where_the_shots_are_chosen():
++    assert 'Gemini Web video shots' in APP
++    assert 'gemini-shots' in APP          # the exact CLI fallback is printed in the same help
++    assert 'not just the first ones' in APP
++
++
++def test_the_panel_lists_every_shot_with_its_reason():
++    for column in ("'shot': row['shot_id']", "'eligible': row['eligible']", "'why': row['reason']"):
++        assert column in APP
++    assert 'No shot is eligible for Gemini in this job' in APP
++
++
++def test_saving_the_choice_submits_nothing():
++    assert 'no request was submitted' in APP
++    assert 'A shot with an accepted take or an existing Flow request is never offered' in APP
++    # The panel is guarded by the production lock and stores through choose_shots only.
++    assert 'choose_shots(job_dir, manifest.shots, picked)' in APP
++    assert 'choose_shots(job_dir, manifest.shots, [])' in APP
++
++
++def test_the_choice_can_be_cleared_again():
++    assert "button('Clear the choice'" in APP
++    assert 'Choice cleared; the first eligible shots are used again.' in APP
++
++
++def test_choosing_is_capped_at_four_and_says_so():
++    assert "multiselect('Shots for Gemini (maximum 4)'" in APP
+diff --git a/tests/test_v7110_transcript_edit.py b/tests/test_v7110_transcript_edit.py
+new file mode 100644
+index 0000000..979e951
+--- /dev/null
++++ b/tests/test_v7110_transcript_edit.py
+@@ -0,0 +1,282 @@
++"""v7.0.110: the user can read the transcript, fix a spelling, and render that.
++
++Field request: the Odia transcript's words were right and the spellings were not. Rather than only switching the
++transcript off, the user wants to see the exact words and correct them.
++
++The rules these tests hold the feature to:
++
++* the correction changes **screen text only** - the narration file and its timings are never touched, and
++  nothing is generated, recorded or charged;
++* fixing a spelling keeps every measured word time exactly;
++* a correction is per language, triggers a re-render of that language only, and every earlier export survives;
++* a correction that is wrong (empty, out of order, negative) is refused with a message that says what to fix;
++* "use the reviewed script" removes the correction and returns to the v7.0.109 behaviour.
++"""
++import json
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++
++WORDS = [
++    {'word': 'ନିଜର', 'start': 0.20, 'end': 0.60},
++    {'word': 'ସ୍ୱାସ୍ଥ୍ୟ', 'start': 0.60, 'end': 1.10},
++    {'word': 'ପ୍ରତି', 'start': 1.10, 'end': 1.40},
++    {'word': 'ଧ୍ୟାନ', 'start': 1.40, 'end': 1.85},
++    {'word': 'ଦିଅ', 'start': 1.85, 'end': 2.20},
++    {'word': 'ପ୍ରତିଦିନ', 'start': 2.20, 'end': 2.80},
++]
++
++
++def _job(tmp_path, code='or'):
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    (job / 'render').mkdir()
++    folder = job / 'speech-editions' / code / 'key'
++    folder.mkdir(parents=True)
++    audio = folder / 'voice.wav'
++    try:                                       # FFmpeg is only needed by the two render tests
++        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                        'sine=frequency=880:sample_rate=44100', '-t', '3', '-c:a', 'pcm_s16le', str(audio)],
++                       check=True)
++    except (OSError, subprocess.CalledProcessError):
++        audio.write_bytes(b'\x00' * 64)
++    words = folder / 'words.json'
++    words.write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(audio), 'audio_sha256': digest(audio), 'duration': 3.0, 'words': str(words),
++              'script': 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନ', 'language': code,
++              'timing_source': 'test', 'cards': [], 'text_cards': False}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en', code], 'profiles': {code: None}, 'bundles': {code: bundle}}),
++        encoding='utf-8')
++    return job
++
++
++def test_the_editor_shows_the_exact_words_that_would_be_burned(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    row = transcript_edit.state(job, 'or')
++    assert row['word_count'] == len(WORDS)
++    assert [w['word'] for w in row['words']] == [w['word'] for w in WORDS]
++    assert row['edited'] is False and row['timing'] == 'measured'
++
++
++def test_fixing_a_spelling_keeps_every_measured_time(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    words = [dict(word) for word in transcript_edit.state(job, 'or')['words']]
++    words[1]['word'] = 'ସ୍ୱାସ୍ଥ୍ୟ।'          # the user's correction
++    saved = transcript_edit.save_words(job, 'or', words, note='test')
++    assert saved['edited'] is True and saved['timing'] == 'unchanged'
++    assert saved['words'][1]['word'] == 'ସ୍ୱାସ୍ଥ୍ୟ।'
++    assert [(w['start'], w['end']) for w in saved['words']] == [(w['start'], w['end']) for w in WORDS]
++    stored = json.loads((job / 'production' / 'transcripts' / 'or.json').read_text(encoding='utf-8'))
++    assert stored['schema'] == 'transcript-edit-v1' and stored['words'][1]['word'] == 'ସ୍ୱାସ୍ଥ୍ୟ।'
++
++
++def test_a_corrected_line_keeps_the_word_count_and_the_timing(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    translated = 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନ'      # nothing changed
++    saved = transcript_edit.save_text(job, 'or', translated)
++    assert saved['timing'] == 'unchanged'
++    corrected = 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନଁ'      # last word fixed
++    saved = transcript_edit.save_text(job, 'or', corrected)
++    assert saved['words'][-1]['word'] == 'ପ୍ରତିଦିନଁ'
++    assert saved['words'][-1]['start'] == pytest.approx(WORDS[-1]['start'])
++
++
++def test_a_different_word_count_is_accepted_but_reported_as_estimated(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    saved = transcript_edit.save_text(job, 'or', 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ')   # one word fewer
++    assert saved['timing'] == 'estimated'
++    assert saved['word_count'] == 5
++    assert all(word['start'] <= word['end'] for word in saved['words'])
++
++
++@pytest.mark.parametrize('words,expected', [
++    ([], 'empty'),
++    ([{'word': 'a', 'start': 1.0, 'end': 0.5}], 'ends before it starts'),
++    ([{'word': 'a', 'start': 0.0, 'end': 1.0}, {'word': 'b', 'start': 0.5, 'end': 1.2}], 'starts before'),
++])
++def test_a_correction_that_breaks_the_timeline_is_refused_and_nothing_is_saved(tmp_path, words, expected):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    with pytest.raises(ValueError) as error:
++        transcript_edit.save_words(job, 'or', words)
++    assert expected in str(error.value) and 'nothing was changed' in str(error.value)
++    assert not transcript_edit.edit_path(job, 'or').exists()
++
++
++def test_an_empty_correction_is_refused(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    with pytest.raises(ValueError) as error:
++        transcript_edit.save_text(job, 'or', '   ')
++    assert '--clear' in str(error.value)
++
++
++def test_removing_the_correction_returns_to_the_measured_words(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    transcript_edit.save_text(job, 'or', 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନଁ')
++    assert transcript_edit.state(job, 'or')['edited'] is True
++    row = transcript_edit.clear(job, 'or')
++    assert row['edited'] is False
++    assert [w['word'] for w in row['words']] == [w['word'] for w in WORDS]
++
++
++def test_caption_lines_group_words_the_way_the_screen_shows_them(tmp_path):
++    from engine import transcript_edit
++    words = [{'word': f'w{i}', 'start': i * 0.3, 'end': i * 0.3 + 0.3} for i in range(14)]
++    lines = transcript_edit.caption_lines(words, max_words=6)
++    assert [len(line) for line in lines] == [6, 6, 2]
++    assert [word['index'] for line in lines for word in line] == list(range(14))
++
++
++def test_saving_a_correction_only_writes_the_transcript_file(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    before = {p: p.stat().st_size for p in job.rglob('*') if p.is_file()}
++    transcript_edit.save_words(job, 'or', transcript_edit.state(job, 'or')['words'])
++    after = {p: p.stat().st_size for p in job.rglob('*') if p.is_file()}
++    assert set(after) - set(before) == {job / 'production' / 'transcripts' / 'or.json'}
++    assert all(after[path] == size for path, size in before.items())
++
++
++def test_the_edition_is_out_of_date_until_it_is_rendered_again(tmp_path):
++    from engine.language_editions import _bundle_is_current, caption_signature
++    job = _job(tmp_path)
++    bundle = json.loads((job / 'production' / 'language_editions.json').read_text())['bundles']['or']
++    video = job / 'video.mp4'
++    video.write_bytes(b'v')
++    entry = {'status': 'exported', 'audio_sha256': bundle['audio_sha256'], 'path': str(video),
++             'captions': True, 'caption_words_sha256': ''}
++    assert caption_signature(job, 'or')[1] == 'measured'
++    assert _bundle_is_current(job, 'or', bundle, entry, verify=False, captions_sha='') is True
++    from engine import transcript_edit
++    transcript_edit.save_words(job, 'or', transcript_edit.state(job, 'or')['words'])
++    sha, source = caption_signature(job, 'or')
++    assert source == 'edited' and sha
++    assert _bundle_is_current(job, 'or', bundle, entry, verify=False, captions_sha=sha) is False
++    entry['caption_words_sha256'] = sha
++    assert _bundle_is_current(job, 'or', bundle, entry, verify=False, captions_sha=sha) is True
++
++
++def test_the_render_uses_the_correction_from_an_immutable_snapshot(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    transcript_edit.save_text(job, 'or', 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନଁ')
++    target = tmp_path / 'plan' / 'assets' / 'captions-or.json'
++    snapshot, report = transcript_edit.snapshot_for_plan(job, 'or', target)
++    assert report['source'] == 'edited' and report['words'] == 6
++    saved = json.loads(snapshot.read_text(encoding='utf-8'))
++    assert saved[-1]['word'] == 'ପ୍ରତିଦିନଁ'
++    # A later edit cannot change the snapshot an in-flight render is using.
++    transcript_edit.clear(job, 'or')
++    assert json.loads(snapshot.read_text(encoding='utf-8'))[-1]['word'] == 'ପ୍ରତିଦିନଁ'
++
++
++def test_without_a_correction_the_snapshot_holds_the_measured_words(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    snapshot, report = transcript_edit.snapshot_for_plan(job, 'or', tmp_path / 'captions.json')
++    assert report['source'] == 'measured'
++    assert [w['word'] for w in json.loads(snapshot.read_text(encoding='utf-8'))] == [w['word'] for w in WORDS]
++
++
++def test_a_language_without_words_says_which_languages_have_them(tmp_path):
++    from engine import transcript_edit
++    job = _job(tmp_path)
++    with pytest.raises(ValueError) as error:
++        transcript_edit.state(job, 'hi')
++    assert 'hi' in str(error.value) and 'or' in str(error.value)
++
++
++# ---------------------------------------------------------------- real render
++
++
++def _renderable_job(tmp_path):
++    from engine import finishing_studio as finish
++    from engine.production import digest
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = job / 'render' / 'visual-master.mp4'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'testsrc2=size=640x360:rate=24', '-t', '3', '-an', '-c:v', 'libx264',
++                    '-pix_fmt', 'yuv420p', str(picture)], check=True)
++    (job / 'production' / 'visual_master.json').write_text(json.dumps(
++        {'path': str(picture), 'sha256': finish._hash(picture), 'duration': 3.0, 'contains': 'picture only'}),
++        encoding='utf-8')
++    folder = job / 'speech-editions' / 'or' / 'key'
++    folder.mkdir(parents=True)
++    audio = folder / 'voice.wav'
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
++                    'sine=frequency=880:sample_rate=44100', '-t', '3', '-c:a', 'pcm_s16le', str(audio)], check=True)
++    words = folder / 'words.json'
++    words.write_text(json.dumps(WORDS, ensure_ascii=False), encoding='utf-8')
++    bundle = {'audio': str(audio), 'audio_sha256': digest(audio), 'duration': 3.0, 'words': str(words),
++              'script': 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନ', 'language': 'or', 'timing_source': 'test',
++              'cards': [], 'text_cards': False}
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en', 'or'], 'profiles': {'or': None}, 'bundles': {'or': bundle},
++         'transcript': {'default': True, 'languages': {}}}), encoding='utf-8')
++    return job
++
++
++@needs_ffmpeg
++def test_a_corrected_transcript_is_what_the_export_burns(tmp_path):
++    from engine import transcript_edit
++    from engine.language_editions import render_job_editions
++    job = _renderable_job(tmp_path)
++    transcript_edit.save_text(job, 'or', 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନଁ')
++    report = render_job_editions(job)
++    assert report['status'] == 'exported', report
++    export = Path(report['editions']['or']['path'])
++    provenance = json.loads(export.with_suffix('.provenance.json').read_text(encoding='utf-8'))
++    assert provenance['captions_burned'] is True
++    assert provenance['captions_from_correction'] is True
++    assert provenance['captions_from_reviewed_script'] is False
++    assert 'correction' in provenance['captions_note']
++    # The plan snapshot FFmpeg burned from holds the user's word, not the recognizer's.
++    plan = json.loads(Path(provenance['plan']).read_text(encoding='utf-8'))
++    burned = Path(plan['editions']['or']['caption_words']['path'])
++    assert burned.is_file() and burned.parent.name == 'assets'
++    assert json.loads(burned.read_text(encoding='utf-8'))[-1]['word'] == 'ପ୍ରତିଦିନଁ'
++
++    # Rendering again with nothing changed produces no new file.
++    again = render_job_editions(job)
++    assert again['status'] == 'exported'
++    assert len(sorted((job / 'language_editions').glob('*/exports/*.mp4'))) == 1
++
++    # A new correction re-renders that language, and the earlier export stays on disk.
++    earlier = Path(report['editions']['or']['path'])
++    transcript_edit.save_text(job, 'or', 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନ।')
++    third = render_job_editions(job)
++    assert third['status'] == 'exported'
++    newest = Path(third['editions']['or']['path'])
++    exports = set((job / 'language_editions').glob('*/exports/*.mp4'))
++    assert len(exports) == 2 and newest in exports and earlier in exports and newest != earlier
++
++
++@needs_ffmpeg
++def test_the_corrected_words_reach_the_burned_captions_file(tmp_path):
++    """The ASS the renderer builds must contain the corrected spelling, not the measured one."""
++    from engine import transcript_edit
++    from engine.render.captions_ass import build_captions
++    job = _renderable_job(tmp_path)
++    transcript_edit.save_text(job, 'or', 'ନିଜର ସ୍ୱାସ୍ଥ୍ୟ ପ୍ରତି ଧ୍ୟାନ ଦିଅ ପ୍ରତିଦିନଁ')
++    words, report = transcript_edit.words_for_render(job, 'or')
++    assert report['source'] == 'edited'
++    captions = build_captions(words, str(tmp_path / 'captions'), template='HORMOZI', aspect='16:9',
++                              W=640, H=360, duration=3.0)
++    text = Path(captions['ass']).read_text(encoding='utf-8')
++    assert 'ପ୍ରତିଦିନଁ' in text.replace('\u200d', '\u200d')
+diff --git a/tools/update_v7108_to_v7109.py b/tools/update_v7108_to_v7109.py
+deleted file mode 100644
+index 7a0861c..0000000
+--- a/tools/update_v7108_to_v7109.py
++++ /dev/null
+@@ -1,180 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.109 update to a v7.0.108 installation.
+-
+-Four field requests, from two screenshots and the questions around them:
+-
+-1. **The burned Odia transcript spelled words wrongly.** Its text is now taken from the reviewed script (timing
+-   still comes from the measured word timings), Odia transcripts are off by default, and every language can be
+-   re-rendered without its transcript - or with it again - from the narration already saved in the job. No new
+-   voice, no new video, no Flow credits, and the version you already had stays on disk.
+-2. **The channel badge from the English master now appears in every edition**, with the mark and the
+-   open/close animation, and the logo stays for the whole video. The mark no longer vanishes for five seconds
+-   every cycle.
+-3. **Deleting a job kept only the primary video.** Every language edition, the branded master and the
+-   language_editions/ exports are now backed up to ``outputs/_render-backups/<job>/`` before anything is
+-   removed; if a copy cannot be verified, the deletion is refused.
+-4. **The four Gemini video shots were chosen silently.** ``cli.py v3 gemini-shots <job>`` (and a picker in
+-   Storyboard) lists every shot with its verdict and saves exactly which shots Gemini generates - refusing any
+-   shot that already has a take or a Flow request.
+-
+-Plus per-video-type music start links (``docs/MUSIC_LIBRARY.md`` section 3b, ``v3 music-suggest --playbook``).
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.109 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.109/tools/update_v7108_to_v7109.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.109/tools/update_v7108_to_v7109.py . --apply    # installs the code
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py',
+-    'engine/language_editions.py', 'engine/finishing_studio.py', 'engine/captions.py',
+-    'engine/speech_cards.py', 'engine/render/graphics.py', 'engine/providers/gemini_video.py',
+-    'engine/job_delete.py', 'engine/graphics_audit.py', 'engine/audio/music_catalog.py',
+-    'docs/MUSIC_LIBRARY.md',
+-    'tests/test_v7109_transcript_branding_gemini.py',
+-    'TRANSCRIPTS_BRANDING_AND_CHOICES_V7_0_109.md', 'tools/update_v7108_to_v7109.py',
+-]
+-# Files as they exist in 7.0.108: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['202de15d77f2952482581f0b648026bbc6e06f8f023f102ea43fbf94dede24ca'],
+-    'cli.py': ['58829f7e119ea628f2edf46792dd01cd3252243b5dea80a6337033d47ec7c008'],
+-    'app.py': ['0223bc84a7c136dfe3cbeb156105f1c97c0d6b801b69a382b90356f2ce8e468d'],
+-    'engine/language_editions.py': ['910073cb71cb80dce33d51ff89b14540e5ce7816a9017dd6c5d1b6fa6fda3614'],
+-    'engine/finishing_studio.py': ['e6506b4121538c61423a4f65589910074e48ce6366ba74ba694132cb45c2fd00'],
+-    'engine/captions.py': ['271094d69e477e2a077f220d7fe0357fea7057ee0a5a1b7ab7f294ea6fdd70c8'],
+-    'engine/speech_cards.py': ['b0ce33904ff477e5331006493fe75858627f92451de8b322db4aebd0285c8453'],
+-    'engine/render/graphics.py': ['553a706173e1728678a7cab883bcacc5f45446ff9cd6e4b8ebec94ba7dc2b81f'],
+-    'engine/providers/gemini_video.py': ['26a9b6bf736af4a78c108f9b22850a97309bb6ebb8f2fb98059fa80e77785cfd'],
+-    'engine/job_delete.py': ['bae1b677cf5c73021d129af75550e73e03f600cf6e466533bed5e24b022dd8fe'],
+-    'engine/graphics_audit.py': ['e4bb9241f9a0fd4aaadcaf90c90a1e9778be18204adeb2c03aa2f30a6a88c1bd'],
+-    'engine/audio/music_catalog.py': ['2817886da533bcf3e1e703daeff70fa52c71b962427c0ff046b0f125b68c83e1'],
+-    'docs/MUSIC_LIBRARY.md': ['c186a6d4038637e5a750dafc10c5e387c6dd8cb2bdce944ea8ed0503ce4e4653'],
+-    'tools/update_v7107_to_v7108.py': ['62c5be88a153c2f771fcbe5ab770ece4a8ef917e8cc5900cd6161f1f89028517'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.108', '7.0.109')  # 7.0.109 allows a safe re-run after success
+-
+-# The 7.0.108 zip carries the 7.0.107 to 7.0.108 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.107', '7.0.108', 'tools/update_v7107_to_v7108.py'),
+-]
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.108 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.108 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.108 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.109'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-        print('Nothing was re-rendered and no Flow credit was spent. Existing jobs keep their saved takes.')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff --git a/tools/update_v7109_to_v7110.py b/tools/update_v7109_to_v7110.py
+new file mode 100644
+index 0000000..272846d
+--- /dev/null
++++ b/tools/update_v7109_to_v7110.py
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.110 update to a v7.0.109 installation.
++
++Two field requests:
++
++1. **"Show me the Odia transcript text, let me fix the spellings, then burn the fixed text."** Each language's
++   transcript can now be read word by word in the job panel (and with ``cli.py v3 transcript <job>``), corrected,
++   and rendered again for that language only. Fixing a spelling keeps every measured word time, so the narration
++   is never re-recorded: no text-to-speech, no video request, no Flow credit. The correction is optional - with
++   no correction the job behaves exactly as in 7.0.109 (measured words, or the reviewed script).
++2. **"I want to choose which shots Gemini generates, in the app."** The picker that existed in Storyboard is now
++   also in the job panel on the Queue and Create pages, with every shot's verdict and reason. 7.0.109 could only
++   do this from the command line, or by typing a number in Create that silently took the first eligible shots.
++
++Nothing is generated, rendered or charged by this update itself. Existing exports stay on disk; they are only
++re-rendered when you ask for it, and a re-render keeps the earlier file.
++
++Usage (run from the existing installation folder, after extracting the 7.0.110 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.110/tools/update_v7109_to_v7110.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.110/tools/update_v7109_to_v7110.py . --apply    # installs the code
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION', 'app.py', 'cli.py',
++    'engine/transcript_edit.py', 'engine/finishing_studio.py', 'engine/language_editions.py',
++    'tests/test_v7110_transcript_edit.py', 'tests/test_v7110_gemini_picker_ui.py',
++    'TRANSCRIPT_EDIT_AND_GEMINI_PICKER_V7_0_110.md', 'tools/update_v7109_to_v7110.py',
++]
++# Files as they exist in 7.0.109: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['a397b9e5f4ae9e9add5aa0b486bafe434f7bf658375a8077251603d438556c8f'],
++    'app.py': ['2b7ad9c76884688664f1e4b707cc0ed1663c654400c7ee6407d88339c63c7abd'],
++    'cli.py': ['b3eb5b8c8bc1a1276da4feb7037617d48c86af21170c9dbc79d853ab5805a708'],
++    'engine/finishing_studio.py': ['93f8821dc8c64fa86a14c0a7122f2a4501715bd5acb302c541baa6d0b1c0fa2d'],
++    'engine/language_editions.py': ['7f629ac8bd6e9e7f100dd92273e3bf630efc796e2454acf014c6ca596531f76e'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.109', '7.0.110')  # 7.0.110 allows a safe re-run after success
++
++# The 7.0.110 zip carries the 7.0.109 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.108', '7.0.109', 'tools/update_v7108_to_v7109.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.109 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.109 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.109 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.110'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++        print('Nothing was re-rendered, no voice was re-recorded and no Flow credit was spent. '
++              'Existing exports stay where they are until you ask for a re-render.')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

@@ -1,0 +1,1755 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/RESUME_WAIT_DELETE_AND_CLEANUP_V7_0_97.md b/RESUME_WAIT_DELETE_AND_CLEANUP_V7_0_97.md
+--- a/RESUME_WAIT_DELETE_AND_CLEANUP_V7_0_97.md	1970-01-01 00:00:00.000000000 +0000
++++ b/RESUME_WAIT_DELETE_AND_CLEANUP_V7_0_97.md	2026-10-26 07:44:50.000000000 +0000
+@@ -0,0 +1,121 @@
++# AutoVideoAI 7.0.97 · a 60-second image wait, a deletable completed job, Clip Studio cleanup, and speech batches that belong to the job you selected
++
++Four reports from the same session, fixed together.
++
++## 1 · The image wait is 60 seconds, not 360
++
++A saved Flow project either already holds the finished image or it does not; six minutes in the tab
++told us nothing that one minute does not. Every image recovery wait is now **60 s** by default:
++
++- `engine/flow_image_transaction.recover()` — the wait after reopening a saved request;
++- `engine/isolated_frame_regeneration` — the replacement-frame wait;
++- `engine/providers/flow_browser` — the older single-image path.
++
++It is a real job setting, `flow_image_wait_seconds`, so a slow account can raise it:
++
++```
++python3 cli.py v3 resume <job> --flow-image-wait-seconds 120     # this job, saved for later resumes
++```
++
++`Factory.set_flow_image_wait_seconds()` writes it to the job's `settings.json` and logs
++`flow_image_wait_updated`; the default lives in `engine/studio_config.DEFAULTS`, and the journal records
++`image_wait_seconds` so a log shows exactly how long each attempt waited. The wait is clamped to
++5–3600 s, and a *completed* wait with no output still ends the same way it did in 7.0.96: no second wait,
++one fresh free image request.
++
++## 2 · A completed job can be deleted again
++
++`Delete completed job · permanent` refused the job
++`20261018-132625-speak-with-confidence--5-0686` with *"No validated final video; profile retained"*.
++
++The guard looked at exactly one path, `render/<job>-final.mp4`. A production rendered with **video
++cutaways** writes `render/<job>-final-broll.mp4` (see `factory`), so a finished 2.4 GB job looked like a
++job with no video. `engine/job_cleanup.find_final_video()` now checks, in order:
++
++1. the manifest's `final_path`;
++2. `render/<job>-final.mp4`;
++3. `render/<job>-final-broll.mp4`;
++4. `render/*-final*.mp4`, `*-final*.mp4`, `final*.mp4`.
++
++Each candidate is validated (a real container with a finite duration, never a still image in disguise)
++and the **largest valid one wins**. The preview shows which file was accepted and its size, plus the
++reason every rejected candidate was rejected (`missing`, `too small`, `not a decodable video`, `symlink`).
++
++If a completed job genuinely has no finished video, that is no longer a dead end: tick
++*"Delete this completed job even though no finished video was found"*, type the exact job ID, and the
++folder is removed with `override: "no_final_video"` recorded in the report. Two things still refuse
++deletion outright, with or without that tick: a job that is **not finished**, and a job with an
++**unresolved Flow request** (the folder is what lets that request be recovered).
++
++## 3 · Clip Studio content has a cleanup panel
++
++*A Clip Studio run leaves the downloaded source video, speech chunks, caption/batch scratch files
++and staged logos (`_clip_work/`), the per-batch selection reports (`clip-history/`), the latest
++selection and B-roll reviews, the clip render job state (`.clip-render-jobs/`) and the rendered clips
++themselves.*
++
++**Settings → Clip Studio content · disk cleanup** lists every Clip Studio output folder (the one under
++`outputs/` and the folder currently typed in Clip Studio), with total size, clip count and whether a
++render is running. Each category is a separate tick:
++
++| Category | What it removes |
++|---|---|
++| `work` | `_clip_work/` — downloaded source, speech chunks, caption and batch scratch files |
++| `render_state` | `.clip-render-jobs/` — finished or resumable render state |
++| `history` | `clip-history/` — per-batch selection reports |
++| `reviews` | `highlights.json`, `highlights.partial.json`, `broll-review-*.json` |
++| `clips` | `*.mp4` in the folder — **the product**, and it needs its own tick |
++
++The safe categories are pre-ticked, the rendered clips are not. A folder with a **running clip render**
++is refused, symlinked entries and anything outside the selected folder are skipped, and the preview
++(`eligible_bytes`) is rechecked before anything is removed (dry run → apply, like the worker cleanup).
++
++## 4 · Speech batches belong to the selected job
++
++The Queue panel listed every Create step 4 batch of the installation, so the batch saved with the
++**Active job** was buried among sessions from earlier days — six *"Create step 4 · ready"* cards around
++the one that mattered.
++
++Now the Active job decides:
++
++- the header names the job: **Speech batches · `<job id>` · N to finish**, and the panel shows only the
++  batch saved inside that job (`partition_for_job`, `list_speech_batches(include_finished=[job])` so a
++  *finished* job batch is still shown instead of "no batch yet");
++- every other Create step 4 batch is in a collapsed folder,
++  **"Other Create step 4 batches · not attached to this job · N to finish"**, still usable for finishing
++  TTS and reusing in Create step 4;
++- with no Active job selected the panel behaves as before — that is where pre-create batches live.
++
++## Tests
++
++`tests/test_v797_cleanup_and_waits.py` (19 tests, fakes only — no browser, no Flow request, no credits):
++
++- the 60 s default, a job's saved value, invalid values, the 5–3600 s clamp, and the timeout actually
++  handed to `wait_for_agent_generation`;
++- a `-final-broll.mp4` job is eligible and its file is the one reported; a manifest `final_path` is
++  accepted; a completed job without a video says exactly which files were checked; the explicit
++  override deletes it; an unfinished job and a pending Flow request are never overridable;
++- Clip Studio inventory per category, discovery under `outputs/`, dry run → apply, the rendered clips
++  needing their own opt-in, a running render refused, a foreign folder refused;
++- a finished job batch listed only when asked for, and batches partitioned by the Active job.
++
++## Install
++
++1. Stop the dashboard.
++2. Extract `AutoVideoAI-v7.0.97-Resume-Wait-Delete-Cleanup.zip` beside your installation folder.
++3. Run the updater from inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.97/tools/update_v796_to_v797.py .            # dry run: shows the plan
++   python3 ../AutoVideoAI-v7.0.97/tools/update_v796_to_v797.py . --apply    # installs the code
++   ```
++
++   It accepts an installed 7.0.96 (or an already-updated 7.0.97), backs replaced files up under
++   `code-update-backups/v7.0.96-to-v7.0.97-<timestamp>`, and leaves outputs, saved jobs, settings,
++   browser profiles, Clip Studio folders, music, characters and channel profiles untouched.
++
++## Not verified live
++
++No Flow project was opened, no clip was rendered and no job was deleted while building this release.
++The wait value, the final-video selection, the cleanup categories and the batch partitioning are covered
++by fakes and small fixtures; the first real Resume, deletion and cleanup run are the confirmation.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/VERSION b/VERSION
+--- a/VERSION	2026-10-26 07:05:34.000000000 +0000
++++ b/VERSION	2026-10-26 07:44:52.000000000 +0000
+@@ -1 +1 @@
+-7.0.96
++7.0.97
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/app.py b/app.py
+--- a/app.py	2026-10-26 07:04:22.000000000 +0000
++++ b/app.py	2026-10-26 07:43:36.000000000 +0000
+@@ -1710,57 +1710,88 @@
+              "retries": j["retry_count"], "updated": j["updated_at"]} for j in jobs]
+     st.dataframe(pd.DataFrame(rows), width="stretch")
+     # 7.0.83: Create step 4 batches (narration and TTS before a job exists) can be corrected and resumed here.
+-    from engine.speech_batches import list_speech_batches, resume_speech_batch, correct_speech_scripts, language_label
++    from engine.speech_batches import (list_speech_batches, resume_speech_batch, correct_speech_scripts,
++                                       language_label, partition_for_job)
+     from engine.production_lock import production_slot
+-    speech_rows = list_speech_batches([F.pm.job_dir(j['job_id']) for j in jobs])
+-    speech_attention = [row for row in speech_rows if not row['ready']]
+-    with st.expander(f"Speech batches · Create step 4 · {len(speech_attention)} to finish", expanded=bool(speech_attention)):
+-        st.caption('Narration and TTS prepared in Create step 4. A batch that stopped during TTS, or a narration that failed the script check, is listed here. Correct the narration, save, then resume. Finished languages are reused; only unfinished ones are sent to TTS.')
+-        if not speech_rows:
+-            st.info('No speech batches yet.')
+-        tts_choices = ['auto', 'gemini', 'gemini-lite', 'groq', 'elevenlabs', 'kokoro', 'edge', 'gtts']
+-        for row in speech_rows:
+-            labels = ', '.join(language_label(code) for code in row['editions'])
+-            status = 'ready' if row['ready'] else ('stopped' if row['error'] else (row['phase'] or 'pending'))
+-            st.markdown(f"**{row['origin']}** · {labels} · {status} · voices {len(row['done'])}/{len(row['editions'])}")
+-            if row['ready']:
+-                st.success(('Voices are ready; text cards are optional and the job drafts them if needed.' if row['phase'] == 'voices_ready' else 'All voices and cards are ready.') + ' In Create step 4, tick “reuse this exact batch” to attach it to a job.')
+-                continue
+-            if row['error']:
+-                st.error(row['error'])
+-            base_key = 'speech-batch-' + row['key']
+-            scripts = row['scripts']
+-            if scripts:
+-                version = hashlib.sha256(json.dumps(scripts, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:8]
+-                edited, approvals = {}, {}
+-                for code in row['editions']:
+-                    is_master = code == row['source_language']
+-                    edited[code] = st.text_area(language_label(code) + ' narration', value=scripts.get(code, ''), height=120,
+-                        key=f'{base_key}-{version}-text-{code}', disabled=is_master,
+-                        help='The master narration is edited in Create step 2.' if is_master else 'Replace any word that is not in this language’s script.')
+-                    approvals[code] = True if is_master else st.checkbox('I reviewed the ' + language_label(code) + ' narration',
+-                        key=f'{base_key}-{version}-ok-{code}')
+-                if st.button('Save corrected narration', key=f'{base_key}-{version}-save'):
+-                    try:
+-                        correct_speech_scripts(row['path'], edited, approvals)
+-                        st.success('Saved. Resume to send only the unfinished languages to TTS.')
+-                    except Exception as error:
+-                        st.error(str(error))
+-            else:
+-                st.warning('This batch has no saved narration. Open Create step 4 and prepare the language scripts again.')
+-            stored = row['request'].get('provider')
+-            if stored:
+-                provider_choice = stored
+-                st.caption('TTS setting saved with this batch: ' + (stored if isinstance(stored, str) else 'per-language routes'))
+-            else:
+-                provider_choice = st.selectbox('TTS provider for resume', tts_choices, key=f'{base_key}-provider')
+-            if st.button('Resume TTS and cards for this batch', key=f'{base_key}-resume', disabled=not scripts):
++    speech_rows = list_speech_batches(
++        [F.pm.job_dir(j['job_id']) for j in jobs],
++        include_finished=[F.pm.job_dir(st.session_state.job_id)] if st.session_state.get('job_id') else [])
++    # 7.0.97: this panel belongs to the Active job. Every Create step 4 batch of the installation used
++    # to be listed here, so a job's own batch was buried among sessions from earlier days.
++    active_job = st.session_state.get('job_id')
++    active_root = None
++    if active_job:
++        try:
++            active_root = Path(F.pm.job_dir(active_job)).resolve()
++        except Exception:
++            active_root = None
++    own_rows, other_rows = partition_for_job(speech_rows, active_root)
++    own_attention = [row for row in own_rows if not row['ready']]
++    tts_choices = ['auto', 'gemini', 'gemini-lite', 'groq', 'elevenlabs', 'kokoro', 'edge', 'gtts']
++
++    def speech_batch_controls(row):
++        labels = ', '.join(language_label(code) for code in row['editions'])
++        status = 'ready' if row['ready'] else ('stopped' if row['error'] else (row['phase'] or 'pending'))
++        st.markdown(f"**{row['origin']}** · {labels} · {status} · voices {len(row['done'])}/{len(row['editions'])}")
++        if row['ready']:
++            st.success(('Voices are ready; text cards are optional and the job drafts them if needed.' if row['phase'] == 'voices_ready' else 'All voices and cards are ready.') + ' In Create step 4, tick “reuse this exact batch” to attach it to a job.')
++            return
++        if row['error']:
++            st.error(row['error'])
++        base_key = 'speech-batch-' + row['key']
++        scripts = row['scripts']
++        if scripts:
++            version = hashlib.sha256(json.dumps(scripts, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:8]
++            edited, approvals = {}, {}
++            for code in row['editions']:
++                is_master = code == row['source_language']
++                edited[code] = st.text_area(language_label(code) + ' narration', value=scripts.get(code, ''), height=120,
++                    key=f'{base_key}-{version}-text-{code}', disabled=is_master,
++                    help='The master narration is edited in Create step 2.' if is_master else 'Replace any word that is not in this language’s script.')
++                approvals[code] = True if is_master else st.checkbox('I reviewed the ' + language_label(code) + ' narration',
++                    key=f'{base_key}-{version}-ok-{code}')
++            if st.button('Save corrected narration', key=f'{base_key}-{version}-save'):
+                 try:
+-                    with production_slot(Path(row['path'])):
+-                        resume_speech_batch(row['path'], provider=provider_choice)
+-                    st.success('Batch ready. Attach it in Create step 4 with “reuse this exact batch”.')
++                    correct_speech_scripts(row['path'], edited, approvals)
++                    st.success('Saved. Resume to send only the unfinished languages to TTS.')
+                 except Exception as error:
+                     st.error(str(error))
++        else:
++            st.warning('This batch has no saved narration. Open Create step 4 and prepare the language scripts again.')
++        stored = row['request'].get('provider')
++        if stored:
++            provider_choice = stored
++            st.caption('TTS setting saved with this batch: ' + (stored if isinstance(stored, str) else 'per-language routes'))
++        else:
++            provider_choice = st.selectbox('TTS provider for resume', tts_choices, key=f'{base_key}-provider')
++        if st.button('Resume TTS and cards for this batch', key=f'{base_key}-resume', disabled=not scripts):
++            try:
++                with production_slot(Path(row['path'])):
++                    resume_speech_batch(row['path'], provider=provider_choice)
++                st.success('Batch ready. Attach it in Create step 4 with “reuse this exact batch”.')
++            except Exception as error:
++                st.error(str(error))
++
++    title = (f"Speech batches · {active_job} · {len(own_attention)} to finish" if active_root
++             else f"Speech batches · Create step 4 · {len(own_attention)} to finish")
++    with st.expander(title, expanded=bool(own_attention)):
++        st.caption('Narration and TTS prepared in Create step 4. A batch that stopped during TTS, or a narration that failed the script check, is listed here. Correct the narration, save, then resume. Finished languages are reused; only unfinished ones are sent to TTS.')
++        if active_root:
++            st.caption(f"Showing the speech batch saved with {active_job} only. Batches from other Create step 4 sessions are in the folder below and are not attached to this job.")
++        if not own_rows:
++            if active_root:
++                st.info('This job has no saved speech batch yet. Prepare the language voices in Create step 4, or open an unattached batch below and attach it there.')
++            else:
++                st.info('No speech batches yet.')
++        for row in own_rows:
++            speech_batch_controls(row)
++        if other_rows:
++            other_attention = [row for row in other_rows if not row['ready']]
++            with st.expander(f"Other Create step 4 batches · not attached to this job · {len(other_attention)} to finish",
++                             expanded=False):
++                st.caption('These batches were prepared in Create step 4 and are not part of the selected job. Open one only if you want to finish it and reuse it in Create step 4.')
++                for row in other_rows:
++                    speech_batch_controls(row)
+     from engine.clip_render_jobs import discover as discover_clip_renders
+     clip_render_jobs = discover_clip_renders((F.pm.root, 'outputs'))
+     if clip_render_jobs:
+@@ -1972,7 +2003,9 @@
+         "public_domain", "commentary_or_review", "private_draft_only",
+     ])
+     st.warning("Captions, music, cropping, zoom or motion alone do not make somebody else's video copyright-safe. AutoVideoAI records your declaration but cannot grant legal rights.")
+-    output_dir = st.text_input("Output folder", value="outputs/my-clips")
++    output_dir = st.text_input("Output folder", value="outputs/my-clips", key="clip-output-folder",
++                               help="Finished clips and their working files are written here. "
++                                    "Settings > Clip Studio content cleans this folder.")
+     background_music = ""
+     music_source = "pixabay"
+     music_mood = "soft ambient instrumental"
+@@ -3103,18 +3136,42 @@
+             report = st.session_state.get('job-delete-preview')
+             if report and report.get('job_id') == delete_job_id:
+                 st.json(report)
++                if report.get('final_video'):
++                    st.caption(f"Finished video found: {report['final_video']} · "
++                               f"{report.get('final_bytes',0)/1024**3:.2f} GB")
++                allow_missing = False
+                 if report['eligible']:
++                    pass
++                elif report.get('reason_code') == 'no_final_video':
++                    # 7.0.97: a completed job whose finished video is not in the folder can still be
++                    # removed, but only as a separate, explicitly ticked choice.
++                    st.warning('No finished video was found in this folder, so this is not the usual '
++                               '"delete a completed job" case. The folder can still be removed if you do '
++                               'not need it any more.')
++                    if report.get('candidates'):
++                        st.dataframe([{'file': row['name'], 'GB': round(row.get('bytes',0)/1024**3, 2),
++                                       'usable video': 'yes' if row['valid'] else 'no',
++                                       'why not': row.get('reason','')} for row in report['candidates']],
++                                     hide_index=True)
++                    allow_missing = st.checkbox(
++                        'Delete this completed job even though no finished video was found '
++                        '(the folder, recovery history and any media in it are removed)',
++                        key='delete-job-allow-missing')
++                else:
++                    st.info('This job is not eligible for permanent deletion: ' + str(report.get('reason') or
++                            'unresolved Flow requests must be reviewed.'))
++                if report['eligible'] or allow_missing:
+                     typed = st.text_input('Type exact job ID to authorize deletion',key='delete-job-exact-confirm')
+                     if st.button('Permanently delete job and DB entry',disabled=typed!=delete_job_id,key='delete-job-apply'):
+                         try:
+-                            deleted = completed_job_delete(F.pm.root, DB.path, delete_job_id,apply=True,confirmation=typed)
++                            deleted = completed_job_delete(F.pm.root, DB.path, delete_job_id,apply=True,
++                                                           confirmation=typed,allow_missing_final=allow_missing)
+                             st.json(deleted)
+                             st.session_state.pop('job-delete-preview',None)
+                             if deleted.get('deleted'):st.success('Completed job deleted. A database backup was preserved.')
+                             else:st.warning('Quarantined files require manual review; see report.')
+                         except (ValueError,RuntimeError,OSError) as error:
+                             st.error(str(error))
+-                else:st.info('This job is not eligible for permanent deletion; unresolved Flow requests or missing final media must be reviewed.')
+     with st.expander('Disk cleanup · safe worker files', expanded=False):
+         st.caption('After each worker/job, regenerable worker caches are trimmed. Completed worker clones are removed only with a validated final video and no pending Flow requests. Final videos, accepted takes, characters, main login profiles and recovery journals are preserved.')
+         if st.button('Preview cleanup of saved jobs', key='storage-preview'):
+@@ -3138,6 +3195,58 @@
+                     st.session_state.pop('storage-cleanup-preview',None)
+                 except RuntimeError as error:
+                     st.error(str(error))
++    with st.expander('Clip Studio content · disk cleanup', expanded=False):
++        # 7.0.97: a clip batch leaves the downloaded source, speech chunks, caption scratch files,
++        # selection history and render state next to the finished clips. Preview it, then remove
++        # only the categories you choose; the rendered clips need a separate tick.
++        from engine.clip_cleanup import cleanup as cleanup_clips, discover as discover_clip_content
++        st.caption('Clip Studio keeps working files beside the clips it renders. Preview every Clip Studio '
++                   'folder, then remove only what you choose. A folder with a running clip render is never '
++                   'touched, and nothing outside the selected folder is deleted.')
++        clip_extra = [st.session_state.get('clip-output-folder') or '']
++        if st.button('Preview Clip Studio folders', key='clip-cleanup-preview'):
++            try:
++                with st.spinner('Measuring Clip Studio folders…'):
++                    st.session_state['clip-cleanup-rows'] = discover_clip_content(F.pm.root, clip_extra)
++            except (OSError, ValueError) as error:
++                st.session_state.pop('clip-cleanup-rows', None)
++                st.error(str(error))
++        clip_rows = st.session_state.get('clip-cleanup-rows') or []
++        if clip_rows:
++            st.dataframe([{'folder': Path(row['folder']).name, 'path': row['folder'],
++                           'GB': round(row['total_bytes']/1024**3, 2), 'clips': row['clips'],
++                           'running': 'yes' if row['running'] else 'no'} for row in clip_rows],
++                         hide_index=True)
++            clip_choice = st.selectbox('Clip Studio folder', [row['folder'] for row in clip_rows],
++                                       key='clip-cleanup-folder')
++            chosen = next(row for row in clip_rows if row['folder'] == clip_choice)
++            for warning in chosen.get('warnings') or []:
++                st.warning(warning)
++            picked = []
++            for category in chosen['categories']:
++                size = category['bytes']/1024**2
++                if category['destructive']:
++                    ticked = st.checkbox(f"{category['label']} · {size:.1f} MB · deletes the finished "
++                                         'clips of this folder', key=f"clip-clean-clips-{chosen['folder']}")
++                else:
++                    ticked = st.checkbox(f"{category['label']} · {size:.1f} MB",
++                                         value=bool(category['bytes']),
++                                         key=f"clip-clean-{category['key']}-{chosen['folder']}")
++                if ticked:
++                    picked.append(category['key'])
++            st.caption('Will remove: ' + (', '.join(picked) or 'nothing selected'))
++            if st.button('Apply Clip Studio cleanup · rechecks running state', disabled=not picked,
++                         key='clip-cleanup-apply'):
++                try:
++                    with st.spinner('Removing the selected Clip Studio files…'):
++                        report = cleanup_clips(chosen['folder'], picked, apply=True,
++                                               include_clips='clips' in picked)
++                    st.success(f"Freed {report.get('freed_bytes',0)/1024**3:.2f} GB from "
++                               f"{Path(chosen['folder']).name}.")
++                    st.json(report)
++                    st.session_state.pop('clip-cleanup-rows', None)
++                except (OSError, ValueError) as error:
++                    st.error(str(error))
+ 
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/cli.py b/cli.py
+--- a/cli.py	2026-10-26 07:04:04.000000000 +0000
++++ b/cli.py	2026-10-26 07:41:10.000000000 +0000
+@@ -193,6 +193,8 @@
+                    help="maximum time to recover Flow Agent high-demand responses before pausing (default 900s)")
+     c.add_argument("--flow-capacity-retries", type=int, default=8,
+                    help="Try-again clicks for Flow Agent high-demand recovery (default 8)")
++    c.add_argument("--flow-image-wait-seconds", type=int, default=60,
++                   help="Seconds to wait for one Flow image before reporting no output (default 60s; was 360s)")
+     c.add_argument("--flow-project-url", default="",
+                    help="reuse an exact https://flow.google.com/project/<uuid> project; resume stores/reuses it automatically")
+     c.add_argument("--flow-video-retries", type=int, default=1,
+@@ -238,6 +240,8 @@
+     r.add_argument("--pause-on-unresolved-flow-request", dest="flow_pause_on_unresolved_request",
+                    action=argparse.BooleanOptionalAction, default=None,
+                    help="explicitly enable/disable PAUSED status for unresolved Flow requests on this job")
++    r.add_argument("--flow-image-wait-seconds", type=int, default=None,
++                   help="Seconds to wait for one Flow image before recovery reports no output (default 60s; was 360s)")
+ 
+     rv = sub.add_parser(
+         "recover-flow-video",
+@@ -746,6 +750,7 @@
+                             network_wait_seconds=args.network_wait_seconds,
+                             flow_capacity_wait_seconds=args.flow_capacity_wait_seconds,
+                             flow_capacity_retries=args.flow_capacity_retries,
++                            flow_image_wait_seconds=args.flow_image_wait_seconds or 60,
+                             flow_project_url=args.flow_project_url,
+                             flow_video_retries=args.flow_video_retries,
+                             flow_video_ready_grace_seconds=args.flow_video_ready_grace_seconds,
+@@ -814,6 +819,9 @@
+             f.set_flow_frame_batch_recovery(args.job_id, args.continue_on_unresolved_frames)
+         if args.gemini_chat_cleanup is not None:
+             f.set_gemini_cleanup(args.job_id, args.gemini_chat_cleanup)
++        if args.flow_image_wait_seconds is not None:
++            print('Flow image wait set to %d s for this job.'
++                  % f.set_flow_image_wait_seconds(args.job_id, args.flow_image_wait_seconds))
+         if args.flow_pause_on_unresolved_request is not None:
+             f.set_flow_pause_on_unresolved_request(
+                 args.job_id, args.flow_pause_on_unresolved_request)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/clip_cleanup.py b/engine/clip_cleanup.py
+--- a/engine/clip_cleanup.py	1970-01-01 00:00:00.000000000 +0000
++++ b/engine/clip_cleanup.py	2026-10-26 07:42:30.000000000 +0000
+@@ -0,0 +1,216 @@
++"""Clip Studio disk cleanup (7.0.97): preview and remove what a clip batch leaves behind.
++
++A Clip Studio run writes far more than the finished clips. In the chosen output folder (default
++``outputs/my-clips``) it leaves the downloaded source video, speech chunks, caption/batch scratch
++files and staged logos (``_clip_work/``), the per-batch selection reports (``clip-history/``), the
++latest selection and B-roll reviews, the clip-render job state (``.clip-render-jobs/``) and the
++rendered clips themselves.
++
++Nothing here is deleted without a preview, an explicit category list and (for the rendered clips)
++a separate opt-in. A folder with a running clip render is never touched, symlinks are skipped, and
++nothing outside the selected folder is ever removed.
++"""
++from __future__ import annotations
++
++import os
++import shutil
++from pathlib import Path
++
++WORK_DIR = '_clip_work'
++RENDER_STATE_DIR = '.clip-render-jobs'
++HISTORY_DIR = 'clip-history'
++REVIEW_NAMES = ('highlights.json', 'highlights.partial.json')
++REVIEW_PATTERNS = ('broll-review-*.json', 'highlights.partial.json')
++
++CATEGORIES = {
++    'work': 'Downloaded source, speech chunks, caption and batch scratch files (_clip_work)',
++    'render_state': 'Clip render job state (.clip-render-jobs)',
++    'history': 'Per-batch selection reports (clip-history)',
++    'reviews': 'Latest selection and B-roll review files',
++    'clips': 'Rendered clips and their B-roll versions (*.mp4 in this folder)',
++}
++SAFE_CATEGORIES = ('work', 'render_state', 'history', 'reviews')
++
++
++def _size(path: Path) -> int:
++    path = Path(path)
++    if path.is_symlink():
++        return 0
++    if path.is_file():
++        return path.stat().st_size
++    total = 0
++    for directory, dirs, files in os.walk(path, followlinks=False):
++        dirs[:] = [name for name in dirs if not (Path(directory) / name).is_symlink()]
++        for name in files:
++            item = Path(directory) / name
++            if not item.is_symlink():
++                try:
++                    total += item.stat().st_size
++                except OSError:
++                    continue
++    return total
++
++
++def _inside(folder: Path, target: Path) -> bool:
++    try:
++        return target.resolve().is_relative_to(folder.resolve())
++    except (OSError, ValueError):
++        return False
++
++
++def _clip_files(folder: Path) -> list[Path]:
++    return sorted(path for path in folder.glob('*.mp4')
++                  if path.is_file() and not path.is_symlink())
++
++
++def _review_files(folder: Path) -> list[Path]:
++    found = [folder / name for name in REVIEW_NAMES if (folder / name).is_file()]
++    for pattern in REVIEW_PATTERNS:
++        found.extend(sorted(path for path in folder.glob(pattern) if path.is_file()))
++    unique = {}
++    for path in found:
++        if not path.is_symlink():
++            unique[str(path)] = path
++    return sorted(unique.values())
++
++
++def looks_like_clip_output(folder) -> bool:
++    folder = Path(folder)
++    if folder.is_symlink() or not folder.is_dir():
++        return False
++    return ((folder / WORK_DIR).is_dir() or (folder / HISTORY_DIR).is_dir()
++            or (folder / RENDER_STATE_DIR).is_dir()
++            or (folder / 'highlights.json').is_file()
++            or bool(_clip_files(folder)))
++
++
++def render_running(folder) -> bool:
++    """True while a clip render for this folder is live; such a folder is never cleaned."""
++    folder = Path(folder)
++    try:
++        from .clip_render_jobs import _lock_active
++        if _lock_active(folder):
++            return True
++    except Exception:
++        pass
++    for state in (folder / RENDER_STATE_DIR).glob('*/state.json') if (folder / RENDER_STATE_DIR).is_dir() else []:
++        try:
++            import json
++            data = json.loads(state.read_text(encoding='utf-8'))
++            if str(data.get('status') or '').lower() in ('running', 'queued', 'starting'):
++                return True
++        except (OSError, ValueError):
++            continue
++    return False
++
++
++def folder_inventory(folder) -> dict:
++    """What this Clip Studio output folder holds, per category, with bytes. Read-only."""
++    folder = Path(folder).expanduser().absolute()
++    report = {'folder': str(folder), 'exists': folder.is_dir() and not folder.is_symlink(),
++              'is_clip_output': False, 'running': False, 'total_bytes': 0,
++              'clips': 0, 'categories': [], 'warnings': []}
++    if not report['exists']:
++        report['warnings'].append('Folder is missing')
++        return report
++    report['is_clip_output'] = looks_like_clip_output(folder)
++    report['running'] = render_running(folder)
++    targets = {
++        'work': [folder / WORK_DIR],
++        'render_state': [folder / RENDER_STATE_DIR],
++        'history': [folder / HISTORY_DIR],
++        'reviews': _review_files(folder),
++        'clips': _clip_files(folder),
++    }
++    for key, label in CATEGORIES.items():
++        items, size, count = [], 0, 0
++        for target in targets[key]:
++            if not _inside(folder, target):
++                report['warnings'].append(f'Skipped a path outside the folder: {target}')
++                continue
++            if not target.exists():
++                continue
++            items.append(str(target.relative_to(folder)))
++            size += _size(target)
++            count += 1 if target.is_file() else len(list(target.rglob('*')))
++        report['categories'].append({'key': key, 'label': label, 'paths': items,
++                                     'bytes': size, 'items': count,
++                                     'destructive': key == 'clips'})
++    report['clips'] = len(_clip_files(folder))
++    report['total_bytes'] = sum(row['bytes'] for row in report['categories'])
++    if report['running']:
++        report['warnings'].append('A clip render is running for this folder; cleanup is refused')
++    return report
++
++
++def discover(root, extra=()) -> list[dict]:
++    """Every Clip Studio output folder under ``root`` (plus explicitly named ones)."""
++    root = Path(root).expanduser().absolute()
++    found: dict[str, Path] = {}
++    for candidate in extra:
++        if not candidate:
++            continue
++        path = Path(candidate).expanduser()
++        if not path.is_absolute():
++            path = root / path
++        found[str(path.absolute())] = path.absolute()
++    if root.is_dir() and not root.is_symlink():
++        for directory, dirs, _files in os.walk(root, followlinks=False):
++            current = Path(directory)
++            dirs[:] = [name for name in dirs if not (current / name).is_symlink()
++                       and name not in RENDER_STATE_DIR and name != WORK_DIR]
++            if not looks_like_clip_output(current):
++                continue
++            found[str(current.absolute())] = current.absolute()
++            # A clip folder never nests another clip folder.
++            dirs[:] = []
++    return [folder_inventory(path) for path in sorted(found.values())]
++
++
++def cleanup(folder, categories=SAFE_CATEGORIES, *, apply=False, include_clips=False) -> dict:
++    """Remove the requested categories from one Clip Studio output folder.
++
++    ``include_clips`` must be True to remove rendered clips; they are the product, not scratch data.
++    """
++    folder = Path(folder).expanduser().absolute()
++    if folder.is_symlink() or not folder.is_dir():
++        raise ValueError('Choose an existing real Clip Studio output folder')
++    if not looks_like_clip_output(folder):
++        raise ValueError('This folder does not look like Clip Studio output; nothing was changed')
++    wanted = [key for key in categories if key in CATEGORIES]
++    if include_clips and 'clips' not in wanted:
++        wanted.append('clips')
++    if 'clips' in wanted and not include_clips:
++        wanted.remove('clips')
++    report = {'folder': str(folder), 'apply': apply, 'requested': wanted,
++              'eligible_bytes': 0, 'freed_bytes': 0, 'removed': [], 'warnings': []}
++    if not wanted:
++        report['warnings'].append('No category was selected')
++        return report
++    if render_running(folder):
++        report['warnings'].append('A clip render is running for this folder; nothing was removed')
++        return report
++    targets = {'work': [folder / WORK_DIR], 'render_state': [folder / RENDER_STATE_DIR],
++               'history': [folder / HISTORY_DIR], 'reviews': _review_files(folder),
++               'clips': _clip_files(folder)}
++    for key in wanted:
++        for target in targets[key]:
++            if not _inside(folder, target):
++                report['warnings'].append(f'Skipped a path outside the folder: {target}')
++                continue
++            if not target.exists() or target.is_symlink():
++                continue
++            size = _size(target)
++            report['eligible_bytes'] += size
++            if not apply:
++                continue
++            try:
++                if target.is_dir():
++                    shutil.rmtree(target)
++                else:
++                    target.unlink()
++                report['freed_bytes'] += size
++                report['removed'].append(str(target.relative_to(folder)))
++            except OSError as error:
++                report['warnings'].append(f'{target.name}: {type(error).__name__}')
++    return report
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-26 07:13:52.000000000 +0000
++++ b/engine/factory.py	2026-10-26 07:41:24.000000000 +0000
+@@ -211,7 +211,8 @@
+                    flow_approval: str = "once", max_generation_credits: int = 10, flow_approval_cards: int = 1,
+                    shot_max_seconds: float | None = None, flow_frame_retries: int = 3,
+                    network_wait_seconds: int = 300, flow_capacity_wait_seconds: int = 900,
+-                   flow_capacity_retries: int = 8, flow_project_url: str = "",
++                   flow_capacity_retries: int = 8, flow_image_wait_seconds: int = 60,
++                   flow_project_url: str = "",
+                    flow_video_retries: int = 1, flow_video_ready_grace_seconds: int = 20,
+                    flow_video_recovery_wait_seconds: int = 180,
+                    flow_reuse_project_media: bool = True,
+@@ -313,6 +314,7 @@
+                     "network_wait_seconds": int(network_wait_seconds),
+                     "flow_capacity_wait_seconds": int(flow_capacity_wait_seconds),
+                     "flow_capacity_retries": int(flow_capacity_retries),
++                    "flow_image_wait_seconds": int(flow_image_wait_seconds),
+                     "flow_project_url": str(flow_project_url or "").strip(),
+                     "flow_video_retries": int(flow_video_retries),
+                     "flow_video_ready_grace_seconds": int(flow_video_ready_grace_seconds),
+@@ -389,7 +391,7 @@
+                     "flow_approval": "once", "max_generation_credits": 10, "flow_approval_cards": 1,
+                     "shot_max_seconds": None, "flow_frame_retries": 3,
+                     "network_wait_seconds": 300, "flow_capacity_wait_seconds": 900,
+-                    "flow_capacity_retries": 8, "flow_project_url": "",
++                    "flow_capacity_retries": 8, "flow_image_wait_seconds": 60, "flow_project_url": "",
+                     "flow_video_retries": 1, "flow_video_ready_grace_seconds": 20,
+                     "flow_video_recovery_wait_seconds": 180, "flow_reuse_project_media": True,
+                     "flow_reuse_mode": "exact", "flow_image_workers": 1,
+@@ -799,6 +801,17 @@
+         self.pm.log(job_id, "flow_pause_policy_updated", {"pause_on_unresolved_request": enabled})
+         return enabled
+ 
++    def set_flow_image_wait_seconds(self, job_id: str, seconds: int) -> int:
++        """How long one image request may wait before recovery reports no output (7.0.97)."""
++        self.pm.load_manifest(job_id)
++        seconds = max(5, min(3600, int(seconds)))
++        path = os.path.join(self.pm.job_dir(job_id), "settings.json")
++        settings = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
++        settings["flow_image_wait_seconds"] = seconds
++        _save_json(path, settings)
++        self.pm.log(job_id, "flow_image_wait_updated", {"seconds": seconds})
++        return seconds
++
+     def set_flow_frame_batch_recovery(self, job_id, enabled):
+         manifest = self.pm.load_manifest(job_id)
+         settings = self._settings(job_id)
+@@ -2258,6 +2271,7 @@
+                         "flow_reuse_project_media": True,
+                         "flow_capacity_wait_seconds": capacity_wait,
+                         "flow_capacity_retries": capacity_retries,
++                        "flow_image_wait_seconds": _setting_int(settings, "flow_image_wait_seconds", 60),
+                         "reference_paths": references[:4],
+                         "flow_replace_unresolved_images": bool(settings.get("flow_replace_unresolved_images", False)),
+                         "flow_image_replacement_limit": _setting_int(settings, "flow_image_replacement_limit", 30),
+@@ -2508,6 +2522,7 @@
+                     "flow_reuse_project_media": reuse_project_media,
+                     "flow_capacity_wait_seconds": _setting_int(settings, "flow_capacity_wait_seconds", 900),
+                     "flow_capacity_retries": _setting_int(settings, "flow_capacity_retries", 8),
++                    "flow_image_wait_seconds": _setting_int(settings, "flow_image_wait_seconds", 60),
+                     "flow_replace_unresolved_images": bool(settings.get("flow_replace_unresolved_images", False)),
+                     "flow_image_replacement_limit": _setting_int(settings, "flow_image_replacement_limit", 30),
+                     "flow_image_replacement_root": D["root"]}
+@@ -3109,6 +3124,7 @@
+                         "project_url": project_url,
+                         "flow_capacity_wait_seconds": _setting_int(settings, "flow_capacity_wait_seconds", 900),
+                         "flow_capacity_retries": _setting_int(settings, "flow_capacity_retries", 8),
++                        "flow_image_wait_seconds": _setting_int(settings, "flow_image_wait_seconds", 60),
+                     "flow_replace_unresolved_images": bool(settings.get("flow_replace_unresolved_images", False)),
+                     "flow_image_replacement_limit": _setting_int(settings, "flow_image_replacement_limit", 30),
+                     "flow_image_replacement_root": D["root"]}
+@@ -3315,6 +3331,7 @@
+                             "approval": "once", "max_generation_credits": 0,
+                             "flow_capacity_wait_seconds": _setting_int(settings, "flow_capacity_wait_seconds", 900),
+                             "flow_capacity_retries": _setting_int(settings, "flow_capacity_retries", 8),
++                            "flow_image_wait_seconds": _setting_int(settings, "flow_image_wait_seconds", 60),
+                             "reference_paths": photo_paths(ReferenceManager(D["references"]), shot),
+                             "flow_replace_unresolved_images": bool(settings.get("flow_replace_unresolved_images", False)),
+                             "flow_image_replacement_limit": _setting_int(settings, "flow_image_replacement_limit", 30),
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_image_transaction.py b/engine/flow_image_transaction.py
+--- a/engine/flow_image_transaction.py	2026-10-26 07:03:44.000000000 +0000
++++ b/engine/flow_image_transaction.py	2026-10-26 07:40:54.000000000 +0000
+@@ -242,6 +242,8 @@
+     """The journal's project cannot be opened again, so its output can never be proven or downloaded."""
+ 
+ 
++DEFAULT_IMAGE_WAIT_SECONDS = 60      # 7.0.97: one image usually lands in under a minute; 360 s was wasted waiting
++MAX_IMAGE_WAIT_SECONDS = 3600
+ NO_OUTPUT_TOKENS = ('No completed image', 'No generated image yet')
+ BLOCKED_TOKENS = ('Extra images are saved', 'non-reference images are saved')
+ FRESH_IMAGE_REQUESTS = 3  # total automatic submissions per shot, including the first. Image requests are free in Flow.
+@@ -268,6 +270,23 @@
+     return any(token in str(error) for token in tokens)
+ 
+ 
++def image_wait_seconds(compiled=None, fallback=None) -> int:
++    """Seconds one image generation may take before recovery reports "no output" (7.0.97).
++
++    A saved Flow project either holds the finished image or it does not; sitting in the tab for six
++    minutes told us nothing that one minute does not. The value is a job setting
++    (``flow_image_wait_seconds``, default 60) so a slow account can raise it without a code change.
++    """
++    value = compiled.get('flow_image_wait_seconds') if isinstance(compiled, dict) else None
++    if value in (None, ''):
++        value = fallback
++    try:
++        seconds = int(value)
++    except (TypeError, ValueError):
++        seconds = DEFAULT_IMAGE_WAIT_SECONDS
++    return max(5, min(MAX_IMAGE_WAIT_SECONDS, seconds))
++
++
+ def observed_project_url(bridge) -> str:
+     """The project the browser is really showing, normalised for comparison."""
+     try:
+@@ -333,8 +352,12 @@
+                 if attempt:
+                     raise
+             approval_context(bridge, output, request)
++            wait_seconds = image_wait_seconds(compiled, request.get('image_wait_seconds'))
++            if request.get('image_wait_seconds') != wait_seconds:
++                request['image_wait_seconds'] = wait_seconds
++                write_json(journal_path(output), request)
+             try:
+-                bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=360,
++                bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=wait_seconds,
+                     exclude_labels=known_reference_labels(request),
+                     required_kind='image', approval=compiled.get('approval', 'once'),
+                     max_generation_credits=compiled.get('max_generation_credits', 0), image_request=None,
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_resume_recovery.py b/engine/flow_resume_recovery.py
+--- a/engine/flow_resume_recovery.py	2026-10-26 07:13:48.000000000 +0000
++++ b/engine/flow_resume_recovery.py	2026-10-26 07:41:02.000000000 +0000
+@@ -61,6 +61,8 @@
+             if request.get('scope') == SCOPE:
+                 compiled = {'prompt': request['source_prompt'], 'approval': 'once',
+                     'max_generation_credits': 0,
++                    # 7.0.97: one image either lands in a minute or it is not there.
++                    'flow_image_wait_seconds': int(settings.get('flow_image_wait_seconds', 60) or 60),
+                     'reference_paths': list(request.get('reference_hashes', {})),
+                     'flow_image_replacement_root': str(root),
+                     # v7.0.71: resume never starts image replacement (recovery only).
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/isolated_frame_regeneration.py b/engine/isolated_frame_regeneration.py
+--- a/engine/isolated_frame_regeneration.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/isolated_frame_regeneration.py	2026-10-26 07:40:54.000000000 +0000
+@@ -318,8 +318,10 @@
+                     # A recorded image signature means generation already reached
+                     # capture. Do not rerun the generic freshness wait after reopen.
+                     if not request.get('signature'):
+-                        from .flow_image_transaction import wait_baseline, known_reference_labels
+-                        bridge.wait_for_agent_generation(before_assets=wait_baseline(request), timeout_s=360,
++                        from .flow_image_transaction import (wait_baseline, known_reference_labels,
++                                                             image_wait_seconds)
++                        bridge.wait_for_agent_generation(before_assets=wait_baseline(request),
++                            timeout_s=image_wait_seconds(None, request.get('image_wait_seconds')),
+                             exclude_labels=known_reference_labels(request),
+                             required_kind='image', approval='once', max_generation_credits=0,
+                             image_request=None, service_busy_wait_s=90, service_busy_retries=1,
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/job_cleanup.py b/engine/job_cleanup.py
+--- a/engine/job_cleanup.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/job_cleanup.py	2026-10-26 07:41:46.000000000 +0000
+@@ -68,20 +68,98 @@
+     return report
+ 
+ 
+-def _completed_without_pending(job):
++# Never accept render/visual-master.mp4 here: it is a silent picture master, not a finished video.
++FINAL_VIDEO_PATTERNS = ('render/*-final*.mp4', '*-final*.mp4', 'final*.mp4')
++
++
++def final_video_candidates(job):
++    """Every file that could be this job's finished video, with why each one was accepted or rejected.
++
++    v7.0.97: the check used to look at ``render/<job>-final.mp4`` only. A production rendered with
++    video cutaways writes ``render/<job>-final-broll.mp4`` (factory), so a finished 2.4 GB job was
++    reported as "No validated final video" and could never be deleted.
++    """
+     from .providers.flow_browser import FlowBrowserProvider
++    job = Path(job)
++    ordered = []
+     try:
+-        manifest=json.loads((job/'production_manifest.json').read_text())
+-        if manifest.get('status')!='done':return False,'Job is unfinished; profile retained for resume'
+-        final=job/'render'/(job.name+'-final.mp4')
+-        if not FlowBrowserProvider._is_valid_video_file(str(final)):return False,'No validated final video; profile retained'
++        manifest = json.loads((job / 'production_manifest.json').read_text())
++    except (OSError, ValueError, TypeError):
++        manifest = {}
++    declared = str(manifest.get('final_path') or '')
++    if declared:
++        ordered.append(Path(declared).expanduser())
++    ordered.append(job / 'render' / (job.name + '-final.mp4'))
++    ordered.append(job / 'render' / (job.name + '-final-broll.mp4'))
++    for pattern in FINAL_VIDEO_PATTERNS:
++        ordered.extend(sorted(job.glob(pattern)))
++    rows, seen = [], set()
++    for path in ordered:
++        try:
++            key = str(path.resolve())
++        except OSError:
++            key = str(path)
++        if key in seen:
++            continue
++        seen.add(key)
++        if path.is_symlink():
++            rows.append({'path': str(path), 'valid': False, 'reason': 'symlink'})
++            continue
++        if not path.is_file():
++            rows.append({'path': str(path), 'valid': False, 'reason': 'missing', 'bytes': 0})
++            continue
++        size = path.stat().st_size
++        valid = bool(FlowBrowserProvider._is_valid_video_file(str(path)))
++        rows.append({'path': str(path), 'valid': valid, 'bytes': size,
++                     'reason': '' if valid else ('too small' if size < 1024 else 'not a decodable video')})
++    return rows
++
++
++def find_final_video(job):
++    """The largest validated finished video of this job, or ``(None, candidates)``."""
++    rows = final_video_candidates(job)
++    valid = [row for row in rows if row['valid']]
++    if not valid:
++        return None, rows
++    best = max(valid, key=lambda row: row['bytes'])
++    return Path(best['path']), rows
++
++
++def job_completion_state(job):
++    """(code, reason) for permanent deletion: '' means a completed job with resolved requests.
++
++    Codes let the dashboard offer a reviewed override only for a missing finished video; an
++    unfinished job or an unresolved Flow request still blocks deletion outright.
++    """
++    job = Path(job)
++    try:
++        manifest = json.loads((job / 'production_manifest.json').read_text())
++        if manifest.get('status') != 'done':
++            return 'unfinished', 'Job is unfinished; profile retained for resume'
++        final, rows = find_final_video(job)
++        if final is None:
++            checked = ', '.join(Path(row['path']).name + (' (missing)' if row['reason'] == 'missing' else ' (' + row['reason'] + ')')
++                                for row in rows) or 'no video file was found'
++            return 'no_final_video', 'No validated final video was found; checked ' + checked
+         # Even a completed fallback edit can retain unresolved Google requests.
+         for journal in job.rglob('*.flow-request.json'):
+-            if journal.is_symlink():return False,'Symlink request journal; profile retained'
+-            if json.loads(journal.read_text()).get('status')!='downloaded':
+-                return False,'Pending request retained; worker profile preserved'
+-        return True,''
+-    except (OSError,ValueError,TypeError):return False,'Unreadable job/recovery state; profile retained'
++            if journal.is_symlink():
++                return 'symlink', 'Symlink request journal; profile retained'
++            if json.loads(journal.read_text()).get('status') != 'downloaded':
++                return 'pending_request', 'Pending request retained; worker profile preserved'
++        return '', ''
++    except (OSError, ValueError, TypeError):
++        return 'unreadable', 'Unreadable job/recovery state; profile retained'
++
++
++def _completed_without_pending(job):
++    code, reason = job_completion_state(job)
++    if code:
++        # The old wording is kept for the worker-profile cleanup messages and their tests.
++        if code == 'no_final_video':
++            return False, 'No validated final video; profile retained'
++        return False, reason
++    return True, ''
+ 
+ 
+ def cleanup_job(job_directory, worker_root=None, *, apply=False, completed_profiles=True):
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/job_delete.py b/engine/job_delete.py
+--- a/engine/job_delete.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/job_delete.py	2026-10-26 07:42:02.000000000 +0000
+@@ -1,7 +1,10 @@
+ """Explicit completed-job deletion with preview, lock, database backup and confirmation.
+ 
+-Only completed jobs whose Flow journals are resolved and whose final video exists
+-are eligible. Never follows job-directory symlinks or touches shared browser logins.
++A completed job with resolved Flow requests is eligible. v7.0.97 finds the finished video wherever
++the renderer wrote it (``<job>-final.mp4``, ``<job>-final-broll.mp4`` for video cutaways, a saved
++``final_path``) instead of one hard-coded name, and can delete a completed job folder that has no
++finished video when the user ticks that explicit choice. An unfinished job or an unresolved Flow
++request is never eligible. Never follows job-directory symlinks or touches shared browser logins.
+ """
+ from pathlib import Path
+ import json
+@@ -10,11 +13,12 @@
+ import time
+ import uuid
+ import os
+-from .job_cleanup import _completed_without_pending, _size
++from .job_cleanup import _size, find_final_video, job_completion_state
+ from .production_lock import acquire, release
+ 
+ 
+-def completed_job_delete(outputs, db_path, job_id, *, apply=False, confirmation=''):
++def completed_job_delete(outputs, db_path, job_id, *, apply=False, confirmation='',
++                         allow_missing_final=False):
+     outputs=Path(outputs).absolute()
+     db_path=Path(db_path).absolute()
+     if not job_id or job_id in ('.','..') or Path(job_id).name!=job_id or '/' in job_id or '\\' in job_id:
+@@ -25,9 +29,22 @@
+     if not outputs.is_dir():raise ValueError('Outputs directory missing')
+     job=outputs/job_id
+     if job.is_symlink() or not job.is_dir():raise ValueError('Job directory missing or linked')
+-    eligible,reason=_completed_without_pending(job)
++    code,reason=job_completion_state(job)
++    final,candidates=find_final_video(job)
++    override=''
++    eligible=not code
++    if code=='no_final_video' and allow_missing_final:
++        eligible,override=True,'no_final_video'
++    if code=='no_final_video' and not allow_missing_final:
++        reason+=' — tick "delete this completed job even though no finished video was found" to allow it'
+     result={'job_id':job_id,'eligible':eligible,'reason':reason or 'Completed job with resolved Flow requests',
+-            'bytes':_size(job),'apply':apply,'includes':'job folder and SQLite index only; external browser profiles excluded'}
++            'reason_code':code,'override':override,
++            'final_video':str(final) if final else '',
++            'final_bytes':final.stat().st_size if final else 0,
++            'candidates':[{'name':Path(row['path']).name,'bytes':row.get('bytes',0),'valid':row['valid'],
++                           'reason':row.get('reason','')} for row in candidates],
++            'bytes':_size(job),'apply':apply,
++            'includes':'job folder and SQLite index only; external browser profiles excluded'}
+     if not apply:return result
+     if confirmation!=job_id:raise ValueError('Type the exact job ID to confirm permanent deletion')
+     if not eligible:raise ValueError('Deletion refused: '+reason)
+@@ -41,8 +58,9 @@
+             with _guard:
+                 if any(t['thread'].is_alive() for t in _tasks.values()):
+                     raise RuntimeError('A Studio job is running or queued')
+-            eligible,reason=_completed_without_pending(job)
+-            if not eligible:raise ValueError('Job changed: '+reason)
++            code,reason=job_completion_state(job)
++            if code and not (code=='no_final_video' and allow_missing_final):
++                raise ValueError('Job changed: '+reason)
+             if not db_path.is_file():raise ValueError('Job DB missing; deletion refused')
+             with sqlite3.connect(db_path) as cx:
+                 backup=db_path.with_name('jobs-before-delete-'+str(time.time_ns())+'.db')
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-25 14:12:40.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-26 07:40:54.000000000 +0000
+@@ -5975,8 +5975,9 @@
+                 with open(out_path + ".flow-request.json", encoding="utf-8") as handle:
+                     image_request = json.load(handle)
+                 b.submit_prepared_text_video("agent")  # same Agent send action; instruction says STILL IMAGE
++                from engine.flow_image_transaction import image_wait_seconds
+                 if not b.wait_for_agent_generation(
+-                        before_assets=before_assets, timeout_s=360,
++                        before_assets=before_assets, timeout_s=image_wait_seconds(compiled),
+                         service_busy_wait_s=compiled.get("flow_capacity_wait_seconds"),
+                         service_busy_retries=compiled.get("flow_capacity_retries"), required_kind="image",
+                         approval=compiled.get('approval','once'),max_generation_credits=compiled.get('max_generation_credits',0),
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/speech_batches.py b/engine/speech_batches.py
+--- a/engine/speech_batches.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/speech_batches.py	2026-10-26 07:44:10.000000000 +0000
+@@ -58,11 +58,14 @@
+     }
+ 
+ 
+-def list_speech_batches(job_dirs=(), limit: int = 60) -> list[dict]:
++def list_speech_batches(job_dirs=(), limit: int = 60, include_finished=()) -> list[dict]:
+     """Batches from Create step 4 (shared folder) and unfinished batches inside jobs, newest first.
+ 
++    v7.0.97: ``include_finished`` names job folders whose *finished* batch must still be listed, so the
++    queue can show the batch that belongs to the Active job (a plain job list only shows unfinished ones).
+     Names and states only; no key values.
+     """
++    keep = {str(Path(folder).resolve()) for folder in include_finished if folder}
+     rows = []
+     root = batches_root()
+     if root.is_dir():
+@@ -77,13 +80,33 @@
+         if folder.is_symlink() or not (folder / 'batch.json').is_file():
+             continue
+         row = _row(folder, 'Job ' + folder.name)
+-        # A finished job batch is not listed; the job itself shows the result.
+-        if row and not (row['ready'] and not row['error']):
++        # A finished job batch is not listed unless the caller asks for that exact job.
++        if row and (str(folder.resolve()) in keep or not (row['ready'] and not row['error'])):
+             rows.append(row)
+     rows.sort(key=lambda row: -row['updated'])
+     return rows[:limit]
+ 
+ 
++def partition_for_job(rows, job_dir=None):
++    """Split listed batches into (this job's own batch, batches from elsewhere). 7.0.97.
++
++    The queue panel used to list every batch of the installation, so the batch that belongs to the
++    Active job was buried among sessions from earlier days.
++    """
++    rows = list(rows or [])
++    if not job_dir:
++        return rows, []
++    root = Path(job_dir).resolve()
++    own, others = [], []
++    for row in rows:
++        try:
++            Path(row['path']).resolve().relative_to(root)
++            own.append(row)
++        except (ValueError, OSError):
++            others.append(row)
++    return own, others
++
++
+ def correct_speech_scripts(folder, edited: dict, approvals: dict) -> dict:
+     """Save corrected narration for a batch and the approved snapshot shared with Create and jobs (7.0.83).
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/studio_config.py b/engine/studio_config.py
+--- a/engine/studio_config.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/studio_config.py	2026-10-26 07:41:02.000000000 +0000
+@@ -83,6 +83,7 @@
+     "network_wait_seconds": 300,
+     "flow_capacity_wait_seconds": 900,
+     "flow_capacity_retries": 8,
++    "flow_image_wait_seconds": 60,
+     "flow_video_retries": 1,
+     "flow_video_ready_grace_seconds": 20,
+     "flow_video_recovery_wait_seconds": 180,
+@@ -137,8 +138,8 @@
+     for key in ('dynamic_video_scenes', 'stock_scenes', 'flow_scenes', 'max_flow_scenes',
+                 'images_per_shot', 'max_credits', 'max_retries', 'max_generation_credits',
+                 'flow_frame_retries', 'network_wait_seconds', 'flow_capacity_wait_seconds',
+-                'flow_capacity_retries', 'flow_video_retries', 'flow_video_ready_grace_seconds',
+-                'flow_video_recovery_wait_seconds'):
++                'flow_capacity_retries', 'flow_image_wait_seconds', 'flow_video_retries',
++                'flow_video_ready_grace_seconds', 'flow_video_recovery_wait_seconds'):
+         integers[key] = (0, None)
+     for key, (low, high) in integers.items():
+         value = cfg[key]
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v797_cleanup_and_waits.py b/tests/test_v797_cleanup_and_waits.py
+--- a/tests/test_v797_cleanup_and_waits.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v797_cleanup_and_waits.py	2026-10-26 07:44:00.000000000 +0000
+@@ -0,0 +1,329 @@
++"""v7.0.97: shorter image waits, a deletable completed job, Clip Studio cleanup, job-scoped speech batches.
++
++Four field reports, all reproduced here with fakes (no browser, no Flow request, no credits):
++
++1. Every image request waited 360 s even though a saved project either holds the image or does not.
++2. A completed 2.4 GB job could not be deleted because the finished video was named
++   ``<job>-final-broll.mp4`` (the video-cutaway renderer) and the guard only looked for
++   ``<job>-final.mp4``.
++3. Clip Studio kept the downloaded source, speech chunks, caption scratch files, selection history
++   and render state beside the clips with no way to clean them.
++4. The Queue "Speech batches" panel listed every Create step 4 batch of the installation instead of
++   the batch of the Active job.
++"""
++import json
++from pathlib import Path
++
++import pytest
++from PIL import Image
++
++from engine import clip_cleanup
++from engine import flow_image_transaction as tx
++from engine import speech_batches
++from engine.job_delete import completed_job_delete
++from engine.job_cleanup import final_video_candidates, find_final_video, job_completion_state
++from engine.providers.flow_browser import FlowBrowser, FlowBrowserProvider, FlowRequestPending
++
++PROJECT = 'https://flow.google.com/project/ca1709fe-6a77-41a3-95be-4fafe7192ae2'
++
++
++# ---------------------------------------------------------------- 1 · image wait
++
++def test_one_image_waits_sixty_seconds_not_six_minutes():
++    assert tx.DEFAULT_IMAGE_WAIT_SECONDS == 60
++    assert tx.image_wait_seconds() == 60
++    assert tx.image_wait_seconds({}) == 60
++    assert tx.image_wait_seconds({'flow_image_wait_seconds': 120}) == 120
++    assert tx.image_wait_seconds(None, 45) == 45
++    assert tx.image_wait_seconds(None, 10) == 10
++    assert tx.image_wait_seconds({'flow_image_wait_seconds': 'not a number'}) == 60
++    assert tx.image_wait_seconds({'flow_image_wait_seconds': 0}) == 5          # never a zero wait
++    assert tx.image_wait_seconds({'flow_image_wait_seconds': 99999}) == tx.MAX_IMAGE_WAIT_SECONDS
++
++
++class WaitingBridge:
++    normalize_project_url = staticmethod(FlowBrowser.normalize_project_url)
++
++    def __init__(self):
++        self.project = PROJECT
++        self.timeouts = []
++
++    def current_project_url(self): return self.project
++    def ensure_project(self, *a, **k): self.project = k.get('project_url') or PROJECT
++    def media_assets(self): return []
++
++    def wait_for_agent_generation(self, **kw):
++        self.timeouts.append(kw.get('timeout_s'))
++        return False
++
++
++class WaitingProvider:
++    def __init__(self, bridge): self.bridge = bridge
++    def _ensure(self): return self.bridge
++    def close(self): pass
++
++
++def _journal(output, **extra):
++    data = {'schema_version': 1, 'scope': tx.SCOPE, 'kind': 'image', 'status': 'pending',
++            'phase': 'submitted', 'submission_acknowledged': True, 'project_url': PROJECT,
++            'project_name': 'AutoVideo-Image-1', 'request_hash': 'h1', 'shot_id': 'shot_023',
++            'vertical': False, 'submitted_prompt': 'x', 'source_prompt': 'x', 'baseline': [],
++            'signature': '', 'capture_probes': {}, 'reference_hashes': {}}
++    data.update(extra)
++    tx.write_json(tx.journal_path(output), data)
++    return data
++
++
++@pytest.fixture
++def image_shot(tmp_path):
++    job = tmp_path / 'job-v797'
++    (job / 'storyboard').mkdir(parents=True)
++    job.mkdir(exist_ok=True)
++    output = job / 'storyboard' / 'shot_023_open.jpg'
++    return job, output
++
++
++def test_recovery_waits_the_short_default(image_shot):
++    job, output = image_shot
++    request = _journal(output)
++    bridge = WaitingBridge()
++    with pytest.raises(FlowRequestPending):
++        tx.recover(WaitingProvider(bridge), request, output, compiled={})
++    assert bridge.timeouts == [60]
++    assert json.loads(tx.journal_path(output).read_text())['image_wait_seconds'] == 60
++
++
++def test_a_jobs_saved_wait_replaces_the_default(image_shot):
++    job, output = image_shot
++    request = _journal(output)
++    bridge = WaitingBridge()
++    with pytest.raises(FlowRequestPending):
++        tx.recover(WaitingProvider(bridge), request, output, compiled={'flow_image_wait_seconds': 150})
++    assert bridge.timeouts == [150]
++
++
++def test_the_new_setting_is_a_real_job_setting():
++    from engine import studio_config
++    assert studio_config.DEFAULTS['flow_image_wait_seconds'] == 60
++    merged = dict(studio_config.DEFAULTS)
++    from engine.studio_config import _validate_settings
++    _validate_settings(merged)                     # a whole number >= 0
++    merged['flow_image_wait_seconds'] = -5
++    with pytest.raises(ValueError):
++        _validate_settings(merged)
++
++
++# ---------------------------------------------------------------- 2 · deleting a completed job
++
++def _valid_video(path, size=4096):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_bytes(b'\x00\x00\x00\x20ftypisom' + b'0' * max(0, size - 12))
++    return path
++
++
++@pytest.fixture
++def no_ffprobe(monkeypatch):
++    """Decide validity from the file itself so the test does not depend on a local encoder."""
++    monkeypatch.setattr(FlowBrowserProvider, '_is_valid_video_file',
++                        staticmethod(lambda path: Path(path).is_file() and Path(path).stat().st_size > 1024))
++
++
++@pytest.fixture
++def outputs(tmp_path):
++    root = tmp_path / 'outputs'
++    root.mkdir()
++    return root
++
++
++def _completed_job(outputs, job_id, final_name):
++    job = outputs / job_id
++    (job / 'render').mkdir(parents=True)
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'done', 'job_id': job_id}))
++    if final_name:
++        _valid_video(job / 'render' / final_name)
++    return job
++
++
++def test_a_broll_final_video_makes_the_job_eligible(outputs, no_ffprobe):
++    """Field case: the finished video is <job>-final-broll.mp4 because the render used video cutaways."""
++    job = _completed_job(outputs, '20261018-132625-speak-with-confidence--5-0686',
++                         '20261018-132625-speak-with-confidence--5-0686-final-broll.mp4')
++    found, rows = find_final_video(job)
++    assert found and found.name.endswith('-final-broll.mp4')
++    preview = completed_job_delete(outputs, outputs.parent / 'jobs.db', job.name)
++    assert preview['eligible'] is True
++    assert preview['reason_code'] == ''
++    assert preview['final_video'].endswith('-final-broll.mp4')
++    assert preview['final_bytes'] > 0
++
++
++def test_a_saved_final_path_is_accepted(outputs, no_ffprobe, tmp_path):
++    job = _completed_job(outputs, 'job-declared', None)
++    declared = _valid_video(tmp_path / 'exports' / 'my-final.mp4')
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'done', 'final_path': str(declared)}))
++    found, _rows = find_final_video(job)
++    assert found == declared
++
++
++def test_a_completed_job_without_a_video_says_exactly_what_was_checked(outputs, no_ffprobe):
++    job = _completed_job(outputs, 'job-empty', None)
++    (job / 'render' / 'job-empty-final.mp4').write_bytes(b'jpeg-not-a-video')
++    code, reason = job_completion_state(job)
++    assert code == 'no_final_video'
++    assert 'job-empty-final.mp4' in reason                      # names the file it rejected
++    preview = completed_job_delete(outputs, outputs.parent / 'jobs.db', job.name)
++    assert preview['eligible'] is False
++    assert preview['reason_code'] == 'no_final_video'
++    names = [row['name'] for row in preview['candidates']]
++    assert 'job-empty-final.mp4' in names and 'job-empty-final-broll.mp4' in names
++    assert all(row['valid'] is False for row in preview['candidates'])
++
++
++def test_the_explicit_override_deletes_a_completed_job_without_a_video(outputs, no_ffprobe):
++    job = _completed_job(outputs, 'job-empty2', None)
++    with pytest.raises(ValueError):                              # never without the override
++        completed_job_delete(outputs, outputs.parent / 'jobs.db', job.name, apply=True,
++                             confirmation=job.name)
++    preview = completed_job_delete(outputs, outputs.parent / 'jobs.db', job.name, allow_missing_final=True)
++    assert preview['eligible'] is True and preview['override'] == 'no_final_video'
++
++
++def test_an_unfinished_job_is_never_deletable_even_with_the_override(outputs, no_ffprobe):
++    job = outputs / 'job-paused'
++    job.mkdir()
++    (job / 'production_manifest.json').write_text(json.dumps({'status': 'paused'}))
++    preview = completed_job_delete(outputs, outputs.parent / 'jobs.db', job.name, allow_missing_final=True)
++    assert preview['eligible'] is False
++    assert preview['reason_code'] == 'unfinished'
++
++
++def test_an_unresolved_flow_request_still_blocks_deletion(outputs, no_ffprobe):
++    job = _completed_job(outputs, 'job-pending-request', 'job-pending-request-final.mp4')
++    (job / 'storyboard').mkdir()
++    (job / 'storyboard' / 'shot_001_open.jpg.flow-request.json').write_text(
++        json.dumps({'status': 'pending', 'phase': 'submitted'}))
++    preview = completed_job_delete(outputs, outputs.parent / 'jobs.db', job.name, allow_missing_final=True)
++    assert preview['eligible'] is False
++    assert preview['reason_code'] == 'pending_request'
++
++
++def test_candidate_rows_explain_a_rejected_file(outputs, no_ffprobe):
++    job = _completed_job(outputs, 'job-small', None)
++    (job / 'render' / 'job-small-final.mp4').write_bytes(b'x')   # below the 1 KiB floor
++    rows = final_video_candidates(job)
++    assert any(row['name' if 'name' in row else 'path'].endswith('job-small-final.mp4') for row in rows)
++    assert all('reason' in row for row in rows)
++
++
++# ---------------------------------------------------------------- 3 · Clip Studio cleanup
++
++@pytest.fixture
++def clip_folder(tmp_path):
++    folder = tmp_path / 'outputs' / 'my-clips'
++    (folder / '_clip_work' / 'source-key').mkdir(parents=True)
++    (folder / '_clip_work' / 'source-key' / 'source.mp4').write_bytes(b's' * 8000)
++    (folder / '_clip_work' / 'source-key' / 'speech_001.mp3').write_bytes(b'a' * 2000)
++    (folder / 'clip-history').mkdir()
++    (folder / 'clip-history' / 'highlights-1.json').write_text('{"highlights": []}')
++    (folder / '.clip-render-jobs' / 'abc').mkdir(parents=True)
++    (folder / '.clip-render-jobs' / 'abc' / 'state.json').write_text('{"status": "done"}')
++    (folder / 'highlights.json').write_text('{"highlights": []}')
++    (folder / 'broll-review-abc.json').write_text('{"candidates": []}')
++    (folder / 'my-first-clip.mp4').write_bytes(b'c' * 4000)
++    return folder
++
++
++def test_clip_inventory_names_every_category(clip_folder):
++    report = clip_cleanup.folder_inventory(clip_folder)
++    assert report['is_clip_output'] is True and report['running'] is False
++    keys = [row['key'] for row in report['categories']]
++    assert keys == ['work', 'render_state', 'history', 'reviews', 'clips']
++    work = next(row for row in report['categories'] if row['key'] == 'work')
++    assert work['bytes'] == 10000
++    assert report['clips'] == 1
++    assert report['total_bytes'] > 14000
++
++
++def test_discovery_finds_clip_folders_under_outputs(clip_folder):
++    rows = clip_cleanup.discover(clip_folder.parent)
++    assert [Path(row['folder']).name for row in rows] == ['my-clips']
++
++
++def test_cleanup_dry_run_then_applies_only_the_chosen_categories(clip_folder):
++    preview = clip_cleanup.cleanup(clip_folder, ('work', 'history'))
++    assert preview['eligible_bytes'] > 0 and preview['freed_bytes'] == 0
++    assert (clip_folder / '_clip_work').is_dir()
++    report = clip_cleanup.cleanup(clip_folder, ('work', 'history'), apply=True)
++    assert report['freed_bytes'] == preview['eligible_bytes']
++    assert not (clip_folder / '_clip_work').exists()
++    assert not (clip_folder / 'clip-history').exists()
++    assert (clip_folder / 'my-first-clip.mp4').is_file()          # the product survives
++    assert (clip_folder / 'highlights.json').is_file()
++
++
++def test_rendered_clips_need_their_own_opt_in(clip_folder):
++    clip_cleanup.cleanup(clip_folder, ('clips',), apply=True)
++    assert (clip_folder / 'my-first-clip.mp4').is_file()          # not requested with include_clips
++    report = clip_cleanup.cleanup(clip_folder, ('clips',), apply=True, include_clips=True)
++    assert report['freed_bytes'] == 4000
++    assert not (clip_folder / 'my-first-clip.mp4').exists()
++
++
++def test_a_running_clip_render_is_never_cleaned(clip_folder):
++    from engine.production_lock import acquire, release
++    lock_path = clip_folder / '.launch.lock'
++    with lock_path.open('a+b') as handle:
++        acquire(handle, blocking=False)
++        try:
++            assert clip_cleanup.render_running(clip_folder) is True
++            report = clip_cleanup.cleanup(clip_folder, ('work',), apply=True)
++            assert report['freed_bytes'] == 0
++            assert 'running' in ' '.join(report['warnings']).lower()
++            assert (clip_folder / '_clip_work').is_dir()
++        finally:
++            release(handle)
++
++
++def test_a_foreign_folder_is_refused(tmp_path):
++    plain = tmp_path / 'not-clip-studio'
++    plain.mkdir()
++    (plain / 'notes.txt').write_text('x')
++    with pytest.raises(ValueError, match='does not look like Clip Studio'):
++        clip_cleanup.cleanup(plain, ('work',), apply=True)
++
++
++# ---------------------------------------------------------------- 4 · speech batches belong to a job
++
++def _batch(folder, phase='ready_for_review', editions=('en', 'hi'), done=('en', 'hi'), script='master'):
++    folder.mkdir(parents=True, exist_ok=True)
++    bundles = {}
++    for code in done:
++        audio = folder / f'voice-{code}.mp3'
++        audio.write_bytes(b'audio')
++        bundles[code] = {'audio': str(audio), 'duration': 1.0}
++    (folder / 'batch.json').write_text(json.dumps({
++        'source_language': 'en', 'source_script': script, 'editions': list(editions),
++        'phase': phase, 'bundles': bundles, 'scripts': {code: script for code in editions}}))
++    return folder
++
++
++def test_a_finished_job_batch_is_listed_only_when_asked_for(tmp_path, monkeypatch):
++    shared = tmp_path / 'shared' / 'speech_preparation'
++    _batch(shared / 'batch-create-1')
++    monkeypatch.setattr(speech_batches, 'batches_root', lambda: shared)
++    job = tmp_path / 'job-1'
++    _batch(job)
++    plain = speech_batches.list_speech_batches([job])
++    assert [Path(row['path']).name for row in plain] == ['batch-create-1']
++    asked = speech_batches.list_speech_batches([job], include_finished=[job])
++    assert {Path(row['path']).name for row in asked} == {'batch-create-1', 'job-1'}
++
++
++def test_batches_are_partitioned_by_the_active_job(tmp_path):
++    job = tmp_path / 'job-1'
++    _batch(job, phase='scripts_corrected', done=())
++    mine = {'path': str(job), 'ready': False}
++    other = {'path': str(tmp_path / 'shared' / 'speech_preparation' / 'batch-create-1'), 'ready': False}
++    own, others = speech_batches.partition_for_job([mine, other], job)
++    assert own == [mine] and others == [other]
++    assert speech_batches.partition_for_job([mine, other], None) == ([mine, other], [])
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v795_to_v796.py b/tools/update_v795_to_v796.py
+--- a/tools/update_v795_to_v796.py	2026-10-26 07:14:18.000000000 +0000
++++ b/tools/update_v795_to_v796.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,172 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.96 update to a v7.0.95 installation.
+-
+-A Resume that could not collect a saved Flow image used to repeat the same six-minute wait
+-forever, then stop at "Saved request unresolved; no new generation started":
+-
+-- when the saved request names a Flow project that cannot be reopened (or Flow is showing a
+-  different project), recovery no longer waits in that page and no longer retries three times.
+-  Nothing is downloaded from another project, because that image can belong to a different shot.
+-  The journal records why, and one fresh FREE image request is submitted in a new project;
+-- the three-submission automatic budget is counted per shot for automatic replacements only,
+-  so the published archive command can no longer block itself; an explicit archive always
+-  allows exactly one more free image request;
+-- image requests cost no Flow credits (config/flow_models.yaml: credits_per_image 0), so the
+-  archive command no longer needs --confirm-new-credit-spend (the flag is still accepted);
+-- the blocked-Resume message, the Queue panel and `tools/flow_resume_preflight.py` now state the
+-  last recovery verdict, the saved project, and the one command that moves the job forward;
+-- `tools/flow_resume_preflight.py` is read-only and explains every journal.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.96 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.96/tools/update_v795_to_v796.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.96/tools/update_v795_to_v796.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['RESUME_LOOP_FIX_V7_0_96.md', 'VERSION', 'app.py', 'cli.py',
+-           'engine/factory.py', 'engine/flow_image_transaction.py', 'engine/flow_request_archive.py',
+-           'engine/flow_resume_recovery.py', 'engine/flow_resume_safety.py', 'tests/test_v791_reference_labels.py',
+-           'tests/test_v792_stalled_recovery.py', 'tests/test_v796_resume_loop.py',
+-           'tools/archive_uncertain_flow_image.py', 'tools/flow_resume_preflight.py',
+-           'tools/update_v795_to_v796.py']
+-# Files as they exist in 7.0.95: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['38c62ac999db99b05bbaf34f800f7e8614d9f9d4497ed51148982014e952dd24'],
+-    'app.py': ['ba6b11582e96f1b58bc10b491e961912601af4d80bd91ab363df5273af4ad5df'],
+-    'cli.py': ['3d4768bfadaa911f3a043a0894f1a4bc06b177db8f2e4afa1d42e3ca7298ff04'],
+-    'engine/factory.py': ['4bf2cff95a4af619c8cd6c4d03c5861b02307cf2fab900f4aa921aab96659229'],
+-    'engine/flow_image_transaction.py': ['436d34ead58a60139c28b41706aaccf2fb48b5913265ed4aa0351aaa8eb6dd4d'],
+-    'engine/flow_request_archive.py': ['f405085fb17411d91fdf2820bd28941c6681c59ab6fc76fc702c8415acc8391b'],
+-    'engine/flow_resume_recovery.py': ['c0910077bcf8a7f58e72b3e83a48700489ed1b6a6ec2f91e4ea65d98da871a1b'],
+-    'engine/flow_resume_safety.py': ['26d132a73815d1431e8e282fd1722733bb12dab42f668e6fc6c198069dff5299'],
+-    'tests/test_v791_reference_labels.py': ['f5dbba0c85bb4b7e1a8dfd2f4b916bea5543d945242b3c9e4020e452362e5df9'],
+-    'tests/test_v792_stalled_recovery.py': ['7372e121c46e6126acbb9fcdccef8831089f55feb1549a694f7fccd2776676bb'],
+-    'tools/archive_uncertain_flow_image.py': ['3e8d6313a8126096dbcd7aa4eb143c4ad8743232f37eb073976d01c29831c1ca'],
+-    'tools/flow_resume_preflight.py': ['4315bffbee2383be1c76fea29627dcef88ce3cb2c9d0aeeecaa7fb92b80d6df5'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.95', '7.0.96')  # 7.0.96 allows a safe re-run after success
+-
+-# The 7.0.95 to 7.0.96 update ships in the 7.0.96 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.94', '7.0.95', 'tools/update_v794_to_v795.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.95 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.95 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.95 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.96 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.96 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.96 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.95-to-v7.0.96-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.96. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v796_to_v797.py b/tools/update_v796_to_v797.py
+--- a/tools/update_v796_to_v797.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v796_to_v797.py	2026-10-26 07:45:12.000000000 +0000
+@@ -0,0 +1,169 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.97 update to a v7.0.96 installation.
++
++- Every image recovery wait is 60 s instead of 360 s, saved per job as
++  ``flow_image_wait_seconds`` (``cli.py v3 resume <job> --flow-image-wait-seconds 120``);
++- a completed job can be deleted again: the finished video is found wherever the renderer
++  wrote it (``<job>-final.mp4``, ``<job>-final-broll.mp4`` for video cutaways, a saved
++  ``final_path``), the preview names the file and why others were rejected, and a completed job
++  with no finished video can be removed with an explicit tick. Unfinished jobs and unresolved
++  Flow requests are still refused;
++- Settings gains "Clip Studio content · disk cleanup": per-folder preview and category-by-category
++  removal of ``_clip_work``, ``.clip-render-jobs``, ``clip-history``, the selection reviews and
++  (only with its own tick) the rendered clips. A running clip render is never touched;
++- the Queue "Speech batches" panel shows the batch saved with the Active job, and keeps every other
++  Create step 4 batch in a collapsed folder instead of mixing them together.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.97 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.97/tools/update_v796_to_v797.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.97/tools/update_v796_to_v797.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles, Clip Studio
++folders, music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['RESUME_WAIT_DELETE_AND_CLEANUP_V7_0_97.md', 'VERSION', 'app.py', 'cli.py',
++           'engine/clip_cleanup.py', 'engine/factory.py', 'engine/flow_image_transaction.py',
++           'engine/flow_resume_recovery.py', 'engine/isolated_frame_regeneration.py',
++           'engine/job_cleanup.py', 'engine/job_delete.py', 'engine/providers/flow_browser.py',
++           'engine/speech_batches.py', 'engine/studio_config.py',
++           'tests/test_v797_cleanup_and_waits.py', 'tools/update_v796_to_v797.py']
++# Files as they exist in 7.0.96: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['859b7073e55acb507aaba170db0606fbd287fed8a3d94d8963ec24e01c53734b'],
++    'app.py': ['e6c9bda58d50e937132aa425db500ababe9ac8b3cbfbedc0761949eed76b5be1'],
++    'cli.py': ['ea28212e631eb37e433e347eecf88a4bd8e1797a4516ea0fcb44e659618d8544'],
++    'engine/factory.py': ['2ad1193e341206c972fcb88d7b2f9ea59ab74edb8687292f2d1dd399519fb671'],
++    'engine/flow_image_transaction.py': ['cb2be5f41239943c324af4e8f5ea0170862738ffcd450e98bd2f411aeb27a173'],
++    'engine/flow_resume_recovery.py': ['693db8bf0f7c4caf9df852a8cedff48651468d92257ff10a775242fc863417af'],
++    'engine/isolated_frame_regeneration.py': ['a717b4fd7ec30958ca072d29824af98a569dd25db7ba108bbd4f265b32b82274'],
++    'engine/job_cleanup.py': ['439559ce84e5a3dd1521da636e52f3d57c177f303885ce143673435b5256f1f8'],
++    'engine/job_delete.py': ['d32bdf14f8b1fcbe1f0898c457432a1ae4e040bd3b6b712e35d9287fee95ccfe'],
++    'engine/providers/flow_browser.py': ['c47af6ebab6a93e449d284132f260e75280b7f20bac5af537c1299d04ec8db71'],
++    'engine/speech_batches.py': ['7e5a1d375ef1a7fd64ace3c0f9444d16ca5fff366991d91cb7406d1309c7a0f2'],
++    'engine/studio_config.py': ['e0c7473f2f1e0e32b012fb1dc3182c8988921b9220dc9bd3459ec556b8ceb064'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.96', '7.0.97')  # 7.0.97 allows a safe re-run after success
++
++# The 7.0.96 to 7.0.97 update ships in the 7.0.97 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.95', '7.0.96', 'tools/update_v795_to_v796.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.96 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.96 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.96 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.97 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.97 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.97 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.96-to-v7.0.97-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.97. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

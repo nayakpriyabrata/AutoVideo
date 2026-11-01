@@ -1,0 +1,1004 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/QUEUED_REQUEST_V7_0_105.md b/QUEUED_REQUEST_V7_0_105.md
+--- a/QUEUED_REQUEST_V7_0_105.md	1970-01-01 00:00:00.000000000 +0000
++++ b/QUEUED_REQUEST_V7_0_105.md	2026-10-27 06:27:24.000000000 +0000
+@@ -0,0 +1,98 @@
++# v7.0.105 — a paid Flow request is waited for, not abandoned
++
++Real log, job `20261022-143856-7-small-daily-habits-tha-9729`, 2026-10-27. Two Flow videos were produced
++(`shot_018`, `shot_020`); the app kept only the first, then spent ten minutes rescanning the same gallery and
++paused with "no single identifiable asset".
++
++```
++11:18:58  exact UI blob saved: shots/shot_018/take_01.mp4            ← recovered, good
++11:19:12  shot_020 take 1/1 via flow/omni_draft
++11:21:03  Could not attach Agent reference media: … no verified composer attachment appeared within 45s
++11:21:14  Automatic Flow recovery shot_020: retry 1/20               ← whole run restarts at 1%
++11:22:50  Reused existing project media: AV_a4e5d83d2775_shot_020_open.jpg   ← the upload had landed
++11:22:53  Credit confirmation: clicked 'Approve' (6 credits)
++11:22:54  … still scheduled in the high-demand queue … remaining=899s
++11:23:27  Approval stopped: Additional approval card exceeds the saved request approval-card limit
++11:23:27  Approval refused … No card was clicked; the wait ends now  ← walks away after 29 seconds
++11:23:28  FlowRequestPending … (last observed interval 29s)
++11:24:37  Download-only recovery … 6 gallery assets, 0 fresh candidates
++…         retries 3, 4, 5 → 11:33:52 PAUSED flow_recovery_exhausted
++```
++
++Three separate defects, all fixed here.
++
++## 1. The second approval card ended a wait for a request that was already paid for
++
++Flow re-renders the approval turn after a request is queued (and the Agent asks again while the clip is still
++generating). The approval guard saw a card that was not in the saved request's reservations and treated it as a
++hard stop, ending the wait after 29 s while the request it had just approved still had ~870 s of queue left.
++
++- `engine/flow_approval.py` now raises a typed `ApprovalCardLimitReached` (still a `ValueError`, with `.cards`
++  and `.limit`) instead of a bare error, and `wait_decision()` states what the wait does next:
++  `continue`, `keep_waiting` or `stop`.
++- When at least one card for this request is already approved, the additional card is **never clicked** and the
++  wait **continues** for the video that was paid for. Approval probing stops for that request so the same card is
++  not re-read every two seconds.
++- A card that would exceed the credit cap, a manual-approval request, and a card with no approval yet still stop
++  the wait as before: nothing is clicked and nothing is submitted.
++
++Console: `This request was already approved; the additional card is left unclicked. Continuing to wait for the
++video that was already paid for (no new credits).`
++
++## 2. A queued request is no longer counted as "no progress"
++
++`automatic_recovery` stopped after four no-progress retries (five scans, ~10 minutes), while Flow's high-demand
++queue had advertised 899 s. A submitted request that is still queueing is not stagnation:
++
++- `still_queued()` recognises the queue verdict from the saved request;
++- such retries are exempt from the four-attempt no-progress budget inside a 1 500 s wall-clock budget (the total
++  attempt bound of 20 and the browser/upload bound are unchanged);
++- queued retries back off at 30/60/90 s instead of hammering every 10 s;
++- `automatic_recovery.json` records `"queued": true` per attempt.
++
++## 3. An upload that lands late is attached instead of failing the shot
++
++`shot_020`'s first attempt failed the composer check after 45 s, yet the very next attempt found both files in
++the project with "Reused existing project media" — the upload had succeeded and only the chip verification was
++slow.
++
++- the composer check now waits **90 s** (`REFERENCE_ATTACH_TIMEOUT_MS`);
++- if it still fails, the same alias is attached from the project's uploaded media once, and the shot continues —
++  no failed shot, no extra submission cycle;
++- if the file really is absent, the existing honest error remains ("The photo exists locally; Flow
++  upload/attachment needs recovery. **No generation submitted.**").
++
++## 4. The console guidance now shows the current pause, not the stale snapshot
++
++`python3 cli.py v3 status` printed the saved snapshot verbatim: `shot_014 … FlowRequestPending` and
++`completed=13/45` while the manifest had 17 accepted shots and the production had stopped at shot_018. It now
++prints `Factory.recovery_state()` through `pause_guidance_lines()` — the current stopping point, the superseded
++notice marked as superseded (the old text kept), `completed=N/M (manifest)` and the unresolved journals that
++Resume will keep waiting on.
++
++## What this does not do
++
++- It never clicks a card that is not part of the request already approved, and it never submits a generation to
++  "retry" a download.
++- It cannot fetch a clip that Flow never produced: if the queue ends without a video, the pause names the saved
++  request and the download-only recovery command.
++- Nothing here was run against live Flow; the tests use fakes and spend no credits.
++
++## Files
++
++- `engine/flow_approval.py` — `ApprovalCardLimitReached`, `wait_decision()`.
++- `engine/providers/flow_browser.py` — the wait keeps waiting after a refused extra card; 90 s attachment check
++  with the project-media fallback.
++- `engine/automatic_recovery.py` — `still_queued()`, queue grace, longer queued backoff, `queued` in history.
++- `cli.py` — `pause_guidance_lines()`, used by `v3 status`.
++- `tests/test_v7105_queued_approval.py` — 21 tests, no browser, no credits.
++
++## Upgrade
++
++```
++python3 ../AutoVideoAI-v7.0.105/tools/update_v7104_to_v7105.py .            # dry run
++python3 ../AutoVideoAI-v7.0.105/tools/update_v7104_to_v7105.py . --apply    # install
++```
++
++Stop the dashboard first. Outputs, jobs, journals, browser profiles and Clip Studio folders are untouched; code
++backups go to `code-update-backups/v7.0.104-to-v7.0.105-<timestamp>`.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/VERSION b/VERSION
+--- a/VERSION	2026-10-27 04:41:20.000000000 +0000
++++ b/VERSION	2026-10-27 06:27:26.000000000 +0000
+@@ -1 +1 @@
+-7.0.104
+\ No newline at end of file
++7.0.105
+\ No newline at end of file
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/cli.py b/cli.py
+--- a/cli.py	2026-10-27 04:40:08.000000000 +0000
++++ b/cli.py	2026-10-27 06:26:14.000000000 +0000
+@@ -62,6 +62,39 @@
+ _ENV_REPORT = load_environment(Path(__file__).resolve().parent)
+ 
+ 
++def pause_guidance_lines(pause, state=None):
++    """The console PAUSE / RECOVERY GUIDANCE block (v7.0.105).
++
++    ``state`` is ``Factory.recovery_state(job_id)``. Without it the saved pause is printed verbatim, which is
++    exactly how the console kept showing "shot_014 ... FlowRequestPending" and ``13/45`` while the production had
++    moved to shot_018 with 17 accepted shots.
++    """
++    state = state or {}
++    pause = pause or {}
++    shot = state.get('shot_id') or pause.get('shot_id') or '?'
++    reason = state.get('reason') or pause.get('reason') or 'unknown'
++    lines = [f"  stopped_at={pause.get('paused_at', '?')} shot={shot}", f"  reason={reason}"]
++    if state.get('pause_notice_stale'):
++        lines.append('  (the saved notice above was superseded: it described a request that is already resolved)')
++        superseded = str(state.get('pause_notice_superseded') or '')
++        if superseded:
++            lines.append('  superseded_reason=' + superseded)
++    project = pause.get('flow_project_url') or state.get('flow_project_url') or ''
++    if project:
++        lines.append(f"  flow_project={project}")
++    accepted = state.get('accepted_shots', pause.get('accepted_shots', 0))
++    total = state.get('total_shots', pause.get('total_shots', 0))
++    lines.append(f"  completed={accepted}/{total} (manifest)")
++    unresolved = [str(row) for row in (state.get('unresolved_journals') or []) if row]
++    if unresolved:
++        lines.append(f"  unresolved_requests={len(unresolved)} (Resume keeps waiting on these; no new credits)")
++        lines.extend('    ' + row for row in unresolved[:6])
++    actions = state.get('actions') or pause.get('actions') or []
++    for number, action in enumerate(actions, 1):
++        lines.append(f"  {number}. {action.get('label')}:\n     {action.get('command')}")
++    return lines
++
++
+ def main_v3(argv):
+     from pathlib import Path
+     """Factory CLI: python cli.py v3 <create|resume|status|render|queue|support-report>."""
+@@ -961,13 +994,14 @@
+         pause = f.pause_state(args.job_id)
+         if pause and (m.status in ("paused", "assisted") or not pause.get("resolved")):
+             print("\nPAUSE / RECOVERY GUIDANCE")
+-            print(f"  stopped_at={pause.get('paused_at', '?')} shot={pause.get('shot_id', '?')}")
+-            print(f"  reason={pause.get('reason', 'unknown')}")
+-            if pause.get("flow_project_url"):
+-                print(f"  flow_project={pause['flow_project_url']}")
+-            print(f"  completed={pause.get('accepted_shots', 0)}/{pause.get('total_shots', 0)} (saved)")
+-            for n, action in enumerate(pause.get("actions", []), 1):
+-                print(f"  {n}. {action.get('label')}:\n     {action.get('command')}")
++            # v7.0.105: describe the CURRENT state, not the saved snapshot (which named shot_014 while the
++            # production had moved to shot_018, and counted 13/45 while the manifest held 17).
++            try:
++                guidance = f.recovery_state(args.job_id) or {}
++            except Exception:
++                guidance = {}
++            for line in pause_guidance_lines(pause, guidance):
++                print(line)
+     elif args.cmd == "audit":
+         m = f.pm.load_manifest(args.job_id)
+         ds = [float(x.duration_target or 0) for x in m.shots]
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/automatic_recovery.py b/engine/automatic_recovery.py
+--- a/engine/automatic_recovery.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/automatic_recovery.py	2026-10-27 06:26:04.000000000 +0000
+@@ -25,6 +25,21 @@
+ 
+ CHECKPOINT_PREFIX = 'Image recovery checkpoint retained'
+ 
++# v7.0.105: Flow's high-demand queue can hold a submitted video for ~15 minutes. A request that is still
++# queueing is not "no progress", so its retries must not consume the four-attempt stagnation budget (they stay
++# bounded by the total attempt count and this wall-clock budget).
++QUEUE_WAIT_BUDGET_S = 1500
++QUEUE_MARKERS = ('high-demand queue', 'queue card', 'still scheduled in the high-demand queue')
++
++
++def still_queued(error) -> bool:
++    """True when the saved request is submitted and Flow is still queueing it (not a failure)."""
++    from .providers.flow_browser import FlowRequestPending
++    if not isinstance(error, FlowRequestPending):
++        return False
++    text = str(error).lower()
++    return any(marker in text for marker in QUEUE_MARKERS)
++
+ 
+ def recoverable_download_interruption(error):
+     """True when a saved exact image request was only interrupted during download.
+@@ -65,6 +80,7 @@
+     factory._automatic_recovery_active = enabled
+     total = 0
+     stagnant = 0
++    queue_wait_started = None
+     previous = checkpoint(factory, job_id) if enabled else None
+     history = []
+     state_path = Path(factory.pm.job_dir(job_id)) / 'automatic_recovery.json'
+@@ -88,8 +104,17 @@
+                          'no_progress_attempts': stagnant, 'at': time.time()}
+                 history.append(event)
+                 # Four retries without new saved media; twenty across an
+-                # advancing run. There is never an unlimited browser/upload loop.
+-                retry = enabled and can_recover(error.original) and stagnant <= 4 and total <= 20
++                # advancing run. A request Flow is still queueing is exempt from the no-progress budget while
++                # it stays inside QUEUE_WAIT_BUDGET_S, so a 15-minute queue is waited out instead of being
++                # abandoned after ~10 minutes of scans (v7.0.105). There is never an unlimited loop.
++                queued = still_queued(error.original)
++                if queued and queue_wait_started is None:
++                    queue_wait_started = time.time()
++                queue_grace = bool(queued and queue_wait_started is not None
++                                   and time.time() - queue_wait_started <= QUEUE_WAIT_BUDGET_S)
++                event['queued'] = bool(queued)
++                retry = (enabled and can_recover(error.original) and total <= 20
++                         and (stagnant <= 4 or queue_grace))
+                 if not retry:
+                     factory._automatic_recovery_active = False
+                     manifest = factory.pm.load_manifest(job_id)
+@@ -105,11 +130,14 @@
+                         note_recoverable_failure(factory.pm.job_dir(job_id), str(error),
+                                                  progress=[len(frames), len(accepted)])
+                     raise
+-                delay = min(60, 10 * 2 ** min(stagnant, 3))
++                delay = (min(90, 30 * 2 ** min(stagnant, 2)) if queued
++                         else min(60, 10 * 2 ** min(stagnant, 3)))
+                 save(state_path, {'status': 'waiting', 'attempts': total, 'history': history,
+                                   'next_retry_at': time.time() + delay})
+                 progress.emit('Automatic Flow recovery', 26,
+-                    f'{error.shot_id}: retry {total}/20 in {delay}s; saved media and request journals retained.')
++                    f'{error.shot_id}: retry {total}/20 in {delay}s'
++                    + ('; the request Flow is still queueing is kept and waited for' if queued else '')
++                    + '; saved media and request journals retained.')
+                 # Close providers before backoff, including ones bypassed by an
+                 # exception before the storyboard's normal close path.
+             finally:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/flow_approval.py b/engine/flow_approval.py
+--- a/engine/flow_approval.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/flow_approval.py	2026-10-27 06:25:50.000000000 +0000
+@@ -1,4 +1,11 @@
+-"""Durable approval reservations; one total credit budget per saved request."""
++"""Durable approval reservations; one total credit budget per saved request.
++
++v7.0.105: hitting the card limit is its own, *recoverable* verdict. Flow re-renders the approval turn after a
++request is queued (and the Agent sometimes asks again while the clip is still generating), so a second card
++appears for a request that was already approved. That is not a reason to abandon a paid request: the card is
++left unclicked and the caller keeps waiting for the video that was already paid for. Only a card that would
++exceed the credit cap is a hard stop.
++"""
+ import hashlib
+ import json
+ import re
+@@ -7,6 +14,36 @@
+ from .production import save
+ 
+ 
++class ApprovalCardLimitReached(ValueError):
++    """A further credit card appeared for a request that is already approved (v7.0.105).
++
++    ``cards`` is how many cards were already reserved for this saved request. A caller must NOT click; it may
++    keep waiting for the request it already paid for.
++    """
++
++    def __init__(self, cards, limit, cost):
++        self.cards = int(cards)
++        self.limit = int(limit)
++        self.cost = cost
++        super().__init__('Additional approval card exceeds the saved request approval-card limit')
++
++
++def wait_decision(confirmation) -> str:
++    """What a generation wait does after one approval probe (v7.0.105).
++
++    ``'continue'``     nothing blocked; keep the normal loop
++    ``'keep_waiting'`` a further card appeared for a request that was already approved: never click it, and keep
++                       waiting for the video that was paid for
++    ``'stop'``         the wait must end; no card was approved, so nothing was submitted
++    """
++    confirm = confirmation or {}
++    if not confirm.get('blocked'):
++        return 'continue'
++    if confirm.get('card_limit_reached') and int(confirm.get('approved_cards') or 0) >= 1:
++        return 'keep_waiting'
++    return 'stop'
++
++
+ def reserve(journal, body, cost, cap, limit=1):
+     path=Path(journal); request=json.loads(path.read_text())
+     if type(limit) is not int or not 1 <= limit <= 3:
+@@ -25,7 +62,7 @@
+     reservations=request.setdefault('approval_reservations',[])
+     if any(r.get('key') == key or r.get('key') in legacy_keys for r in reservations):return False
+     if len(reservations)>=limit:
+-        raise ValueError('Additional approval card exceeds the saved request approval-card limit')
++        raise ApprovalCardLimitReached(len(reservations), limit, cost)
+     total=sum(r['cost'] for r in reservations)
+     if total+cost>cap:raise ValueError(f'Cumulative credit guard: {total}+{cost} exceeds request cap {cap}')
+     reservations.append({'key':key,'cost':cost,'status':'reserved','at':time.time()})
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-27 04:39:58.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-10-27 06:25:54.000000000 +0000
+@@ -507,6 +507,11 @@
+ }"""
+ 
+ 
++# v7.0.105: 45 s was too short for a large reference on a busy Flow composer - the upload landed and was only
++# verified later, which cost a whole recovery cycle (and a second submission) for shot_020 in the field.
++REFERENCE_ATTACH_TIMEOUT_MS = 90000
++
++
+ class FlowUIChanged(Exception):
+     """A selector failed -> caller should switch to Assisted Flow Mode."""
+     pass
+@@ -2036,7 +2041,7 @@
+                 return False  # Recheck composer chips and refresh locators next poll.
+         return False
+ 
+-    def _finish_agent_media_picker(self, basename: str = "", timeout_ms: int = 45000) -> bool:
++    def _finish_agent_media_picker(self, basename: str = "", timeout_ms: int = REFERENCE_ATTACH_TIMEOUT_MS) -> bool:
+         deadline = time.monotonic() + max(1.0, timeout_ms / 1000)
+         selected = False
+         # Flow retains a previous exact-name search, which can hide a new upload.
+@@ -2267,9 +2272,19 @@
+                 fc.value.set_files(upload_path)
+                 self._page.wait_for_timeout(500)
+                 if not self._finish_agent_media_picker(upload_name):
++                    # The file did reach Flow before the composer chip was verified: the same alias is often
++                    # already in the project's media library (that is what "Reused existing project media" in
++                    # the next attempt proves). Attach it from there instead of failing the whole shot.
++                    if self._try_attach_existing_project_media(alias):
++                        upload_record(project_url, alias, record=True)
++                        attached += 1
++                        print(f"[Flow] Attachment verified from the project's uploaded media after the composer "
++                              f"wait: {basename}")
++                        continue
+                     raise FlowUIChanged(
+-                        f"Reference file was sent, but no verified composer attachment appeared within 45s: {upload_name}. "
+-                        "The photo exists locally; Flow upload/attachment needs recovery. No generation submitted.")
++                        f"Reference file was sent, but no verified composer attachment appeared within "
++                        f"{REFERENCE_ATTACH_TIMEOUT_MS // 1000}s: {upload_name}. The photo exists locally; Flow "
++                        "upload/attachment needs recovery. No generation submitted.")
+                 upload_record(project_url, alias, record=True)
+                 attached += 1
+                 print(f"[Flow] Added reference to prompt: {basename} ({alias[:15]}…)")
+@@ -2598,6 +2613,9 @@
+         ambiguous_images_since = None
+         ambiguous_images_key = None
+         approval_resolved = bool((getattr(self, "last_agent_confirmation", {}) or {}).get("clicked"))
++        # Once a further card is refused for an already-approved request, stop probing approvals: re-reading
++        # the same cards every two seconds cannot help, and the video is what is being waited for.
++        approval_probe_disabled = False
+ 
+         while time.time() < deadline:
+             # Quota/usage-limit messages are more specific than the generic
+@@ -2633,14 +2651,21 @@
+             now = time.time()
+             confirmation_configured = bool(
+                 self.ui.get("actions", {}).get("agent_confirmation_buttons"))
+-            if (confirmation_configured and approval != "manual"
++            if (confirmation_configured and approval != "manual" and not approval_probe_disabled
+                     and now - last_approval_probe >= 2.0):
+                 last_approval_probe = now
+                 self.confirm_agent_generation(
+                     timeout_s=1, approval=approval,
+                     max_credits=max_generation_credits)
+                 confirm = getattr(self, "last_agent_confirmation", {}) or {}
+-                if confirm.get("blocked"):
++                from engine.flow_approval import wait_decision
++                decision = wait_decision(confirm)
++                if decision == "keep_waiting":
++                    # v7.0.105: a paid request must not be abandoned because Flow asked a second time.
++                    approval_probe_disabled = True
++                    print("[Flow] This request was already approved; the additional card is left unclicked. "
++                          "Continuing to wait for the video that was already paid for (no new credits).")
++                elif decision == "stop":
+                     print(f"[Flow] Approval refused: {confirm.get('reason') or 'unknown reason'}. No card was clicked; "
+                           "the wait ends now.")
+                     return False
+@@ -4191,13 +4216,25 @@
+             journal = getattr(self, '_approval_journal', None)
+             if not journal:
+                 return True  # legacy unjournaled adapter compatibility
+-            from engine.flow_approval import reserve
++            from engine.flow_approval import ApprovalCardLimitReached, reserve
+             try:
+                 allowed = reserve(journal, body_raw, self.last_agent_confirmation.get('cost'),
+                                   max_credits, getattr(self, '_approval_card_limit', 1))
+                 if not allowed:
+                     self.last_agent_confirmation['reason'] = 'This approval card is already reserved; no duplicate click'
+                 return allowed
++            except ApprovalCardLimitReached as error:
++                # v7.0.105: the request already has an approved card in this journal, so this extra card is
++                # Flow re-rendering the same turn (or asking again while the clip is still generating). Do not
++                # click it and do not abandon the approved request: keep waiting for the video it paid for.
++                self.last_agent_confirmation.update(
++                    blocked=True, card_limit_reached=True, approved_cards=error.cards,
++                    reason=str(error))
++                print('[Flow] Approval stopped: ' + str(error))
++                print(f'[Flow] {error.cards} approval card(s) are already recorded for this request; the '
++                      'additional card will not be clicked. No new credits; the approved request keeps '
++                      'waiting for its video.')
++                return False
+             except (OSError, ValueError, KeyError) as error:
+                 self.last_agent_confirmation.update(blocked=True, reason=str(error))
+                 print('[Flow] Approval stopped: '+str(error))
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tests/test_v7105_queued_approval.py b/tests/test_v7105_queued_approval.py
+--- a/tests/test_v7105_queued_approval.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7105_queued_approval.py	2026-10-27 06:26:58.000000000 +0000
+@@ -0,0 +1,249 @@
++"""v7.0.105: a paid Flow request is not abandoned because Flow asked a second time.
++
++Field log, job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27:
++
++    11:21:03  shot_020: Could not attach Agent reference media … no verified composer attachment appeared within 45s
++    11:22:53  [Flow] Credit confirmation: clicked 'Approve' (6 credits)
++    11:22:54  Flow accepted the request but it is still scheduled in the high-demand queue … remaining=899s
++    11:23:27  Approval stopped: Additional approval card exceeds the saved request approval-card limit
++    11:23:28  FlowRequestPending … (last observed interval 29s) → 20-retry recovery, every attempt scanning
++              "6 gallery assets, 0 fresh candidates" → PAUSED flow_recovery_exhausted at 11:33
++
++Three defects in that sequence:
++
++1. the second approval card ended the wait at 29 s while the *already approved* request still had ~870 s of
++   queue left, so the app walked away from a paid request;
++2. a request Flow is still queueing counted as "no progress", so recovery gave up after five scans (~10 min);
++3. the 45 s composer check declared a reference unattached although the upload had landed (the next attempt
++   found it with "Reused existing project media") - which cost a whole extra submission cycle.
++
++No browser is opened and no credit is spent here.
++"""
++import inspect
++import json
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from engine import flow_approval as fa
++from engine.automatic_recovery import still_queued
++from engine.providers.flow_browser import (
++    REFERENCE_ATTACH_TIMEOUT_MS, FlowBrowser, FlowRequestPending, FlowUIChanged)
++
++QUEUE_ERROR = FlowRequestPending(
++    "Submitted Flow request has no validated local video asset; Flow adapter reported: Flow accepted the video "
++    "request and showed a high-demand queue card during the bounded wait (last observed interval 29s), but no "
++    "completed playable/downloadable video became available. No download was attempted and no replacement "
++    "generation was submitted; the exact request remains saved.")
++QUESTION = ("I'm going to generate 1 video clip interpolating between your start and end frames using Omni 1.1 "
++            "Flash in 16:9 at 360p for 6 seconds. Would you like me to kick off this 1 video generation, "
++            "costing 6 credits? ")
++
++
++# ------------------------------------------------------------------ the wait decision
++
++@pytest.mark.parametrize('confirmation, expected', [
++    ({}, 'continue'),
++    ({'blocked': False, 'clicked': 'Approve'}, 'continue'),
++    ({'blocked': True, 'card_limit_reached': True, 'approved_cards': 1}, 'keep_waiting'),
++    ({'blocked': True, 'card_limit_reached': True, 'approved_cards': 2}, 'keep_waiting'),
++    ({'blocked': True, 'card_limit_reached': True, 'approved_cards': 0}, 'stop'),
++    ({'blocked': True, 'reason': 'credit guard: 9 > 6'}, 'stop'),
++    ({'blocked': True, 'reason': 'manual approval requested'}, 'stop'),
++])
++def test_a_second_card_leaves_an_approved_request_waiting(confirmation, expected):
++    assert fa.wait_decision(confirmation) == expected
++
++
++def test_the_card_limit_is_its_own_recoverable_verdict():
++    error = fa.ApprovalCardLimitReached(cards=1, limit=1, cost=6)
++    assert isinstance(error, ValueError)          # callers that catch ValueError keep working
++    assert error.cards == 1 and error.limit == 1 and error.cost == 6
++    assert 'approval-card limit' in str(error)
++
++
++def test_reserve_raises_the_typed_limit_after_one_reserved_card(tmp_path):
++    journal = tmp_path / 'take_01.mp4.flow-request.json'
++    journal.write_text(json.dumps({'approval_reservations': [
++        {'key': 'other', 'cost': 6, 'status': 'reserved'}]}))
++    with pytest.raises(fa.ApprovalCardLimitReached) as caught:
++        fa.reserve(journal, QUESTION, 6, 60, 1)
++    assert caught.value.cards == 1
++    # nothing was written: the refused card never reaches the journal
++    assert len(json.loads(journal.read_text())['approval_reservations']) == 1
++
++
++def test_reserve_still_refuses_a_card_over_the_credit_cap(tmp_path):
++    journal = tmp_path / 'take_01.mp4.flow-request.json'
++    journal.write_text(json.dumps({'approval_reservations': []}))
++    with pytest.raises(ValueError) as caught:
++        fa.reserve(journal, QUESTION, 6, 5, 1)
++    assert not isinstance(caught.value, fa.ApprovalCardLimitReached)
++    assert 'Cumulative credit guard' in str(caught.value)
++
++
++# ------------------------------------------------------------------ queue is not failure
++
++def test_the_field_queue_message_is_recognised_as_queued():
++    assert still_queued(QUEUE_ERROR) is True
++
++
++@pytest.mark.parametrize('error', [
++    FlowRequestPending('Existing request still has no single identifiable asset after bounded gallery scans'),
++    FlowRequestPending('Image recovery checkpoint retained: browser closed'),
++    FlowUIChanged('composer was not found'),
++    RuntimeError('high-demand queue'),
++])
++def test_only_a_submitted_queue_wait_is_exempt(error):
++    assert still_queued(error) is False
++
++
++def test_a_queued_request_is_waited_out_instead_of_being_abandoned(tmp_path, monkeypatch):
++    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
++    from engine.automatic_recovery import run_with_recovery
++    from engine.factory import Factory, RecoverableInterruption
++
++    factory = Factory(str(tmp_path / 'outputs'), str(tmp_path / 'data/jobs.db'))
++    job = factory.create_job('Queued request wait', dry_run=True)
++    calls = []
++
++    def run(*args):
++        calls.append(1)
++        error = FlowRequestPending(str(QUEUE_ERROR))
++        factory._pause_pending_flow(factory.pm.load_manifest(job), 'shot_020', error)
++    factory._run_job = run
++    with pytest.raises(RecoverableInterruption):
++        run_with_recovery(factory, job, None, True, sleep=lambda _: None)
++    # five scans were the old ceiling for "no progress"; a queue wait keeps going to the total bound
++    assert len(calls) == 21
++    state = json.loads(Path(factory.pm.job_dir(job) + '/automatic_recovery.json').read_text())
++    assert state['history'][-1]['queued'] is True
++    assert factory.db.get(job)['status'] == 'paused'
++
++
++# ------------------------------------------------------------------ reference attachment
++
++def test_the_composer_attachment_check_waits_ninety_seconds():
++    assert REFERENCE_ATTACH_TIMEOUT_MS == 90000
++    default = inspect.signature(FlowBrowser._finish_agent_media_picker).parameters['timeout_ms'].default
++    assert default is REFERENCE_ATTACH_TIMEOUT_MS
++
++
++class _FakePage:
++    def __init__(self):
++        self.waits = 0
++
++    def wait_for_timeout(self, ms):
++        self.waits += 1
++
++    def keyboard_press(self, key):
++        pass
++
++    press = keyboard_press
++
++    class _Chooser:
++        class value:
++            @staticmethod
++            def set_files(path):
++                pass
++
++    def expect_file_chooser(self, timeout=5000):
++        page = self
++
++        class _Context:
++            def __enter__(self_inner):
++                return page._Chooser()
++
++            def __exit__(self_inner, *exc):
++                return False
++        return _Context()
++
++
++def test_an_upload_that_only_lands_late_is_attached_from_the_project_media(tmp_path, monkeypatch):
++    from engine import flow_reference_policy as policy
++
++    image = tmp_path / 'shot_020_open.jpg'
++    image.write_bytes(b'\xff\xd8\xff\xd9')
++    monkeypatch.setattr(policy, 'upload_record', lambda *a, **k: None)
++    monkeypatch.setattr(policy, 'reference_upload_attempt', lambda *a, **k: None)
++
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = _FakePage()
++    calls = {'reuse': 0}
++
++    browser._media_upload_alias = lambda path: 'AV_a4e5d83d2775_shot_020_open.jpg'
++    browser._agent_reference_names = lambda: set()
++    browser.current_project_url = lambda: 'https://flow.google.com/project/fe1ccc67-bf80-4948-8530-0bf9c39e5a17'
++    browser._dismiss_media_picker = lambda: None
++    browser._open_agent_add_menu = lambda: None
++    browser._clear_media_picker_search = lambda: None
++    browser._resolve = lambda key, timeout_ms=4000: SimpleNamespace(click=lambda timeout=4000: None)
++    browser._aliased_upload_path = lambda path, alias: str(path)
++    browser._finish_agent_media_picker = lambda *a, **k: False      # the 90 s verification failed
++
++    def reuse(alias):
++        calls['reuse'] += 1
++        return True
++    browser._try_attach_existing_project_media = reuse
++
++    attached = browser.attach_agent_media([str(image)])
++    assert attached == 1 and calls['reuse'] == 1
++
++
++def test_an_upload_that_is_really_missing_still_fails_without_submitting(tmp_path, monkeypatch):
++    from engine import flow_reference_policy as policy
++
++    image = tmp_path / 'shot_020_open.jpg'
++    image.write_bytes(b'\xff\xd8\xff\xd9')
++    monkeypatch.setattr(policy, 'upload_record', lambda *a, **k: None)
++    monkeypatch.setattr(policy, 'reference_upload_attempt', lambda *a, **k: None)
++
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser._page = _FakePage()
++    browser._media_upload_alias = lambda path: 'AV_a4e5d83d2775_shot_020_open.jpg'
++    browser._agent_reference_names = lambda: set()
++    browser.current_project_url = lambda: 'https://flow.google.com/project/fe1ccc67-bf80-4948-8530-0bf9c39e5a17'
++    browser._dismiss_media_picker = lambda: None
++    browser._open_agent_add_menu = lambda: None
++    browser._clear_media_picker_search = lambda: None
++    browser._resolve = lambda key, timeout_ms=4000: SimpleNamespace(click=lambda timeout=4000: None)
++    browser._aliased_upload_path = lambda path, alias: str(path)
++    browser._finish_agent_media_picker = lambda *a, **k: False
++    browser._try_attach_existing_project_media = lambda alias: False
++
++    with pytest.raises(Exception) as caught:
++        browser.attach_agent_media([str(image)])
++    message = str(caught.value)
++    assert '90s' in message and 'No generation submitted' in message
++
++
++# ------------------------------------------------------------------ console guidance
++
++def test_the_console_guidance_describes_the_current_state():
++    import cli
++    pause = {'paused_at': '2026-10-26T15:11:06+05:30', 'shot_id': 'shot_014',
++             'reason': 'Flow video request is saved at …/flow/shots/shot_014/take_01.mp4.flow-request.json …',
++             'accepted_shots': 13, 'total_shots': 45,
++             'actions': [{'label': 'Resume', 'command': 'python3 cli.py v3 resume job'}]}
++    state = {'shot_id': 'shot_018', 'reason': 'Superseded notice: this job was paused at shot_014 …',
++             'pause_notice_stale': True,
++             'pause_notice_superseded': 'Flow video request is saved at …/flow/shots/shot_014/…',
++             'accepted_shots': 17, 'total_shots': 45,
++             'unresolved_journals': ['flow/shots/shot_020/take_01.mp4.flow-request.json'],
++             'actions': [{'label': 'Resume', 'command': 'python3 cli.py v3 resume job'}]}
++    text = '\n'.join(cli.pause_guidance_lines(pause, state))
++    assert 'shot=shot_018' in text                       # the current stopping point
++    assert 'Superseded notice' in text
++    assert 'superseded_reason=' in text and 'shot_014' in text
++    assert 'completed=17/45 (manifest)' in text          # not the saved 13
++    assert 'unresolved_requests=1' in text and 'shot_020' in text
++
++
++def test_the_console_guidance_still_works_without_a_state():
++    import cli
++    pause = {'paused_at': 'x', 'shot_id': 'shot_001', 'reason': 'plain reason',
++             'accepted_shots': 1, 'total_shots': 2, 'actions': []}
++    text = '\n'.join(cli.pause_guidance_lines(pause))
++    assert 'shot=shot_001' in text and 'plain reason' in text and 'completed=1/2' in text
++    assert 'superseded_reason' not in text
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7103_to_v7104.py b/tools/update_v7103_to_v7104.py
+--- a/tools/update_v7103_to_v7104.py	2026-10-27 04:41:28.000000000 +0000
++++ b/tools/update_v7103_to_v7104.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,167 +0,0 @@
+-"""Apply the v7.0.104 update to a v7.0.103 installation.
+-
+-Field case (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27 10:07 IST): the Queue panel said
+-
+-    Job needs recovery at shot_018 · 17/45 accepted shots are saved.
+-    Flow video request is saved at …/flow/shots/shot_014/take_01.mp4.flow-request.json …
+-    Cause: FlowRequestPending: Existing request still has no single identifiable asset …
+-
+-Two different shots in one notice. shot_014 had been downloaded and QC-accepted long before; the saved pause
+-snapshot was simply never rewritten, so the panel described a request that no longer existed. In the same run a
+-browser tab showed ``https://flow.google.com/404?reason=project`` ("Project not found") for a stored project URL,
+-and the run reported it as the generic "composer was not found".
+-
+-v7.0.104:
+-
+-- ``engine/pause_freshness.py`` rewrites a saved pause before it is shown: if the reason quotes a journal that is
+-  no longer unresolved, or the production has moved past the saved shot, the notice says it was superseded, names
+-  the requests that *are* still open and where Resume continues; the old text is kept, not hidden;
+-- ``FlowProjectMissing`` is raised when a stored project URL answers "Project not found" (three short retries
+-  first, because a project created seconds ago can 404 while Flow provisions it);
+-- the job pauses with ``flow_project_missing`` and a message that names the dead URL, the local file that stores
+-  it, and the exact ``flow-projects --clear-video`` / ``--set-stills`` repair - no silent fallback;
+-- the Job panel and ``python3 cli.py v3 status <job>`` show that message and both bindings.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.104 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.104/tools/update_v7103_to_v7104.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.104/tools/update_v7103_to_v7104.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
+-Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['FLOW_PROJECT_404_V7_0_104.md', 'VERSION', 'app.py', 'cli.py', 'engine/factory.py',
+-           'engine/job_activity.py', 'engine/pause_freshness.py', 'engine/providers/flow_browser.py',
+-           'tests/test_v7104_stale_pause_and_404.py', 'tools/update_v7103_to_v7104.py']
+-# Files as they exist in 7.0.103: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['7ac5202f82dbff715a969cea1929f6a1701481ce3267e5fbd4eef5bf2a8abccd'],
+-    'app.py': ['80a69a657aad67ab8ed6d9bf2fecb4f9318b984cbd4164c88229e2962682081b'],
+-    'cli.py': ['67488a09529c2885c26bacea319b232c8595b71a8ae2c88bd092323dc152b041'],
+-    'engine/factory.py': ['0cb4a7436659519596b10e7235e897c003682e40b70f613d5280c5b961fb629a'],
+-    'engine/job_activity.py': ['0e050e48adb835559b8f0941e2eeebc5870943622a08ba7e6181dbad1563bf2c'],
+-    'engine/providers/flow_browser.py': ['8a9fc18d6486c62ac702d3f6417359f50b05b9f52eb1ae9088e01805acca5cad'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.103', '7.0.104')  # 7.0.104 allows a safe re-run after success
+-
+-# The 7.0.103 zip carries the 7.0.102 to 7.0.103 update; apply that first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.102', '7.0.103', 'tools/update_v7102_to_v7103.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.103 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.103 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.103 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.104 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.104 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.104 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.103-to-v7.0.104-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.104. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache -x logs -x .flow-workers -x outputs -x data a/tools/update_v7104_to_v7105.py b/tools/update_v7104_to_v7105.py
+--- a/tools/update_v7104_to_v7105.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7104_to_v7105.py	2026-10-27 06:27:36.000000000 +0000
+@@ -0,0 +1,162 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.105 update to a v7.0.104 installation.
++
++Field log (job ``20261022-143856-7-small-daily-habits-tha-9729``, 2026-10-27): Flow produced the shot_020 video,
++the app approved its 6 credits, and then walked away from it after 29 seconds because a *second* approval card
++appeared - while the request still had ~870 s of high-demand queue left. The follow-up recovery counted a
++queueing request as "no progress", gave up after five gallery scans, and paused with "no single identifiable
++asset". A 45 s composer check had also declared shot_020's references unattached although the upload had landed.
++
++v7.0.105:
++
++- a further approval card for an already-approved request is never clicked, and the wait continues for the video
++  that was paid for (`ApprovalCardLimitReached`, `wait_decision()`);
++- a request Flow is still queueing is exempt from the no-progress retry budget (1 500 s wall clock, total
++  attempt bound unchanged), with 30/60/90 s backoff;
++- the composer attachment check waits 90 s and, if it still fails, attaches the same alias from the project's
++  uploaded media once instead of failing the shot;
++- ``python3 cli.py v3 status`` prints the current pause via ``pause_guidance_lines()`` - the superseded notice is
++  marked, the manifest's accepted count is used, and unresolved journals are listed.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.105 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.105/tools/update_v7104_to_v7105.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.105/tools/update_v7104_to_v7105.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, Flow journals, browser profiles and
++Clip Studio folders are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['QUEUED_REQUEST_V7_0_105.md', 'VERSION', 'cli.py', 'engine/automatic_recovery.py',
++           'engine/flow_approval.py', 'engine/providers/flow_browser.py',
++           'tests/test_v7105_queued_approval.py', 'tools/update_v7104_to_v7105.py']
++# Files as they exist in 7.0.104: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['0f224c1ea5d3d73fcac3128abbdbcca73a3d11b3f26c20724234bb508e92be2b'],
++    'cli.py': ['993aa778128ccfa9c7e50c53c6592927a7b4f5129363788d4e52e93133d40d12'],
++    'engine/automatic_recovery.py': ['84056dd21d62010673691733c0fabb6309f0b830e35b2ee9a991d7b72249fd66'],
++    'engine/flow_approval.py': ['86a336002610137b0ce1ce1c28869b935627cd55acef8b82643608c530d6e7c5'],
++    'engine/providers/flow_browser.py': ['041ea957abde9ec172fe9d8365f5a951ee942bb0728e3829c46fe51c48acad14'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.104', '7.0.105')  # 7.0.105 allows a safe re-run after success
++
++# The 7.0.104 zip carries the 7.0.103 to 7.0.104 update; apply that first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.103', '7.0.104', 'tools/update_v7103_to_v7104.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.104 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.104 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.104 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.105 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.105 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.105 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.104-to-v7.0.105-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.105. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

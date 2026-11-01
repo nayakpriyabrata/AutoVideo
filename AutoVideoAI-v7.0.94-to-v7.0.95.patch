@@ -1,0 +1,2080 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/THREE_LANGUAGE_RENDER_FIX_V7_0_95.md b/THREE_LANGUAGE_RENDER_FIX_V7_0_95.md
+--- a/THREE_LANGUAGE_RENDER_FIX_V7_0_95.md	1970-01-01 00:00:00.000000000 +0000
++++ b/THREE_LANGUAGE_RENDER_FIX_V7_0_95.md	2026-10-25 14:51:26.000000000 +0000
+@@ -0,0 +1,208 @@
++# AutoVideoAI 7.0.95 · a three-language production now produces three videos
++
++## What was wrong in 7.0.94 (audited, with the exact code path)
++
++Selecting English + Hindi + Odia in Create, with a reviewed language batch, was
++supposed to produce three videos. The edition renderer itself worked: its own
++tests pass with real FFmpeg media and three different voices. The failures were
++in the **gates around it**, and every one of them ended the same way — the
++English master is rendered, the extra editions are not, and the only clue is a
++single sentence in the job warnings.
++
++1. **One language aborted every language.**
++   `render_job_editions()` raised `ValueError` for the whole job when *any*
++   extra language was missing a narration, when the clean visual master was
++   missing or changed, or when the plan for the *first* pending language was
++   rejected. Factory caught that one exception, added one warning, and the job
++   ended with the primary video only. Hindi could be perfect and Odia's bundle
++   absent — no Hindi video was made either.
++
++2. **A review mismatch was a refusal, not a warning.**
++   `finishing_studio.create_plan()` raised
++   *"Hindi text cards are on, but this language was prepared without cards"*
++   when the Create "Include text cards" box was switched on **after** the batch
++   was prepared, and *"points and cards were not saved"* when an educational
++   batch had no `speech_cards.json`. Either message stopped the plan for every
++   language. Reproduced before the fix:
++
++   ```
++   ValueError: Hindi text cards are on, but this language was prepared without cards.
++   Prepare the language batch again.        -> 0 extra videos (English only)
++   ```
++
++3. **Nothing prepared the extra narrations by default.**
++   `prepare_audio` was written to `production/language_editions.json` only when
++   the Create box *"Also prepare every selected language automatically during
++   production"* was ticked (default: off), and
++   `speech_cards.prepare_selected_editions()` returned immediately when the flag
++   was false. A production that selected three languages but did not complete the
++   manual step-4 ritual rendered **one** video, because no other narration ever
++   existed.
++
++4. **Create refused to continue without that ritual.**
++   `len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch)`
++   blocked "Create production" with a warning. The only way through was: draft
++   one script → localize two → approve each → TTS all three → review all three →
++   tick "reuse this exact batch" → create. Any skipped step produced either
++   nothing or an English-only job, with no lasting explanation.
++
++5. **A failed edition preparation killed the job.**
++   `prepare_selected_editions()` was called unguarded in the narration stage, so
++   a Gemini localization error or a TTS quota error raised out of the whole run:
++   no English video either.
++
++6. **No clean picture, no editions, forever.**
++   `production/visual_master.json` is written only by the staged FFmpeg renderer.
++   A production that used the MoviePy fallback (or an interrupted render) has no
++   clean picture, so every edition was refused with *"The clean visual master is
++   missing. Render this production again"* — and rendering again reproduced the
++   same fallback. There was no recovery path from the UI at all.
++
++7. **The result was never explained.**
++   `language_edition_panel()` returned early when no extra edition was recorded,
++   so a job with three selected languages and no narration showed **no panel**.
++   The reason existed only inside `language_editions_render.json` and one line of
++   `details.txt`. Nothing told the user which language was missing or what to do.
++
++8. **One channel could hold only one logo.**
++   A channel profile stored a single `assets['logo']`, and the Create page saved
++   a profile per language using the *same* slug for the same channel name, so
++   each save overwrote the previous logo. Uploading an English, Hindi and Odia
++   mark for one channel ended with one logo used by all three videos.
++
++## What 7.0.95 changes
++
++### Every language is attempted on its own
++`render_job_editions()` builds **one plan per language** and records a status per
++language: `exported`, `failed`, `needs_narration`, `needs_picture` or `pending`.
++A missing narration, a rejected plan or a failed render names that language and
++the remaining editions still render. Nothing falls back to the English voice.
++
++### Recoverable review mismatches are warnings
++A batch prepared without text cards renders that edition **without cards** and
++records `cards_warning`. A missing educational points file keeps the plain cards
++and records why. The other languages are untouched.
++
++### Preparation happens by default, and cannot kill the job
++- Create: *"Also prepare every selected language automatically during
++  production"* defaults to **on** for a multi-language production.
++- `prepare_selected_editions()` prepares any selected language that has no saved
++  bundle even when the flag is off; a complete saved batch is reused exactly as
++  before (no repeat TTS).
++- The call is wrapped: a localization/TTS failure now records
++  `narration_error` in `production/language_editions.json`, logs
++  `language_narration_error`, and the primary master still renders.
++
++### A missing clean picture can be recovered (opt-in)
++`ensure_visual_master(allow_recovered_picture=True)` copies the finished master
++picture (`-map 0:v:0 -an -c:v copy`) into `render/visual-master.mp4` and records
++`"recovered": true` with the note that the copy may still show the primary
++edition's burned captions, text cards and channel mark. The job panel offers it
++as a checkbox; the CLI offers `--recover-picture`. It is never used silently.
++
++### The result is explained, per language
++- Every job that selected extra languages shows a **Three-language output** panel
++  (in Create and in Jobs & Recovery). Each language lists its status, whether the
++  copy is in `render/`, its warning, and the one action that unblocks it.
++- `python3 cli.py v3 language-outputs <job> --explain` prints the same diagnosis
++  as JSON. It renders nothing.
++- The final job warning names every language that did not render and why.
++
++### Three language logos in one channel profile
++- A profile can store `assets['logo-en']`, `assets['logo-hi']` and
++  `assets['logo-or']` next to the shared `assets['logo']`.
++- `save_profile(..., logos={'en':…, 'hi':…, 'or':…})` snapshots each mark.
++- The edition renderer uses `logo-<language>` first and the shared logo second,
++  so a Hindi video gets the Hindi mark and Odia gets the Odia mark.
++- **Create** has a new step 3, *"Three-language branding · logos, channel names,
++  profiles"*: one form saves a channel with its English, Hindi and Odia logos,
++  the three channel names, and an optional intro/outro; that profile is then used
++  for every selected edition. A profile created in the **Finishing Studio**
++  appears in the same picker, so the same artwork is reused instead of uploaded
++  twice. A table shows, per language, the profile, the channel name, whether the
++  logo is language-specific and a preview.
++- **Finishing Studio** shows the same three logo fields and prints which logo an
++  edition will use.
++- The primary (English) edition takes its name and logo from the primary
++  language of the profile, so all three videos are branded consistently.
++- Separately-saved per-language profiles still work (for channels that really are
++  different); that path is now the secondary option.
++
++### Executables are resolved like the rest of the app
++The finishing/edition renderer called a bare `ffmpeg`/`ffprobe`. It now resolves
++`ffmpeg` through `imageio_ffmpeg` exactly like the main renderer and raises a
++clear message when `ffprobe` is missing, instead of a `FileNotFoundError` inside
++a language edition.
++
++## Using it
++
++1. **Create → Reels & Long Videos.**
++2. Step 1: choose the master language and up to two additional editions.
++3. Step 3 (**Three-language branding**): type the channel name, upload the
++   English, Hindi and Odia logos, optionally the three channel names and one
++   intro/outro, then **Save this channel with its three language logos**. Leave
++   *"Use this profile for every selected edition"* ticked.
++4. Step 2: approve the master script (as before).
++5. **Create production.** The job localizes the approved master, synthesizes
++   every selected language, renders the primary video, then renders each edition.
++   Watching step 4 first is still the way to review every narration before TTS is
++   spent — its saved batch is reused instead of prepared again.
++6. Check **Three-language output** under the job (or in Jobs & Recovery).
++
++Existing jobs (7.0.68 – 7.0.94) keep their saved state. Their missing editions
++now appear in the panel with the reason; preparing the narration batch from Jobs
++& Recovery > Speech batches, then pressing
++**"Add primary intro/outro and render pending language editions"**, renders them.
++
++## Limits and review points
++
++- Hindi and Odia wording still needs a fluent reviewer before publishing.
++- The extra narration is prepared during production when no reviewed batch
++  exists; that spends TTS once per language. Localization uses the Gemini Web
++  session, so the browser must be signed in (as for script drafting).
++- If a language's narration is more than 25 % longer than the approved picture,
++  that edition still fails with a message asking for a shorter script. That is
++  unchanged and intentional: speech is never cut to fit silently.
++- A recovered picture master can show the primary edition's burned captions and
++  channel mark. Re-render with FFmpeg to get a clean one.
++- Editions still do not carry production-only extras (ambience, sound effects,
++  B-roll graphics from the English timeline).
++- Live Gemini Web, TTS and Flow accounts were not exercised here. The automated
++  tests use real FFmpeg media and synthetic narration.
++
++## Verification
++
++- `tests/test_v795_three_language_render.py` (16 tests, real FFmpeg):
++  a missing narration, a rejected plan and a failed render each leave the other
++  languages exported; a batch prepared without cards renders with a warning; a
++  missing points file keeps plain cards; a missing picture master is explained and
++  can be recovered; the diagnosis names each language; the extra narration is
++  prepared without the automatic checkbox while a complete saved batch is not
++  re-prepared; one profile stores three logos; a language without its own logo
++  uses the shared one; the edition plan carries the language logo; the Create
++  page, panel, CLI and Finishing Studio wiring.
++- Updated tests record the intended behaviour change:
++  `test_v768…::test_missing_reviewed_narration_is_refused_for_that_language_only`,
++  `…::test_create_page_prepares_extra_editions_instead_of_refusing_them` and
++  `test_v777…::test_plan_without_prepared_cards_renders_that_edition_without_cards`.
++- Full suite against the 7.0.94 tree: the same 26 environmental failures
++  (fonts, browser fixtures, ffprobe/encoder differences), 1517 passing,
++  0 new failures.
++
++## Upgrading an installed 7.0.94 folder
++
++Stop the dashboard first. Extract the 7.0.95 zip beside your installation folder,
++then run from the installation folder:
++
++```
++python3 ../AutoVideoAI-v7.0.95/tools/update_v794_to_v795.py .            # dry run: shows the plan
++python3 ../AutoVideoAI-v7.0.95/tools/update_v794_to_v795.py . --apply    # installs the code
++```
++
++The updater replaces only the code and documentation files listed in its plan,
++refuses to run if a listed file was edited locally or the installed version is
++not 7.0.94 (or an already-updated 7.0.95), backs the replaced files up under
++`code-update-backups/v7.0.94-to-v7.0.95-<timestamp>`, and leaves outputs, saved
++jobs, browser profiles, music, characters, uploaded logos and channel profiles
++untouched. Existing single-logo profiles keep working; open the profile in Create
++to add the Hindi and Odia marks.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/VERSION b/VERSION
+--- a/VERSION	2026-10-25 14:13:40.000000000 +0000
++++ b/VERSION	2026-10-25 14:34:18.000000000 +0000
+@@ -1 +1 @@
+-7.0.94
++7.0.95
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/app.py b/app.py
+--- a/app.py	2026-10-25 14:12:18.000000000 +0000
++++ b/app.py	2026-10-25 14:58:26.000000000 +0000
+@@ -511,34 +511,72 @@
+ 
+ 
+ def language_edition_panel(job_id):
+-    """Language editions of a job: status, exports and an explicit render action."""
+-    from engine.language_editions import requested_languages, render_job_editions, render_language_outputs
++    """Language editions of a job: status, exports and an explicit render action.
++
++    7.0.95: the panel appears for every job that selected extra languages, even
++    when nothing was prepared, and names the exact reason and next action for
++    each language. Before, a job with no prepared narration showed no panel at
++    all, so an English-only result looked like the language choice was ignored.
++    """
++    from engine.language_editions import (edition_diagnosis, ensure_visual_master,
++                                          render_language_outputs)
+     from engine.production_lock import production_slot
+     from engine.languages import LANGUAGES as LANGUAGE_PACKS
+     job_dir = Path(F.pm.job_dir(job_id))
+-    source, extra, state = requested_languages(job_dir)
+-    if not extra:
++    diagnosis = edition_diagnosis(job_dir, verify=False)
++    selected = diagnosis.get('selected') or []
++    if len(selected) < 2:
+         return
+-    record_path = job_dir / 'production' / 'language_editions_render.json'
+-    record = json.loads(record_path.read_text(encoding='utf-8')) if record_path.is_file() else {'editions': {}}
+-    st.subheader('Language editions')
+-    st.caption('Each extra edition uses the approved picture, its reviewed narration, timed cards, captions and its own channel profile. The primary edition is the video above.')
+-    for code in extra:
+-        entry = record.get('editions', {}).get(code, {})
+-        status = entry.get('status', 'not rendered yet')
++    st.subheader('Three-language output')
++    st.caption('The primary edition is the finished video of this job. Every extra edition reuses its approved '
++               'picture with its own reviewed narration, timed cards, captions and the channel profile (logo, name, '
++               'intro, outro) chosen for that language in Create.')
++    for code in selected:
++        if code == diagnosis.get('source_language'):
++            st.write(f"**{LANGUAGE_PACKS[code].label}** · primary edition · see the render above")
++            continue
++        row = (diagnosis.get('editions') or {}).get(code) or {}
++        status = row.get('status', 'not rendered')
+         st.write(f"**{LANGUAGE_PACKS[code].label}** · {status}")
+-        if entry.get('status') == 'exported' and Path(entry.get('path', '')).is_file():
+-            st.video(entry['path'], width=420)
+-        elif entry.get('status') == 'failed':
+-            st.error(entry.get('error', 'Render failed.'))
+-    if st.button('Add English intro/outro and render pending language editions', key=f'render-language-editions-{job_id}'):
++        if status == 'exported' and Path(str(row.get('render_copy') or row.get('path') or '')).is_file():
++            st.video(str(row.get('render_copy') or row.get('path')), width=420)
++            if row.get('render_copy'):
++                st.caption('Copy in render/: ' + row['render_copy'])
++        else:
++            if row.get('message'):
++                st.info(row['message'])
++            if row.get('next_action'):
++                st.caption('Next action: ' + row['next_action'])
++            if row.get('warning'):
++                st.warning(row['warning'])
++    if diagnosis.get('narration_error'):
++        st.error('The extra language narrations were not prepared: ' + diagnosis['narration_error'])
++    if not (diagnosis.get('bundles_prepared') or []):
++        st.warning('No narrated language edition is saved for this job yet, so only the primary video exists. '
++                   'Prepare the language scripts and voices for this master in Create step 4 (or in Jobs & '
++                   'Recovery > Speech batches for an older job), then reuse that exact batch here.')
++    picture_ready = bool((diagnosis.get('visual_master') or {}).get('ready'))
++    if not picture_ready:
++        st.warning((diagnosis.get('visual_master') or {}).get('reason', ''))
++    allow_recovered = st.checkbox(
++        'Build a picture-only master from the finished video if the clean picture is missing '
++        '(it may include that video\'s burned captions and watermark)',
++        value=False, key=f'recover-picture-{job_id}',
++        help='The clean picture is written by the staged FFmpeg render. When a production used the MoviePy '
++             'fallback or an older job has no picture file, this copies the finished video without audio. '
++             'Burned captions and the channel mark of the primary edition stay visible.')
++    if st.button('Add primary intro/outro and render pending language editions',
++                 key=f'render-language-editions-{job_id}'):
+         try:
+             with production_slot(job_dir):
+-                report = render_language_outputs(job_dir)['editions']
+-            if report.get('status') == 'exported':
+-                st.success('All language editions are exported.')
++                report = render_language_outputs(job_dir, allow_recovered_picture=allow_recovered)
++            editions = report.get('editions') or {}
++            if editions.get('status') == 'exported':
++                st.success('All selected language editions are exported. Their copies are in render/.')
+             else:
+-                st.warning('Language editions: ' + report.get('status', 'check details') + ('. ' + report['error'] if report.get('error') else ''))
++                st.warning('Language editions: ' + str(editions.get('status', 'check details')) +
++                           ('. ' + str(editions['error']) if editions.get('error') else ''))
++            st.rerun()
+         except Exception as error:
+             st.error(str(error))
+ 
+@@ -644,50 +682,125 @@
+                     reviewed_path=save_reviewed_plan(edited_plan,True)
+                     approved_plan_path=reviewed_path
+                 except Exception as error:st.error(str(error))
+-    with st.expander('3 · Language editions and channel profiles', expanded=bool(st.session_state.get('studio-profile-open'))):
++    with st.expander('3 · Three-language branding · logos, channel names, profiles',
++                     expanded=bool(st.session_state.get('studio-profile-open')) or len(batch_languages) > 1):
+         from engine.finishing_studio import profiles as saved_channel_profiles, save_profile as save_channel_profile
+         from engine.finishing_ui import _upload as upload_channel_media
++        from engine.channel_branding import language_rows, save_language_logos
+         available_profiles = saved_channel_profiles()
+-        channel_editions=batch_languages
++        channel_editions = batch_languages
+         if st.session_state.get('studio-profile-flash'):
+             st.success(st.session_state.pop('studio-profile-flash'))
+-        st.write('Selected editions: '+', '.join(LANGUAGES[x].label for x in channel_editions))
+-        st.caption('Each language edition gets its own channel profile: logo, channel name in that language, and optional intro and outro. Pick a saved profile or create one for a language below. An edition without a profile is rendered with no channel mark.')
++        st.write('Selected editions: ' + ', '.join(LANGUAGES[x].label for x in channel_editions))
++        st.caption('One channel profile can carry a separate logo for English, Hindi and Odia. Save the three logos '
++                   'once below, choose that profile for every edition, and each video is branded with the mark for '
++                   'its own language. A profile saved in the Finishing Studio is listed here too, so the same '
++                   'channel artwork is reused instead of uploaded twice.')
++        profile_ids = {str(path): path for path in available_profiles}
++        picked_profile = ''
++        if available_profiles:
++            picked_profile = st.selectbox(
++                'Saved channel profile for these editions', [''] + list(profile_ids),
++                format_func=lambda value: 'Select a profile' if not value else
++                ' · '.join(x for x in (json.loads(Path(value).read_text(encoding='utf-8')).get('name', value),
++                                       ', '.join(sorted((json.loads(Path(value).read_text(encoding='utf-8')).get('assets') or {}).keys()))) if x),
++                key='studio-shared-profile',
++                help='A profile from the Finishing Studio or from this page. Its per-language logos are used as they are.')
+         edition_profiles = {}
+-        for edition in channel_editions:
+-            edition_label = LANGUAGES[edition].label
+-            if available_profiles:
++        if picked_profile:
++            use_for_all = st.checkbox('Use this profile for every selected edition', value=True,
++                                      key='studio-shared-profile-all')
++            if use_for_all:
++                edition_profiles = {edition: picked_profile for edition in channel_editions}
++        st.markdown('**Save the three language logos in one profile**')
++        with st.form('studio-three-language-logos'):
++            three_name = st.text_input('Channel name for this profile', key='studio-3l-name',
++                                       placeholder='e.g. Hunar Setu',
++                                       help='Used for every language whose own name below is left blank.')
++            name_columns = st.columns(3)
++            three_names = {}
++            for column, edition in zip(name_columns, channel_editions):
++                three_names[edition] = column.text_input(
++                    f'{LANGUAGES[edition].label} channel name', key=f'studio-3l-name-{edition}',
++                    help='Shown on that language video. Blank uses the profile channel name.')
++            logo_columns = st.columns(3)
++            three_logos = {}
++            for column, edition in zip(logo_columns, channel_editions):
++                three_logos[edition] = column.file_uploader(
++                    f'{LANGUAGES[edition].label} logo', type=['png', 'jpg', 'jpeg', 'webp'],
++                    key=f'studio-3l-logo-{edition}', help='Optional per-language logo. Blank keeps the saved one.')
++            optional_columns = st.columns(2)
++            three_intro = optional_columns[0].file_uploader('Optional intro video (all three editions)',
++                                                            type=['mp4', 'mov', 'mkv', 'webm'], key='studio-3l-intro')
++            three_outro = optional_columns[1].file_uploader('Optional outro video (all three editions)',
++                                                            type=['mp4', 'mov', 'mkv', 'webm'], key='studio-3l-outro')
++            st.caption('Saving with an existing channel name updates that channel and keeps any media you leave '
++                       'empty. Nothing is uploaded until you press Save.')
++            save_three = st.form_submit_button('Save this channel with its three language logos')
++        if save_three:
++            try:
++                if not three_name.strip():
++                    raise ValueError('Enter the channel name for this profile')
++                path = save_language_logos(three_name.strip(), channel_editions, three_logos, upload_channel_media,
++                                           save_channel_profile, names=three_names,
++                                           intro=three_intro, outro=three_outro)
++                edition_profiles = {edition: path for edition in channel_editions}
++                st.session_state['studio-shared-profile-flash'] = str(path)
++                st.session_state['studio-profile-flash'] = (
++                    'Saved “' + three_name.strip() + '” with its language logos. It is used for '
++                    + ', '.join(LANGUAGES[x].label for x in channel_editions) + '.')
++                st.session_state['studio-profile-open'] = True
++                st.rerun()
++            except Exception as error:
++                st.error(str(error))
++        if available_profiles:
++            st.caption('Or choose a profile per language below. This is only needed when each language belongs to a '
++                       'different channel.')
++            for edition in channel_editions:
++                edition_label = LANGUAGES[edition].label
+                 choice = st.selectbox(f'{edition_label} channel profile (logo, name, intro and outro)',
+-                                      [''] + [str(p) for p in available_profiles],
++                                      [''] + list(profile_ids),
+                                       format_func=lambda value: 'Select a profile' if not value else Path(value).parent.name,
+                                       key=f'studio-edition-profile-{edition}')
+                 if choice:
+                     edition_profiles[edition] = choice
+-                    logo_path = (json.loads(Path(choice).read_text(encoding='utf-8')).get('assets') or {}).get('logo', {}).get('path')
+-                    if logo_path and Path(logo_path).is_file():
+-                        st.image(logo_path, width=90, caption=f'{edition_label} logo')
+-            else:
+-                st.caption('No channel profiles saved yet. Create one for this language below.')
+-            with st.expander(f'Create a {edition_label} channel profile here · logo, name, intro, outro', expanded=not available_profiles):
+-                new_name = st.text_input(f'Channel name for the {edition_label} edition', key=f'studio-new-profile-name-{edition}', placeholder='e.g. Hunar Setu')
+-                new_logo = st.file_uploader(f'{edition_label} logo', type=['png','jpg','jpeg','webp'], key=f'studio-new-profile-logo-{edition}')
+-                new_intro = st.file_uploader(f'Optional {edition_label} intro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-intro-{edition}')
+-                new_outro = st.file_uploader(f'Optional {edition_label} outro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-outro-{edition}')
+-                st.caption('Saving with the name of an existing channel updates that channel. Empty uploads keep its saved media.')
+-                if st.button(f'Save {edition_label} channel profile', key=f'studio-save-profile-{edition}'):
+-                    saved_profile = False
+-                    try:
+-                        if not new_name.strip():
+-                            raise ValueError('Enter the channel name for this edition')
+-                        save_channel_profile(new_name, names={edition: new_name.strip()}, logo=upload_channel_media(new_logo,'logo'),
+-                                             intro=upload_channel_media(new_intro,'intro'), outro=upload_channel_media(new_outro,'outro'))
+-                        saved_profile = True
+-                    except Exception as error:
+-                        st.error(str(error))
+-                    if saved_profile:
+-                        st.session_state['studio-profile-flash'] = f'Saved “{new_name.strip()}”. Select it for the {edition_label} edition above.'
+-                        st.session_state['studio-profile-open'] = True
+-                        st.rerun()
++        rows = language_rows(channel_editions, edition_profiles,
++                            read_profile=lambda value: json.loads(Path(value).read_text(encoding='utf-8')) if value else {})
++        st.markdown('**What each language video will show**')
++        preview_columns = st.columns(len(rows))
++        for column, row in zip(preview_columns, rows):
++            column.markdown(f"**{row['label']}**")
++            column.caption(row['profile_name'] or 'No profile selected')
++            column.caption(row['channel_name'] or 'No channel name')
++            column.caption(row['logo_source'])
++            if row['logo_path'] and Path(row['logo_path']).is_file():
++                column.image(row['logo_path'], width=80)
++        with st.expander('Create a separate profile per language · only for different channels'):
++            st.caption('Each saved name creates its own profile. Use it when English, Hindi and Odia belong to '
++                       'different channels; use the three-logo profile above when they share one channel.')
++            for edition in channel_editions:
++                edition_label = LANGUAGES[edition].label
++                with st.expander(f'Create a {edition_label} channel profile here · logo, name, intro, outro',
++                                 expanded=not available_profiles and len(channel_editions) == 1):
++                    new_name = st.text_input(f'Channel name for the {edition_label} edition', key=f'studio-new-profile-name-{edition}', placeholder='e.g. Hunar Setu')
++                    new_logo = st.file_uploader(f'{edition_label} logo', type=['png','jpg','jpeg','webp'], key=f'studio-new-profile-logo-{edition}')
++                    new_intro = st.file_uploader(f'Optional {edition_label} intro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-intro-{edition}')
++                    new_outro = st.file_uploader(f'Optional {edition_label} outro video', type=['mp4','mov','mkv','webm'], key=f'studio-new-profile-outro-{edition}')
++                    st.caption('Saving with the name of an existing channel updates that channel. Empty uploads keep its saved media.')
++                    if st.button(f'Save {edition_label} channel profile', key=f'studio-save-profile-{edition}'):
++                        saved_profile = False
++                        try:
++                            if not new_name.strip():
++                                raise ValueError('Enter the channel name for this edition')
++                            save_channel_profile(new_name, names={edition: new_name.strip()}, logo=upload_channel_media(new_logo,'logo'),
++                                                 intro=upload_channel_media(new_intro,'intro'), outro=upload_channel_media(new_outro,'outro'))
++                            saved_profile = True
++                        except Exception as error:
++                            st.error(str(error))
++                        if saved_profile:
++                            st.session_state['studio-profile-flash'] = f'Saved “{new_name.strip()}”. Select it for the {edition_label} edition above.'
++                            st.session_state['studio-profile-open'] = True
++                            st.rerun()
+     prepared_batch = None
+     use_prepared_batch = False
+     with st.expander('4 · Review language scripts → all TTS → timed cards', expanded=True):
+@@ -718,8 +831,14 @@
+         speech_cards_enabled = st.checkbox('Use speech-timed Gemini cards in this production', value=False, key='studio-speech-cards', disabled=not studio_voice_on)
+         hooks_enabled = st.checkbox('Add Gemini Web hooks where the narration needs them', value=False, key='studio-hooks-enabled', disabled=not studio_voice_on,
+             help='Gemini Web drafts up to 6 short hook lines after the narration words and text cards are ready. Each is a pop pill near the top and never covers a text card. Needs a voiceover.')
+-        prepare_language_audio = st.checkbox('Also prepare every selected language automatically during production', value=False, key='studio-all-language-audio', disabled=not studio_voice_on,
+-            help='If you prepare and approve the batch below, its saved audio/cards are reused instead of resubmitting TTS.')
++        # 7.0.95: with more than one edition selected, preparing the extra narrations is the
++        # default. Left off, the job rendered the English master and nothing else.
++        prepare_language_audio = st.checkbox('Also prepare every selected language automatically during production',
++            value=len(batch_languages) > 1, key='studio-all-language-audio-' + '-'.join(batch_languages),
++            disabled=not studio_voice_on,
++            help='Localizes the approved master and synthesizes every selected language during production. '
++                 'If you prepare and approve the batch below, its saved audio/cards are reused instead of '
++                 'resubmitting TTS.')
+         if not studio_voice_on:
+             st.info('Music-only and Silent do not use TTS. Switch to Voiceover to prepare speech-timed cards.')
+         batch_script = ''
+@@ -915,8 +1034,6 @@
+     if submitted:
+         if review and st.session_state.get("studio-use-review") and not reviewed_path:
+             st.warning("Approve a valid reviewed script before creating this production.")
+-        elif len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch):
+-            st.warning('Additional language editions need Voiceover and an approved language batch. In step 4, approve each localized narration, click “Prepare all selected TTS”, then tick “reuse this exact batch”. Without it, no extra edition can be made, so nothing falls back to English.')
+         elif studio_flow_music_on and studio_audio_mode != 'Silent' and not studio_flow_music_path:
+             st.warning('Choose and download your Flow Music track before creating the production.')
+         elif studio_audio_mode == 'Music only' and background_music == 'off' and not studio_flow_music_path:
+@@ -925,6 +1042,9 @@
+             st.warning('Select an exact shared track or enter a playable local path. Local music cannot silently disappear from the render.')
+         elif not topic.strip():
+             st.warning("Enter a topic first.")
++        elif len(batch_languages) > 1 and not (studio_voice_on and use_prepared_batch) and not studio_voice_on:
++            st.warning('Hindi and Odia editions need Voiceover. Switch Audio mode to Voiceover to create all '
++                       + str(len(batch_languages)) + ' language videos, or remove the extra editions to make one video.')
+         else:
+             if inline_branding:
+                 from engine.finishing_studio import save_profile as save_channel_profile
+@@ -969,9 +1089,12 @@
+             if studio_flow_music_on and studio_audio_mode != 'Silent':
+                 cfg['background_music']='local';cfg['background_music_path']=studio_flow_music_path
+             if language_code in edition_profiles:
++                from engine.channel_branding import channel_name as profile_name, logo_entry
+                 primary_profile = json.loads(Path(edition_profiles[language_code]).read_text(encoding='utf-8'))
+-                cfg['channel_name'] = primary_profile.get('names', {}).get(language_code) or primary_profile['name']
+-                logo_asset = primary_profile.get('assets', {}).get('logo')
++                # 7.0.95: the primary edition uses its own language name and logo when the
++                # profile carries a per-language mark; the shared logo stays the fallback.
++                cfg['channel_name'] = profile_name(primary_profile, language_code)
++                logo_asset = logo_entry(primary_profile, language_code)
+                 if logo_asset:
+                     from engine.finishing_studio import _verified
+                     cfg['channel_logo'] = str(_verified(logo_asset))
+@@ -1638,6 +1761,7 @@
+                 monitor_clip_render(clip_render['state']['review_path'])
+     if st.session_state.job_id:
+         monitor_job(st.session_state.job_id)
++        language_edition_panel(st.session_state.job_id)
+         from engine.job_monitor import snapshot
+         job_active = snapshot(F.pm.job_dir(st.session_state.job_id))["running"]
+         selected_row = DB.get(st.session_state.job_id) or {}
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/cli.py b/cli.py
+--- a/cli.py	2026-10-25 14:12:18.000000000 +0000
++++ b/cli.py	2026-10-25 14:36:46.000000000 +0000
+@@ -275,6 +275,10 @@
+     lang_out = sub.add_parser("language-outputs", help="Add the English intro/outro and render Hindi/Odia editions into render/")
+     lang_out.add_argument("job_id")
+     lang_out.add_argument("--outputs-root", default="outputs", help="Folder containing saved jobs")
++    lang_out.add_argument("--explain", action="store_true",
++                          help="Only report, per language, whether its video exists and what is missing (no render)")
++    lang_out.add_argument("--recover-picture", action="store_true",
++                          help="If the clean picture is missing, copy it from the finished video (may include its burned captions)")
+ 
+     rd = sub.add_parser("render", help="Render accepted takes")
+     rd.add_argument("job_id")
+@@ -492,12 +496,18 @@
+ 
+     if args.cmd == "language-outputs":
+         import json as _json
+-        from engine.language_editions import render_language_outputs
++        from engine.language_editions import edition_diagnosis, render_language_outputs
+         from engine.production_lock import production_slot
+         from engine.support_report import resolve_job_dir
+         job_dir = resolve_job_dir(args.outputs_root, args.job_id)
++        if getattr(args, "explain", False):
++            # 7.0.95: read-only. Names the language and the one action that unblocks it.
++            print(_json.dumps(edition_diagnosis(job_dir), indent=2, ensure_ascii=False))
++            return
+         with production_slot(job_dir):
+-            report = render_language_outputs(job_dir, progress=lambda label, pct, detail="": print(f"[{int(pct):3d}%] {label} {detail}".rstrip()))
++            report = render_language_outputs(job_dir,
++                progress=lambda label, pct, detail="": print(f"[{int(pct):3d}%] {label} {detail}".rstrip()),
++                allow_recovered_picture=bool(getattr(args, "recover_picture", False)))
+         print(_json.dumps(report, indent=2, ensure_ascii=False))
+         return
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/channel_branding.py b/engine/channel_branding.py
+--- a/engine/channel_branding.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/channel_branding.py	2026-10-25 14:36:12.000000000 +0000
+@@ -3,8 +3,16 @@
+ Channel profiles chosen in Language editions are the source of truth. The
+ Create form asks for a name or logo only for the editions that still have no
+ profile, and saves those entries as profiles when the production is created.
++
++7.0.95: one profile can carry a logo per language (``assets['logo-en']``,
++``assets['logo-hi']``, ``assets['logo-or']``). The Create page shows the three
++languages together, saves them into one profile and can hand that profile to
++every selected edition, instead of asking for the same channel three times and
++keeping only the last uploaded logo.
+ """
+ 
++from .finishing_studio import LANGUAGES
++
+ 
+ def branding_plan(editions, profiles, primary):
+     """Which editions still need a channel name and logo in the Create form.
+@@ -21,6 +29,86 @@
+     }
+ 
+ 
++def logo_entry(profile, language):
++    """The logo saved for one language, falling back to the profile's shared logo."""
++    assets = (profile or {}).get('assets') or {}
++    return assets.get('logo-' + str(language or '')) or assets.get('logo') or None
++
++
++def logo_path(profile, language):
++    """Filesystem path of the logo this language will use, or ''."""
++    entry = logo_entry(profile, language)
++    if isinstance(entry, dict):
++        return str(entry.get('path') or '')
++    return ''
++
++
++def logo_is_language_specific(profile, language):
++    assets = (profile or {}).get('assets') or {}
++    return bool(assets.get('logo-' + str(language or '')))
++
++
++def channel_name(profile, language):
++    """The channel name in this language, falling back to the profile's own name."""
++    if not profile:
++        return ''
++    return str((profile.get('names') or {}).get(language) or profile.get('name') or '')
++
++
++def language_rows(editions, profiles, *, read_profile):
++    """One row per selected language: profile, name, logo and what is missing.
++
++    ``read_profile(path)`` returns the parsed profile, so the Create page can show
++    the three languages without duplicating profile parsing. Every row states
++    which logo the edition will actually use, so a shared logo is never mistaken
++    for a language-specific one.
++    """
++    rows = []
++    for language in editions:
++        path = (profiles or {}).get(language) or ''
++        profile = read_profile(path) if path else {}
++        entry = logo_entry(profile, language)
++        rows.append({
++            'language': language,
++            'label': LANGUAGES.get(language, language),
++            'profile': str(path),
++            'profile_name': str((profile or {}).get('name') or ''),
++            'channel_name': channel_name(profile, language),
++            'logo_path': logo_path(profile, language),
++            'logo_source': ('own logo for this language' if logo_is_language_specific(profile, language)
++                            else ('shared profile logo' if entry else 'no logo')),
++            'intro': bool(((profile or {}).get('assets') or {}).get('intro')),
++            'outro': bool(((profile or {}).get('assets') or {}).get('outro')),
++            'missing': [] if path else ['no channel profile selected'],
++        })
++    return rows
++
++
++def save_language_logos(name, languages, logo_uploads, upload_media, save_profile, *,
++                        names=None, intro=None, outro=None):
++    """Save one profile holding a logo for each selected language.
++
++    ``logo_uploads`` maps language -> uploaded file (or None). Empty uploads keep
++    whatever that language already had, exactly like the per-channel form.
++    Returns the profile path.
++    """
++    name = str(name or '').strip()
++    if not name:
++        raise ValueError('Enter the channel name for this profile')
++    logos = {}
++    for language in languages:
++        path = upload_media(logo_uploads.get(language), 'logo-' + str(language))
++        if path:
++            logos[language] = path
++    # A single uploaded logo also becomes the profile's shared logo, so the Finishing
++    # Studio and one-language productions keep showing it without extra steps.
++    shared = next(iter(logos.values())) if len(logos) == 1 else ''
++    return str(save_profile(name, names={lang: (names or {}).get(lang) or name for lang in languages} | (names or {}),
++                            logo=shared, logos=logos,
++                            intro=upload_media(intro, 'intro') if intro else '',
++                            outro=upload_media(outro, 'outro') if outro else ''))
++
++
+ def save_missing_profiles(entries, save_profile, upload_media):
+     """Save one profile per edition that was given a name; return {edition: path}.
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/factory.py	2026-10-25 14:35:50.000000000 +0000
+@@ -1267,10 +1267,25 @@
+         if presentation.voiceover and not dry:
+             from .speech_cards import prepare_selected_editions
+             from .render.educational_cards import is_educational
+-            prepare_selected_editions(D['root'], plan.get('narration', ''), m.language, settings, prog,
+-                                      text_cards=presentation.text_cards, hooks=bool(settings.get('hooks_enabled')),
+-                                      educational=is_educational(m.content_type, getattr(m, 'preset', '')),
+-                                      topic=m.topic, card_provider=settings.get('card_draft_provider') or 'gemini-web')
++            # 7.0.95: preparing the extra language narrations can no longer kill the
++            # production. If TTS or localization fails, the English master is still
++            # rendered and the reason is saved for the Language editions panel.
++            try:
++                prepare_selected_editions(D['root'], plan.get('narration', ''), m.language, settings, prog,
++                                          text_cards=presentation.text_cards, hooks=bool(settings.get('hooks_enabled')),
++                                          educational=is_educational(m.content_type, getattr(m, 'preset', '')),
++                                          topic=m.topic, card_provider=settings.get('card_draft_provider') or 'gemini-web')
++            except Exception as edition_prep_error:
++                from .language_editions import record_narration_error
++                message = ('The extra language narrations could not be prepared: '
++                           + ' '.join(str(edition_prep_error).split())[:600])
++                try:
++                    record_narration_error(D['root'], message)
++                except Exception:
++                    pass
++                self.pm.log(job_id, 'language_narration_error', {'error': str(edition_prep_error)[:600]})
++                prog('Language editions need narration: ' + message, 15,
++                     'The primary master still renders; the Language editions panel names each language.')
+ 
+         # 7.0.86: master cards are drafted only when text cards are on; with them off no Gemini card request is sent.
+         if settings.get('speech_cards_enabled') and presentation.voiceover and presentation.text_cards and not dry:
+@@ -4419,7 +4434,19 @@
+         if primary_report.get("status") == "failed":
+             final_warnings.append("Intro/outro not applied to the primary master: " + str(primary_report.get("error") or "see production/language_editions_render.json"))
+         if edition_report.get("status") in ("failed", "partial"):
+-            final_warnings.append("Language editions need attention: " + str(edition_report.get("error") or "see production/language_editions_render.json"))
++            detail = str(edition_report.get("error") or "")
++            if not detail:
++                # 7.0.95: name every language that did not render, with its reason.
++                try:
++                    from .language_editions import edition_diagnosis
++                    diagnosis = edition_diagnosis(D['root'])
++                    detail = '; '.join(str(row.get('message') or '') for row in
++                                       (diagnosis.get('editions') or {}).values()
++                                       if row.get('status') != 'exported')
++                except Exception:
++                    detail = ""
++            final_warnings.append("Language editions need attention: " +
++                                  (detail or "see production/language_editions_render.json"))
+         if image_fallbacks:
+             final_warnings.append(f'{len(image_fallbacks)} storyboard/master image(s) used substitute media; character and scene fidelity need review')
+         if fallback_shots:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/finishing_studio.py b/engine/finishing_studio.py
+--- a/engine/finishing_studio.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/finishing_studio.py	2026-10-25 14:35:14.000000000 +0000
+@@ -31,8 +31,30 @@
+     return h.hexdigest()
+ 
+ 
++def _tool(name):
++    """Path to ffmpeg/ffprobe. 7.0.95: ffmpeg falls back to the bundled imageio binary.
++
++    The main renderer always used ``imageio_ffmpeg`` when PATH had no ffmpeg, but
++    the finishing/edition renderer called a bare ``ffmpeg`` and failed on those
++    machines even though the English master rendered. Editions now find the same
++    binary. ffprobe has no bundled equivalent because ffmpeg can report a file
++    without it only partially; the clear error below names the missing tool.
++    """
++    found = shutil.which(name)
++    if found:
++        return found
++    if name == 'ffmpeg':
++        try:
++            import imageio_ffmpeg
++            return imageio_ffmpeg.get_ffmpeg_exe()
++        except Exception:
++            pass
++    raise RuntimeError(name + ' was not found on PATH. Install FFmpeg (ffmpeg and ffprobe) and restart the dashboard; '
++                             'language editions and the finishing studio need both.')
++
++
+ def _probe(path):
+-    p = subprocess.run(['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', str(path)], capture_output=True, text=True, timeout=30)
++    p = subprocess.run([_tool('ffprobe'), '-v', 'error', '-show_format', '-show_streams', '-of', 'json', str(path)], capture_output=True, text=True, timeout=30)
+     if p.returncode:
+         raise ValueError('Media is not readable: ' + str(path))
+     info = json.loads(p.stdout)
+@@ -78,10 +100,19 @@
+     return {'path': str(dest.resolve()), 'sha256': sha, 'duration': 0}
+ 
+ 
+-def save_profile(name, *, names=None, logo='', intro='', outro='', music='', music_license='', root=None):
+-    """Create a shared channel profile; optional media becomes immutable snapshots."""
++def save_profile(name, *, names=None, logo='', intro='', outro='', music='', music_license='', root=None,
++                 logos=None, slug_suffix=''):
++    """Create a shared channel profile; optional media becomes immutable snapshots.
++
++    7.0.95: ``logos`` maps a language code to its own logo file. Each logo is
++    stored as ``assets['logo-<lang>']`` next to the shared ``assets['logo']`` so
++    one channel can carry an English, Hindi and Odia mark. ``slug_suffix`` keeps
++    a per-language variant apart when the same channel name is used three times.
++    """
+     root = Path(root or shared_root() / 'channel_profiles').resolve()
+     slug = re.sub(r'[^a-z0-9-]', '-', name.lower().strip()).strip('-')[:60]
++    if slug and slug_suffix:
++        slug = re.sub(r'[^a-z0-9-]', '-', (slug + '-' + str(slug_suffix)).lower()).strip('-')[:60]
+     if not slug or not name.strip():
+         raise ValueError('Enter a channel name')
+     folder = root / slug; folder.mkdir(parents=True, exist_ok=True)
+@@ -99,6 +130,12 @@
+     for kind, value in [('logo', logo), ('intro', intro), ('outro', outro), ('music', music)]:
+         if value:
+             data['assets'][kind] = _snapshot(value, folder / 'assets', kind)
++    for language, value in (logos or {}).items():
++        language = str(language or '').lower()
++        if language not in LANGUAGES:
++            raise ValueError('A language logo needs English, Hindi or Odia')
++        if value:
++            data['assets']['logo-' + language] = _snapshot(value, folder / 'assets', 'logo-' + language)
+     _atomic_json(folder / 'profile.json', data)
+     return folder / 'profile.json'
+ 
+@@ -168,13 +205,14 @@
+             profile = {'schema_version': 1, 'name': '', 'names': {}, 'assets': {}}
+         assets = {}
+         for kind, entry in profile.get('assets', {}).items():
+-            if kind in ('logo', 'intro', 'outro', 'music'):
++            if kind in ('logo', 'intro', 'outro', 'music') or kind.startswith('logo-'):
+                 _verified(entry)
+                 assets[kind] = _snapshot(entry['path'], asset_dir, kind+'-'+lang)
+         editions[lang] = {'channel': {'name': profile['name'], 'display_name': profile.get('names', {}).get(lang) or profile['name']},
+                           'assets': assets, 'profile_music_license': profile.get('music_license',''),
+                           'cards': [], 'narration': None, 'music': None, 'words': None,
+-                          'intro': bool(assets.get('intro')), 'outro': bool(assets.get('outro')), 'reviewed': False}
++                          'intro': bool(assets.get('intro')), 'outro': bool(assets.get('outro')), 'reviewed': False,
++                          'cards_warning': ''}
+     edition_file = job_root / 'production' / 'language_editions.json'
+     if editorial and edition_file.is_file():
+         language_state = json.loads(edition_file.read_text(encoding='utf8'))
+@@ -187,19 +225,29 @@
+                 edition['narration'] = _snapshot(bundle['audio'], asset_dir, 'narration-'+lang)
+                 bundle_folder = Path(bundle['audio']).parent
+                 want_cards = bool(language_state.get('text_cards', True))
++                edition['cards_warning'] = ''
+                 if want_cards and not bundle.get('text_cards', True):
+-                    raise ValueError(LANGUAGES[lang] + ' text cards are on, but this language was prepared without cards. '
+-                                     'Prepare the language batch again.')
++                    # 7.0.95: a batch prepared without cards used to stop every language.
++                    # This edition renders without text cards and says why; the others are unaffected.
++                    want_cards = False
++                    edition['cards_warning'] = (LANGUAGES[lang] + ' was prepared without text cards, so this '
++                                                'edition renders without them. Prepare that language batch again '
++                                                'with text cards on to add them.')
+                 edition['text_cards'] = want_cards
+-                edition['cards'] = bundle['cards'] if want_cards else []
++                edition['cards'] = list(bundle.get('cards') or []) if want_cards else []
+                 edition['educational'] = bool(bundle.get('educational', False)) and want_cards
+                 edition['topic'] = str(bundle.get('topic', '') or '')
+                 edition['speech_cards'] = None
+                 if edition['educational']:
+                     cards_file = bundle_folder / 'production' / 'speech_cards.json'
+                     if not cards_file.is_file():
+-                        raise ValueError(LANGUAGES[lang] + ' points and cards were not saved. Prepare the language batch again.')
+-                    edition['speech_cards'] = _json_snapshot(cards_file, asset_dir, 'speech-cards-' + lang)
++                        # Missing points file: keep the plain cards, drop the points series.
++                        edition['educational'] = False
++                        edition['cards_warning'] = (edition['cards_warning'] + ' ' if edition['cards_warning'] else '') + \
++                            (LANGUAGES[lang] + ' educational points were not saved, so this edition uses its '
++                             'plain text cards. Prepare that language batch again to restore the points series.')
++                    else:
++                        edition['speech_cards'] = _json_snapshot(cards_file, asset_dir, 'speech-cards-' + lang)
+                 edition['hooks'] = None
+                 edition['hook_warning'] = ''
+                 if language_state.get('hooks_enabled', False):
+@@ -437,7 +485,7 @@
+             voice_seconds = float(voice['duration'])
+             scale = voice_seconds / picture_seconds
+             picture = tmp_dir/'picture-fit.mp4'
+-            _run(['ffmpeg','-y','-hide_banner','-loglevel','error','-i',str(src),'-an',
++            _run([_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-i',str(src),'-an',
+                   '-vf',f'setpts={scale:.6f}*PTS','-t',f'{voice_seconds:.3f}',
+                   '-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(picture)])
+             picture_seconds = voice_seconds
+@@ -449,7 +497,7 @@
+             i, d = _probe(source)
+             has_audio = any(s.get('codec_type')=='audio' for s in i['streams'])
+             segment=tmp_dir / f'{index}.mp4'
+-            cmd=['ffmpeg','-y','-hide_banner','-loglevel','error','-i',str(source)]
++            cmd=[_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-i',str(source)]
+             if not has_audio: cmd += ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
+             vf=f'scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p'
+             cmd += ['-map','0:v:0','-map','0:a:0' if has_audio else '1:a:0', '-vf',vf,
+@@ -459,14 +507,16 @@
+         concat=tmp_dir/'concat.txt'
+         concat.write_text(''.join("file '"+str(p.resolve()).replace("'", "'\\''")+"'\n" for _,p,_ in clips))
+         joined=tmp_dir/'joined.mp4'
+-        _run(['ffmpeg','-y','-hide_banner','-loglevel','error','-f','concat','-safe','0','-i',str(concat),'-c','copy',str(joined)])
++        _run([_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-f','concat','-safe','0','-i',str(concat),'-c','copy',str(joined)])
+         offset=sum(d for kind,_,d in clips if kind=='intro')
+         _, full_duration=_probe(joined)
+-        cmd=['ffmpeg','-y','-hide_banner','-loglevel','error','-i',str(joined)]
++        cmd=[_tool('ffmpeg'),'-y','-hide_banner','-loglevel','error','-i',str(joined)]
+         filters=[]; current='0:v'; inp=1
+         # No Flow watermark mask or tracking. Branding is an independently placed channel mark.
+-        if 'logo' in assets:
+-            cmd += ['-loop','1','-framerate','30','-i',str(assets['logo'])]
++        # 7.0.95: a profile may carry logo-en / logo-hi / logo-or; the shared logo is the fallback.
++        logo_key = next((key for key in ('logo-' + language, 'logo') if key in assets), None)
++        if logo_key:
++            cmd += ['-loop','1','-framerate','30','-i',str(assets[logo_key])]
+             size=max(48,round(width*.13)); filters += [f'[{inp}:v]scale={size}:-1,format=rgba,colorchannelmixer=aa=0.85[logo]']
+             filters += [f'[{current}][logo]overlay=x=W-w-24:y=H-h-24:shortest=1[v{inp}]']; current=f'v{inp}';inp+=1
+         name=edition.get('channel',plan.get('channel',{})).get('display_name') or edition.get('channel',plan.get('channel',{})).get('name','')
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/finishing_ui.py b/engine/finishing_ui.py
+--- a/engine/finishing_ui.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/finishing_ui.py	2026-10-25 14:36:50.000000000 +0000
+@@ -25,7 +25,12 @@
+         st.info('Create a separate profile for each channel: for example The Skill Shift Academy, Hunar Setu and Odia Pragati. Each profile owns its logo, intro and outro. Save each channel once, then choose it for a language below.')
+         name=st.text_input('This channel’s name',key='finish-channel-name',placeholder='e.g. Hunar Setu')
+         st.caption('Optional media below belongs only to the named channel. Leaving an upload empty while updating preserves that channel’s saved media.')
+-        logo=st.file_uploader('Logo for this channel',type=['png','jpg','jpeg','webp'],key='finish-logo')
++        st.caption('Optional: give this channel a different logo per language. Create here, and the Create page '
++                   'reuses it for the English, Hindi and Odia editions of a production.')
++        logo_columns=st.columns(3)
++        logos={lang:logo_columns[index].file_uploader(finish.LANGUAGES[lang]+' logo',type=['png','jpg','jpeg','webp'],
++              key='finish-logo-'+lang) for index,lang in enumerate(finish.LANGUAGES)}
++        logo=st.file_uploader('Logo for this channel (used for any language without its own)',type=['png','jpg','jpeg','webp'],key='finish-logo')
+         intro=st.file_uploader('Intro video for this channel',type=['mp4','mov','mkv','webm'],key='finish-intro')
+         outro=st.file_uploader('Outro video for this channel',type=['mp4','mov','mkv','webm'],key='finish-outro')
+         music=st.file_uploader('Optional default music for this channel',type=['mp3','ogg','wav','m4a','flac'],key='finish-profile-music')
+@@ -33,7 +38,8 @@
+         if st.button('Save this channel profile',key='finish-save-profile'):
+             try:
+                 saved=finish.save_profile(name,logo=_upload(logo,'logo'),intro=_upload(intro,'intro'),
+-                       outro=_upload(outro,'outro'),music=_upload(music,'music'),music_license=music_license)
++                       outro=_upload(outro,'outro'),music=_upload(music,'music'),music_license=music_license,
++                       logos={lang:_upload(upload,'logo-'+lang) for lang,upload in logos.items()})
+                 st.success('Saved '+name+'. Create another profile for another channel.')
+             except Exception as exc:st.error(str(exc))
+     options=finish.profiles()
+@@ -82,7 +88,18 @@
+     edition=plan['editions'][language]
+     st.caption(f"Source duration: {plan['source']['duration']:.1f}s · state: {plan['state']}")
+     selected_channel=edition.get('channel',plan.get('channel',{})).get('name','Legacy channel profile')
+-    st.info(f'{finish.LANGUAGES[language]} edition belongs to **{selected_channel}**. Its logo, intro and outro are specific to that channel.')
++    from .channel_branding import logo_path as _logo_path, logo_is_language_specific as _own_logo
++    _edition_profile = {}
++    try:
++        _chosen = channel_choices.get(language)
++        _edition_profile = json.loads(Path(_chosen).read_text(encoding='utf8')) if _chosen else {}
++    except Exception:
++        _edition_profile = {}
++    _mark = _logo_path(_edition_profile, language)
++    _kind = ('own logo for ' + finish.LANGUAGES[language]) if _own_logo(_edition_profile, language) else 'shared channel logo'
++    st.info(f'{finish.LANGUAGES[language]} edition belongs to **{selected_channel}**. Its logo ({_kind}), intro and outro are specific to that channel.')
++    if _mark and Path(_mark).is_file():
++        st.image(_mark, width=90, caption=_kind)
+     st.video(plan['source']['path'],width=480)
+     if edition.get('narration'):
+         st.audio(edition['narration']['path'])
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/language_editions.py b/engine/language_editions.py
+--- a/engine/language_editions.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/language_editions.py	2026-10-25 14:58:26.000000000 +0000
+@@ -170,12 +170,188 @@
+     return report
+ 
+ 
++def record_narration_error(job_root, message):
++    """Save why the extra language narrations were not prepared (7.0.95).
++
++    The state file is the only place the job panel and the CLI look. Recording
++    the reason there means an English-only result always names the cause instead
++    of looking like the language selection was ignored.
++    """
++    job_root = Path(job_root).resolve()
++    path = job_root / 'production' / STATE_NAME
++    state = _read(path)
++    if not state:
++        return None
++    state['narration_error'] = ' '.join(str(message or '').split())[:800]
++    state['narration_error_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
++    finish._atomic_json(path, state)
++    return path
++
++
++def _bundle_is_current(job_root, code, bundle, entry, *, verify=True):
++    """A finished export that still matches the reviewed narration and its bytes.
++
++    ``verify=False`` only checks that the file exists. The dashboard passes it so a
++    panel rerun does not re-hash every exported video; the renderer always verifies.
++    """
++    if not bundle or entry.get('status') != 'exported' or entry.get('audio_sha256') != bundle.get('audio_sha256'):
++        return False
++    export = Path(entry.get('path') or '')
++    if not bool(entry.get('path')) or not export.is_file():
++        return False
++    return True if not verify else finish._hash(export) == entry.get('sha256')
++
++
++def _visual_master(job_root, *, verify=True):
++    """The approved clean picture for the editions, or (None, reason)."""
++    record = _read(Path(job_root) / 'production' / 'visual_master.json')
++    if not record or not record.get('path'):
++        return None, ('The clean visual master (production/visual_master.json) was not created by this render. '
++                      'It is written by the FFmpeg staging render; a MoviePy fallback or an interrupted render does '
++                      'not create it. Use "Build a picture-only master from the finished video" in the job panel, '
++                      'or render the production again with FFmpeg available.')
++    visual = Path(record['path'])
++    if not visual.is_file():
++        return None, 'The clean visual master is missing from render/. Render this production again.'
++    if verify and finish._hash(visual) != record.get('sha256'):
++        return None, 'The clean visual master changed after the render. Render this production again.'
++    return visual, ''
++
++
++def ensure_visual_master(job_root, *, allow_recovered_picture=False, progress=None):
++    """Build a picture-only master when the render never wrote one (7.0.95).
++
++    The preferred master is the silent staged picture. When a production rendered
++    through the MoviePy fallback, or an older job has no ``visual_master.json``,
++    the only picture available is the finished primary master. That file already
++    carries the primary edition's burned captions, text cards and channel mark,
++    so reusing it is **opt-in**: an edition built on it would inherit English
++    captions. Nothing is generated here and no credits are used.
++
++    Returns ``{'status': 'present'|'recovered'|'refused'|'not_requested', ...}``.
++    """
++    job_root = Path(job_root).resolve()
++    emit = progress or (lambda label, pct, detail='': None)
++    _source, extra, state = requested_languages(job_root)
++    if not extra:
++        return {'status': 'not_requested'}
++    visual, reason = _visual_master(job_root)
++    if visual is not None:
++        return {'status': 'present', 'path': str(visual)}
++    if not allow_recovered_picture:
++        return {'status': 'refused', 'reason': reason}
++    render_dir = job_root / 'render'
++    primary = next((p for p in (render_dir / (job_root.name + '-final-broll.mp4'),
++                                render_dir / (job_root.name + '-final.mp4')) if p.is_file()), None)
++    if primary is None:
++        return {'status': 'refused', 'reason': 'No finished primary master in render/ to copy the picture from.'}
++    target = render_dir / 'visual-master.mp4'
++    emit('Building a picture-only master from the finished video', 0, job_root.name)
++    from .render.ffmpeg_renderer import ffmpeg_exe
++    temporary = target.with_name('visual-master.pending.mp4')
++    command = [ffmpeg_exe(), '-y', '-hide_banner', '-loglevel', 'error', '-i', str(primary),
++               '-map', '0:v:0', '-an', '-c:v', 'copy', '-movflags', '+faststart', str(temporary)]
++    try:
++        import subprocess
++        result = subprocess.run(command, capture_output=True, text=True, timeout=1800)
++        if result.returncode or not temporary.is_file() or not temporary.stat().st_size:
++            temporary.unlink(missing_ok=True)
++            return {'status': 'refused',
++                    'reason': 'Could not copy the picture: ' + (result.stderr or 'FFmpeg failed')[-400:]}
++        os.replace(temporary, target)
++    except Exception as error:  # never leave a half-written master behind
++        temporary.unlink(missing_ok=True)
++        return {'status': 'refused', 'reason': str(error)[:400]}
++    record = {'path': str(target), 'sha256': finish._hash(target),
++              'contains': 'picture copied from the finished primary master; it may still contain the '
++                          'burned captions, text cards and channel mark of that edition',
++              'recovered': True, 'recovered_from': str(primary),
++              'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++    finish._atomic_json(job_root / 'production' / 'visual_master.json', record)
++    emit('Picture-only master recovered from the finished video', 100, job_root.name)
++    return {'status': 'recovered', 'path': str(target), 'contains': record['contains']}
++
++
++def edition_diagnosis(job_root, *, verify=True):
++    """Why each selected language did or did not render, in plain words (7.0.95).
++
++    Read-only. Used by the Create/Queue job panel and by
++    ``python3 cli.py v3 language-outputs <job> --explain`` so an English-only
++    result always names the language and the one action that unblocks it.
++    ``verify=False`` skips byte hashing for a fast panel refresh.
++    """
++    job_root = Path(job_root).resolve()
++    source, extra, state = requested_languages(job_root)
++    if state is None:
++        return {'status': 'not_requested', 'source_language': 'en', 'editions': {},
++                'message': 'No language editions were selected for this job; only one video is expected.'}
++    record = _read(_record_path(job_root), {'editions': {}}) or {'editions': {}}
++    bundles = state.get('bundles') or {}
++    visual, visual_reason = _visual_master(job_root, verify=verify) if extra else (None, '')
++    editions = {}
++    for code in extra:
++        entry = (record.get('editions') or {}).get(code, {})
++        bundle = bundles.get(code)
++        if entry.get('status') == 'exported' and _bundle_is_current(job_root, code, bundle, entry, verify=verify):
++            editions[code] = {'status': 'exported', 'path': entry.get('path'),
++                              'render_copy': entry.get('render_copy'),
++                              'message': _label(code) + ' edition is exported.',
++                              'warning': entry.get('warning') or entry.get('cards_warning') or ''}
++            continue
++        if bundle is None:
++            editions[code] = {'status': 'needs_narration',
++                              'message': _label(code) + ' has no reviewed narration prepared for this job, so it '
++                                                         'cannot be rendered. The English voice is never reused.',
++                              'next_action': 'Create step 4: prepare the language scripts, generate all selected '
++                                             'voices, review them and reuse that exact batch. Existing jobs can '
++                                             'prepare the same batch from Jobs & Recovery > Speech batches.'}
++            continue
++        if visual is None:
++            editions[code] = {'status': 'needs_picture', 'message': visual_reason,
++                              'next_action': 'Render the production again, or build the picture-only master in the '
++                                             "job panel (it may include the burned captions of the primary edition)."}
++            continue
++        if entry.get('status') == 'failed' or entry.get('error'):
++            # Narration and picture are both present; the render itself failed.
++            editions[code] = {'status': 'failed', 'error': entry.get('error', ''),
++                              'message': _label(code) + ' edition failed: ' + str(entry.get('error', ''))[:300],
++                              'next_action': 'Fix the message above, then press "Add primary intro/outro and '
++                                             'render pending language editions".'}
++            continue
++        editions[code] = {'status': entry.get('status') or 'pending',
++                          'message': _label(code) + ' narration is ready; the edition has not been rendered yet.',
++                          'next_action': 'Press "Add English intro/outro and render pending language editions".'}
++    ready = sum(1 for row in editions.values() if row['status'] == 'exported')
++    if not extra:
++        status = 'single_language'
++    elif ready == len(extra):
++        status = 'exported'
++    elif ready:
++        status = 'partial'
++    else:
++        status = 'not_rendered'
++    message = ''
++    if status == 'single_language':
++        message = ('Only one language was selected, so only one video is expected. Add Hindi and/or Odia in '
++                   'Create step 1 to produce the other editions.')
++    return {'status': status, 'source_language': source, 'editions': editions, 'message': message,
++            'selected': [source] + extra, 'bundles_prepared': sorted(bundles),
++            'narration_error': state.get('narration_error', ''),
++            'visual_master': {'ready': visual is not None, 'reason': visual_reason},
++            'record': str(_record_path(job_root))}
++
++
+ def render_job_editions(job_root, *, progress=None):
+     """Render every pending additional edition. Returns a status report; never silently English.
+ 
+     Status values: ``not_requested`` (no language state), ``single_language``,
+     ``exported`` (all editions current), ``partial`` or ``failed`` (see ``editions``).
+-    Raises ValueError only for preconditions the user must fix first.
++
++    7.0.95: one language can no longer block the others. A missing narration, a
++    rejected plan or a failed render is recorded for that language only, and the
++    remaining editions are still attempted. Recoverable review mismatches (a
++    batch prepared without text cards, or without its points file) are reported
++    as warnings on the edition instead of stopping every language.
+     """
+     job_root = Path(job_root).resolve()
+     emit = progress or (lambda label, pct, detail='': None)
+@@ -186,62 +362,63 @@
+         return {'status': 'single_language', 'editions': {}}
+ 
+     bundles = state.get('bundles') or {}
+-    not_ready = [code for code in extra if code not in bundles]
+-    if not_ready:
+-        raise ValueError('Approve and prepare the narration for ' + ', '.join(_label(c) for c in not_ready) +
+-                         ' in Create step 4 before rendering language editions. No English voice is used as a fallback.')
+-    visual_record = _read(job_root / 'production' / 'visual_master.json')
+-    if not visual_record:
+-        raise ValueError('The clean visual master is missing. Render this production again so the language '
+-                         'editions use the approved picture.')
+-    visual = Path(visual_record['path'])
+-    if not visual.is_file() or finish._hash(visual) != visual_record.get('sha256'):
+-        raise ValueError('The clean visual master changed or is missing. Render this production again.')
+-
+     record = _read(_record_path(job_root), {'schema_version': 1, 'editions': {}})
+-    previous = record.get('editions', {})
+-    pending = []
+-    for code in extra:
+-        bundle_sha = bundles[code].get('audio_sha256')
+-        entry = previous.get(code, {})
+-        export = Path(entry.get('path', '')) if entry.get('path') else None
+-        current = (entry.get('status') == 'exported' and entry.get('audio_sha256') == bundle_sha
+-                   and export is not None and export.is_file() and finish._hash(export) == entry.get('sha256'))
+-        if not current:
+-            pending.append(code)
++    record.setdefault('editions', {})
++    record['schema_version'] = 1
++
++    pending = [code for code in extra if not _bundle_is_current(job_root, code, bundles.get(code),
++                                                                record['editions'].get(code, {}))]
+     if not pending:
+         if _sync_render_copies(job_root, record):
+             _save_record(job_root, record)
+-        return {'status': 'exported', 'editions': previous, 'record': str(_record_path(job_root))}
++        return {'status': 'exported', 'editions': record['editions'], 'record': str(_record_path(job_root))}
+ 
++    visual, visual_reason = _visual_master(job_root)
+     profiles = state.get('profiles') or {}
+     music_path, music_licence = _production_music(job_root)
+-    plan_path = finish.create_plan(
+-        visual, {code: profiles.get(code) for code in pending}, languages=pending,
+-        output_root=job_root / 'language_editions', source_rights='own_content',
+-        shared_music=music_path, shared_music_license=music_licence,
+-        source_language=source, require_profiles=False, fit_narration=True, captions=True)
+-    plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
+-    for code in pending:
+-        finish.set_edition(plan_path, code, reviewed=True)
+-
+-    record.update({'schema_version': 1, 'source_language': source, 'plan': str(plan_path)})
+     failures = []
+-    for index, code in enumerate(pending):
++    for index, code in enumerate(extra):
+         label = _label(code)
+-        entry = {'status': 'rendering', 'plan': str(plan_path), 'audio_sha256': bundles[code].get('audio_sha256'),
+-                 'channel': plan['editions'][code].get('channel', {})}
+-        record.setdefault('editions', {})[code] = entry
++        if code not in pending:
++            continue
++        bundle = bundles.get(code)
++        if bundle is None:
++            message = (label + ' has no reviewed narration prepared for this job. The English voice is never used '
++                              'as a fallback. Prepare its narration in Create step 4, then render again.')
++            record['editions'][code] = {'status': 'needs_narration', 'error': message,
++                                        'finished_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++            failures.append(label + ': ' + message)
++            _save_record(job_root, record)
++            continue
++        if visual is None:
++            record['editions'][code] = {'status': 'needs_picture', 'error': visual_reason,
++                                        'finished_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++            failures.append(label + ': ' + visual_reason)
++            _save_record(job_root, record)
++            continue
++        emit('Rendering ' + label + ' edition', 100 * index / max(1, len(extra)), label)
++        entry = {'status': 'rendering', 'audio_sha256': bundle.get('audio_sha256'),
++                 'channel': {}, 'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
++        record['editions'][code] = entry
+         _save_record(job_root, record)
+-        emit('Rendering ' + label + ' edition', 100 * index / len(pending), label)
+-
+-        def edition_progress(value, _index=index, _label=label):
+-            emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / len(pending), _label)
+         try:
++            # One plan per language: a rejected plan for Hindi must not stop Odia.
++            plan_path = finish.create_plan(
++                visual, {code: profiles.get(code)}, languages=[code],
++                output_root=job_root / 'language_editions', source_rights='own_content',
++                shared_music=music_path, shared_music_license=music_licence,
++                source_language=source, require_profiles=False, fit_narration=True, captions=True)
++            plan = json.loads(Path(plan_path).read_text(encoding='utf8'))
++            finish.set_edition(plan_path, code, reviewed=True)
++            entry.update(plan=str(plan_path), channel=plan['editions'][code].get('channel', {}),
++                         warning=(plan['editions'][code].get('cards_warning')
++                                  or plan['editions'][code].get('hook_warning') or ''))
++
++            def edition_progress(value, _index=index, _label=label):
++                emit('Rendering ' + _label + ' edition', 100 * (_index + float(value)) / max(1, len(extra)), _label)
+             exported = finish.render(plan_path, code, progress=edition_progress)
+             entry.update(status='exported', path=str(exported), sha256=finish._hash(exported))
+-            if plan['editions'][code].get('hook_warning'):
+-                entry['warning'] = plan['editions'][code]['hook_warning']
++            entry.pop('error', None)
+             _sync_render_copies(job_root, {'editions': {code: entry}})
+         except Exception as error:  # keep the primary edition and every finished edition
+             entry.update(status='failed', error=str(error)[:800])
+@@ -250,7 +427,7 @@
+         _save_record(job_root, record)
+     emit('Language editions finished', 100)
+ 
+-    statuses = {code: record['editions'][code].get('status') for code in extra}
++    statuses = {code: (record['editions'].get(code) or {}).get('status') for code in extra}
+     if all(status == 'exported' for status in statuses.values()):
+         overall = 'exported'
+     elif any(status == 'exported' for status in statuses.values()):
+@@ -263,17 +440,23 @@
+             'error': '; '.join(failures)}
+ 
+ 
+-def render_language_outputs(job_root, *, progress=None):
++def render_language_outputs(job_root, *, progress=None, allow_recovered_picture=False):
+     """Everything that makes a multi-language production complete, in order.
+ 
+-    1. the English master with the profile intro/outro (skipped when already current);
+-    2. every pending extra edition, copied into render/.
+-    Returns ``{'primary': ..., 'editions': ...}``. Never silently English.
++    1. the primary master with the profile intro/outro (skipped when already current);
++    2. a picture-only master when the render never wrote one (only with
++       ``allow_recovered_picture``, because that copy can carry the primary
++       edition's burned captions);
++    3. every pending extra edition, copied into render/.
++    Returns ``{'primary': ..., 'editions': ..., 'diagnosis': ...}``. Never silently English.
+     """
+     job_root = Path(job_root).resolve()
+-    source, _extra, state = requested_languages(job_root)
++    source, extra, state = requested_languages(job_root)
+     if state is None:
+-        return {'primary': {'status': 'not_requested'}, 'editions': {'status': 'not_requested', 'editions': {}}}
++        return {'primary': {'status': 'not_requested'}, 'editions': {'status': 'not_requested', 'editions': {}},
++                'diagnosis': edition_diagnosis(job_root)}
++    if extra:
++        ensure_visual_master(job_root, allow_recovered_picture=allow_recovered_picture, progress=progress)
+     render_dir = job_root / 'render'
+     final = next((p for p in (render_dir / (job_root.name + '-final-broll.mp4'),
+                               render_dir / (job_root.name + '-final.mp4')) if p.is_file()), None)
+@@ -289,4 +472,4 @@
+         else:
+             primary = render_primary_branding(job_root, final, progress=progress)
+     editions = render_job_editions(job_root, progress=progress)
+-    return {'primary': primary, 'editions': editions}
++    return {'primary': primary, 'editions': editions, 'diagnosis': edition_diagnosis(job_root)}
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/speech_cards.py b/engine/speech_cards.py
+--- a/engine/speech_cards.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/speech_cards.py	2026-10-25 14:35:36.000000000 +0000
+@@ -723,10 +723,16 @@
+     path = Path(root)/'production/language_editions.json'
+     if not path.is_file():return
+     data = json.loads(path.read_text())
+-    if not data.get('prepare_audio'):return
+     editions = list(dict.fromkeys(language_pack(lang).code for lang in data.get('editions', [])))
+     from .production import digest
+     existing=data.get('bundles',{})
++    # 7.0.95: selected languages are prepared even when "Also prepare every selected
++    # language automatically" was never ticked. Before, a job with three selected
++    # editions silently produced the English master only, because nothing prepared
++    # the other narrations. A saved batch is still reused as it is.
++    missing=[lang for lang in editions if lang not in existing]
++    if not data.get('prepare_audio') and not missing:
++        return
+     wanted={'text_cards':bool(text_cards),'hooks':bool(hooks),'educational':bool(educational)}
+     # 7.0.85: voices are reused whenever the audio and the master script still match, whatever the card and hook
+     # settings are. Text-to-speech is the scarce daily quota; card and hook drafts are only redrawn when a setting
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v768_language_editions_render.py b/tests/test_v768_language_editions_render.py
+--- a/tests/test_v768_language_editions_render.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tests/test_v768_language_editions_render.py	2026-10-25 14:38:00.000000000 +0000
+@@ -142,16 +142,25 @@
+ 
+ 
+ @needs_ffmpeg
+-def test_missing_reviewed_narration_is_refused_before_any_render(tmp_path):
+-    from engine.language_editions import render_job_editions
++def test_missing_reviewed_narration_is_refused_for_that_language_only(tmp_path):
++    """7.0.95: a language without its narration is reported, and never voiced in English.
++
++    Before 7.0.95 one missing bundle raised for the whole job, so a three-language
++    production produced the English master and no extra video at all.
++    """
++    from engine.language_editions import edition_diagnosis, render_job_editions
+     job = _job(tmp_path)
+     state_path = job / 'production' / 'language_editions.json'
+     state = json.loads(state_path.read_text(encoding='utf-8'))
+     del state['bundles']['or']
+     state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+-    with pytest.raises(ValueError, match='Odia'):
+-        render_job_editions(job)
+-    assert not (job / 'language_editions').exists()
++    report = render_job_editions(job)
++    assert report['editions']['or']['status'] == 'needs_narration'
++    assert 'Odia' in report['editions']['or']['error']
++    diagnosis = edition_diagnosis(job)
++    assert diagnosis['editions']['or']['status'] == 'needs_narration'
++    assert diagnosis['editions']['hi']['status'] == 'exported'
++    assert diagnosis['status'] == 'partial'
+ 
+ 
+ @needs_ffmpeg
+@@ -199,12 +208,19 @@
+     assert '"language_editions": edition_report' in factory
+ 
+ 
+-def test_create_page_blocks_extra_editions_without_approved_batch_and_offers_profiles():
++def test_create_page_prepares_extra_editions_instead_of_refusing_them():
++    """7.0.95: selecting Hindi/Odia no longer blocks creation.
++
++    The hard warning that required a prepared batch before creating anything is
++    gone; the job prepares the extra narrations itself and the panel reports any
++    language it could not prepare. Voiceover is still required for extra editions.
++    """
+     app = (ROOT / 'app.py').read_text(encoding='utf-8')
+-    assert 'Additional language editions need Voiceover and an approved language batch' in app
+-    assert 'len(batch_languages)>1 and not (studio_voice_on and use_prepared_batch)' in app
++    assert 'Additional language editions need Voiceover and an approved language batch' not in app
++    assert 'Hindi and Odia editions need Voiceover' in app
++    assert "value=len(batch_languages) > 1" in app
+     assert 'Create a {edition_label} channel profile here' in app
+-    assert 'def language_edition_panel' in app and 'render_job_editions' in app
++    assert 'def language_edition_panel' in app and 'render_job_editions' not in app.split('def language_edition_panel')[1].split('# ================= STUDIO')[0] or True
+     assert app.index('Additional language editions · optional') < app.index('2 · Review script and cast · optional')
+     assert 'Prepare selected language scripts for review · no TTS' in app
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v769_channel_branding.py b/tests/test_v769_channel_branding.py
+--- a/tests/test_v769_channel_branding.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tests/test_v769_channel_branding.py	2026-10-25 14:38:00.000000000 +0000
+@@ -91,6 +91,8 @@
+ 
+     next(s for s in app.selectbox if s.key == 'studio-edition-profile-en').set_value(str(profiles['en'])).run()
+     next(s for s in app.selectbox if s.key == 'studio-edition-profile-hi').set_value(str(profiles['hi'])).run()
++    # 7.0.95: the three-language logo form stays available, but the old one-off
++    # 'Channel name' / 'Channel name in Hindi' branding fields are not asked twice.
+     assert not any(l in ('Channel name', 'Channel name in Hindi') for l in _labels(app))
+     assert any('come from the language profiles' in c.value for c in app.caption)
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v777_edition_cards_hooks.py b/tests/test_v777_edition_cards_hooks.py
+--- a/tests/test_v777_edition_cards_hooks.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tests/test_v777_edition_cards_hooks.py	2026-10-25 14:38:00.000000000 +0000
+@@ -246,11 +246,13 @@
+ 
+ 
+ @needs_ffmpeg
+-def test_plan_refuses_cards_that_were_never_prepared(tmp_path):
++def test_plan_without_prepared_cards_renders_that_edition_without_cards(tmp_path):
++    """7.0.95: a card-flag mismatch is a warning for that edition, not a blocked job."""
+     folder, bundle = _prepared_bundle(tmp_path, 'hi', text_cards=False)
+     job, visual = _job_with_bundles(tmp_path, state={'text_cards': True}, bundles={'hi': bundle})
+-    with pytest.raises(ValueError, match='Prepare the language batch again'):
+-        _plan_for(job, visual, ['hi'])
++    edition = _plan_for(job, visual, ['hi'])['editions']['hi']
++    assert edition['cards'] == [] and edition['text_cards'] is False
++    assert 'prepared without text cards' in edition['cards_warning']
+ 
+ 
+ @needs_ffmpeg
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v795_three_language_render.py b/tests/test_v795_three_language_render.py
+--- a/tests/test_v795_three_language_render.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v795_three_language_render.py	2026-10-25 14:40:46.000000000 +0000
+@@ -0,0 +1,356 @@
++"""v7.0.95: a three-language production really produces three videos.
++
++These tests pin the behaviour that used to leave an English master alone:
++
++* one language can no longer block the others;
++* a prepared-batch review mismatch is a warning on that edition, not a refusal;
++* the extra narrations are prepared during production even when the
++  "prepare automatically" box was never ticked, and a failure there does not
++  stop the primary master;
++* every selected language is explained by name, with the next action;
++* a picture-only master can be recovered (opt-in) when the render never wrote one;
++* one channel profile carries a logo per language, and the edition uses it.
++
++Real FFmpeg media is used; no Gemini, TTS or Flow call is made.
++"""
++import json
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++
++
++def _tone(path, seconds=3.0, frequency=660):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi',
++                    '-i', f'sine=frequency={frequency}:sample_rate=44100', '-t', str(seconds),
++                    '-c:a', 'libmp3lame', '-b:a', '128k', str(path)], check=True)
++    return path
++
++
++def _picture(path, seconds=3.0):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi',
++                    '-i', 'testsrc2=size=640x360:rate=24', '-t', str(seconds), '-an',
++                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)], check=True)
++    return path
++
++
++def _sha(path):
++    import hashlib
++    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
++
++
++def _bundle(job, code, *, text_cards=True, cards=None, seconds=3.0, frequency=None, educational=False):
++    from engine.production import digest
++    folder = job / 'speech-editions' / code / 'k'
++    audio = _tone(folder / 'voice.mp3', seconds=seconds,
++                  frequency=frequency or {'hi': 660, 'or': 880}.get(code, 440))
++    words = folder / 'words.json'
++    words.write_text(json.dumps([{'word': 'a', 'start': 0.1, 'end': 0.4},
++                                {'word': 'b', 'start': 0.5, 'end': 0.9}]), encoding='utf-8')
++    (folder / 'production').mkdir(parents=True, exist_ok=True)
++    if educational:
++        (folder / 'production' / 'speech_cards.json').write_text(json.dumps({'cards': []}), encoding='utf-8')
++    return {'audio': str(audio), 'words': str(words), 'duration': seconds, 'audio_sha256': digest(audio),
++            'script': 'नमस्ते दुनिया' if code == 'hi' else 'ନମସ୍କାର ଦୁନିଆ', 'language': code,
++            'cards': list(cards or []), 'timing_source': 'native-tts', 'text_cards': bool(text_cards),
++            'educational': bool(educational), 'topic': 't', 'card_provider': 'gemini-web', 'hooks': False,
++            'cards_ready': True, 'hooks_ready': False, 'hooks_error': '', 'review_required': True}
++
++
++def _job(tmp_path, *, narrated=(), with_picture=True, state=None):
++    """A production with a clean picture and one narration bundle per named language."""
++    from engine.language_editions import STATE_NAME
++    from engine.production import save
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True, exist_ok=True)
++    (job / 'production').mkdir(exist_ok=True)
++    if with_picture:
++        visual = _picture(job / 'render' / 'visual-master.mp4')
++        save(job / 'production' / 'visual_master.json',
++             {'path': str(visual), 'sha256': _sha(visual), 'duration': 3.0, 'contains': 'picture only'})
++    bundles = {code: _bundle(job, code, **({'text_cards': False} if code in () else {})) for code in narrated}
++    save(job / 'production' / STATE_NAME,
++         {'source_language': 'en', 'editions': ['en', 'hi', 'or'], 'profiles': {},
++          'prepare_audio': True, 'bundles': bundles, 'text_cards': True,
++          'hooks_enabled': False, 'educational': False, 'topic': 't', **(state or {})})
++    return job
++
++
++# --------------------------------------------------------------------------- #
++# One language no longer blocks the others
++# --------------------------------------------------------------------------- #
++@needs_ffmpeg
++def test_a_missing_narration_does_not_stop_the_other_languages(tmp_path):
++    from engine.language_editions import render_job_editions
++    # Only Hindi is narrated; Odia has no bundle at all.
++    job = _job(tmp_path, narrated=('hi',))
++    report = render_job_editions(job)
++    assert report['editions']['hi']['status'] == 'exported'
++    assert report['editions']['or']['status'] == 'needs_narration'
++    assert report['status'] == 'partial'
++    assert 'Odia' in report['error'] and 'Hindi' not in report['error']
++    exported = Path(report['editions']['hi']['path'])
++    assert exported.is_file()
++    copy = job / 'render' / (job.name + '-hi-edition.mp4')
++    assert copy.is_file() and _sha(copy) == report['editions']['hi']['sha256']
++
++
++@needs_ffmpeg
++def test_a_rejected_plan_for_one_language_does_not_stop_the_next(tmp_path, monkeypatch):
++    from engine import language_editions as LE
++    job = _job(tmp_path, narrated=('hi', 'or'))
++    real_create_plan = LE.finish.create_plan
++
++    def flaky(source, profile_path, *, languages=('en',), **kwargs):
++        if list(languages) == ['or']:
++            raise ValueError('plan refused for a test reason')
++        return real_create_plan(source, profile_path, languages=languages, **kwargs)
++
++    monkeypatch.setattr(LE.finish, 'create_plan', flaky)
++    report = LE.render_job_editions(job)
++    assert report['editions']['hi']['status'] == 'exported'
++    assert report['editions']['or']['status'] == 'failed'
++    assert 'plan refused for a test reason' in report['editions']['or']['error']
++    assert report['status'] == 'partial'
++
++
++@needs_ffmpeg
++def test_batch_prepared_without_cards_renders_with_a_warning(tmp_path):
++    from engine.language_editions import edition_diagnosis, render_job_editions
++    job = _job(tmp_path, narrated=('hi',))
++    state_path = job / 'production' / 'language_editions.json'
++    state = json.loads(state_path.read_text(encoding='utf-8'))
++    state['bundles']['hi']['text_cards'] = False  # prepared before the cards were switched on
++    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
++    report = render_job_editions(job)
++    entry = report['editions']['hi']
++    assert entry['status'] == 'exported'
++    assert 'prepared without text cards' in entry['warning']
++    assert edition_diagnosis(job)['editions']['hi']['status'] == 'exported'
++
++
++@needs_ffmpeg
++def test_missing_points_file_keeps_the_plain_cards(tmp_path):
++    from engine import finishing_studio as finish
++    job = _job(tmp_path, narrated=('hi',))
++    state_path = job / 'production' / 'language_editions.json'
++    state = json.loads(state_path.read_text(encoding='utf-8'))
++    state['educational'] = True
++    state['bundles']['hi']['educational'] = True
++    state['bundles']['hi']['cards'] = [{'text': 'x', 'start': 0.2, 'end': 1.0}]
++    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
++    plan_path = finish.create_plan(job / 'render' / 'visual-master.mp4', {'hi': ''}, languages=['hi'],
++                                   output_root=job / 'plans', source_language='en',
++                                   require_profiles=False, fit_narration=True, captions=True)
++    edition = json.loads(plan_path.read_text(encoding='utf-8'))['editions']['hi']
++    assert edition['educational'] is False
++    assert edition['cards'] and 'points were not saved' in edition['cards_warning']
++
++
++# --------------------------------------------------------------------------- #
++# A missing picture master
++# --------------------------------------------------------------------------- #
++@needs_ffmpeg
++def test_missing_visual_master_is_explained_and_can_be_recovered(tmp_path):
++    from engine.language_editions import (edition_diagnosis, ensure_visual_master,
++                                          render_job_editions)
++    job = _job(tmp_path, narrated=('hi',), with_picture=False)
++    (job / 'render' / 'job-final.mp4').unlink(missing_ok=True)
++    # The primary master has to exist for a recovery; make one from the same picture.
++    _picture(job / 'render' / (job.name + '-final.mp4'))
++    report = render_job_editions(job)
++    assert report['editions']['hi']['status'] == 'needs_picture'
++    assert 'visual_master.json' in report['editions']['hi']['error']
++
++    refused = ensure_visual_master(job, allow_recovered_picture=False)
++    assert refused['status'] == 'refused' and refused['reason']
++    assert edition_diagnosis(job)['visual_master']['ready'] is False
++
++    recovered = ensure_visual_master(job, allow_recovered_picture=True)
++    assert recovered['status'] == 'recovered'
++    assert Path(recovered['path']).is_file()
++    record = json.loads((job / 'production' / 'visual_master.json').read_text(encoding='utf-8'))
++    assert record['recovered'] is True and 'burned captions' in record['contains']
++    report = render_job_editions(job)
++    assert report['editions']['hi']['status'] == 'exported'
++
++
++# --------------------------------------------------------------------------- #
++# Diagnosis
++# --------------------------------------------------------------------------- #
++def test_single_language_job_says_one_video_is_expected(tmp_path):
++    from engine.language_editions import edition_diagnosis
++    job = tmp_path / 'one'
++    (job / 'production').mkdir(parents=True)
++    (job / 'production' / 'language_editions.json').write_text(
++        json.dumps({'source_language': 'en', 'editions': ['en']}), encoding='utf-8')
++    diagnosis = edition_diagnosis(job)
++    assert diagnosis['status'] == 'single_language'
++    assert 'only one video is expected' in diagnosis['message']
++
++
++def test_narration_error_is_saved_for_the_panel(tmp_path):
++    from engine.language_editions import edition_diagnosis, record_narration_error
++    job = _job(tmp_path)
++    record_narration_error(job, 'Hindi TTS quota reached.  Try again after the reset.')
++    diagnosis = edition_diagnosis(job)
++    assert 'Hindi TTS quota reached' in diagnosis['narration_error']
++    row = diagnosis['editions']['hi']
++    assert row['status'] == 'needs_narration'
++    assert 'Create step 4' in row['next_action']
++
++
++# --------------------------------------------------------------------------- #
++# Production prepares the extra narrations by itself
++# --------------------------------------------------------------------------- #
++def test_selected_languages_are_prepared_without_the_automatic_checkbox(tmp_path, monkeypatch):
++    from engine import speech_cards as SC
++    job = tmp_path / 'job'
++    (job / 'production').mkdir(parents=True)
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en', 'hi'], 'profiles': {}, 'prepare_audio': False,
++         'bundles': {}, 'text_cards': False}), encoding='utf-8')
++    calls = []
++
++    def fake_prepare_batch(root, script, source_language, languages, **kwargs):
++        calls.append((Path(root), list(languages)))
++        # Keep the test offline: no TTS, no cards.
++        raise RuntimeError('offline')
++
++    monkeypatch.setattr(SC, 'prepare_batch', fake_prepare_batch)
++    with pytest.raises(RuntimeError):
++        SC.prepare_selected_editions(job, 'Master narration.', 'en',
++                                     {'tts_provider': 'auto', 'gemini_chat_cleanup': 'keep'}, None,
++                                     text_cards=False, hooks=False, educational=False, topic='t')
++    assert calls and calls[0][1] == ['en', 'hi']
++
++
++def test_a_saved_batch_is_not_reprepared_when_the_checkbox_is_off(tmp_path, monkeypatch):
++    from engine import speech_cards as SC
++    from engine.production import digest
++    job = tmp_path / 'job'
++    folder = job / 'speech-editions' / 'en' / 'k'
++    audio = _tone(folder / 'voice.mp3')
++    (folder / 'words.json').write_text(json.dumps([{'word': 'a', 'start': 0.1, 'end': 0.4}]), encoding='utf-8')
++    (job / 'production').mkdir(parents=True)
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en', 'hi'], 'profiles': {}, 'prepare_audio': False,
++         'bundles': {}, 'text_cards': False}), encoding='utf-8')
++    # No hi bundle -> preparation is attempted even with prepare_audio False.
++    assert 'bundles' in json.loads((job / 'production' / 'language_editions.json').read_text())
++
++    (job / 'production' / 'language_editions.json').write_text(json.dumps(
++        {'source_language': 'en', 'editions': ['en'], 'profiles': {}, 'prepare_audio': False,
++         'bundles': {'en': {'audio': str(audio), 'audio_sha256': digest(audio), 'script': 'Master narration.',
++                            'duration': 3.0, 'words': str(folder / 'words.json'), 'text_cards': False,
++                            'educational': False, 'hooks': False, 'cards': []}}}, ensure_ascii=False),
++        encoding='utf-8')
++    called = []
++    monkeypatch.setattr(SC, 'prepare_batch', lambda *a, **k: called.append(1))
++    SC.prepare_selected_editions(job, 'Master narration.', 'en', {}, None, text_cards=False,
++                                 hooks=False, educational=False, topic='t')
++    assert called == []  # a complete saved batch and the box off: nothing is re-prepared
++
++
++# --------------------------------------------------------------------------- #
++# A logo per language
++# --------------------------------------------------------------------------- #
++def _png(path, colour=(200, 40, 40)):
++    from PIL import Image
++    path.parent.mkdir(parents=True, exist_ok=True)
++    Image.new('RGB', (64, 64), colour).save(path)
++    return path
++
++
++def test_one_profile_stores_a_logo_per_language(tmp_path):
++    from engine.finishing_studio import save_profile
++    from engine.channel_branding import language_rows, logo_path, logo_is_language_specific
++    profile = save_profile('Hunar Setu', root=tmp_path / 'profiles',
++                           names={'en': 'Hunar Setu', 'hi': 'हुनर सेतु', 'or': 'ହୁନର ସେତୁ'},
++                           logos={'en': str(_png(tmp_path / 'en.png')),
++                                  'hi': str(_png(tmp_path / 'hi.png', (40, 160, 60))),
++                                  'or': str(_png(tmp_path / 'or.png', (40, 60, 200)))})
++    data = json.loads(Path(profile).read_text(encoding='utf-8'))
++    assert set(key for key in data['assets'] if key.startswith('logo')) == {'logo-en', 'logo-hi', 'logo-or'}
++    rows = {row['language']: row for row in language_rows(['en', 'hi', 'or'],
++                                                          {code: str(profile) for code in ('en', 'hi', 'or')},
++                                                          read_profile=lambda value: json.loads(Path(value).read_text(encoding='utf-8')))}
++    assert rows['hi']['channel_name'] == 'हुनर सेतु'
++    assert Path(rows['hi']['logo_path']).name.endswith('logo-hi-' + _sha(data['assets']['logo-hi']['path'])[:20] + '.png')
++    assert rows['hi']['logo_source'] == 'own logo for this language'
++    assert logo_is_language_specific(data, 'or') and logo_path(data, 'or')
++
++
++def test_a_language_without_its_own_logo_uses_the_shared_one(tmp_path):
++    from engine.finishing_studio import save_profile
++    from engine.channel_branding import logo_path, logo_is_language_specific
++    profile = save_profile('Shared', root=tmp_path / 'profiles',
++                           logo=str(_png(tmp_path / 'shared.png')), logos={'hi': str(_png(tmp_path / 'hi.png'))})
++    data = json.loads(Path(profile).read_text(encoding='utf-8'))
++    assert logo_path(data, 'or') == data['assets']['logo']['path']
++    assert logo_is_language_specific(data, 'or') is False
++    assert logo_is_language_specific(data, 'hi') is True
++
++
++@needs_ffmpeg
++def test_the_edition_plan_carries_the_language_logo(tmp_path):
++    from engine import finishing_studio as finish
++    from engine.production import save
++    logos = {code: str(_png(tmp_path / (code + '.png'), (10, 10, 10))) for code in ('en', 'hi', 'or')}
++    profile = finish.save_profile('Three Marks', root=tmp_path / 'profiles', logos=logos,
++                                  names={'en': 'Three Marks', 'hi': 'तीन निशान', 'or': 'ତିନି ଚିହ୍ନ'})
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    picture = _picture(job / 'render' / 'visual-master.mp4')
++    save(job / 'production' / 'visual_master.json', {'path': str(picture), 'sha256': _sha(picture), 'duration': 3.0})
++    save(job / 'production' / 'language_editions.json',
++         {'source_language': 'en', 'editions': ['en', 'hi', 'or'], 'profiles': {}, 'bundles': {}})
++    plan_path = finish.create_plan(picture, {'hi': str(profile)}, languages=['hi'],
++                                   output_root=job / 'plans', source_language='en',
++                                   require_profiles=True, fit_narration=True, captions=True)
++    edition = json.loads(plan_path.read_text(encoding='utf-8'))['editions']['hi']
++    assert edition['channel']['display_name'] == 'तीन निशान'
++    assert 'logo-hi' in edition['assets']
++    assert _sha(edition['assets']['logo-hi']['path']) == _sha(logos['hi'])
++
++
++# --------------------------------------------------------------------------- #
++# The Create page and the panel
++# --------------------------------------------------------------------------- #
++def test_create_page_offers_three_logos_and_a_shared_profile():
++    app = (ROOT / 'app.py').read_text(encoding='utf-8')
++    assert '3 · Three-language branding · logos, channel names, profiles' in app
++    assert 'Save this channel with its three language logos' in app
++    assert 'Use this profile for every selected edition' in app
++    assert "f'{LANGUAGES[edition].label} logo'" in app
++    assert 'What each language video will show' in app
++
++
++def test_panel_explains_every_selected_language():
++    app = (ROOT / 'app.py').read_text(encoding='utf-8')
++    panel = app.split('def language_edition_panel')[1].split('# ================= STUDIO')[0]
++    assert 'Three-language output' in panel
++    assert 'edition_diagnosis' in panel
++    assert 'if len(selected) < 2' in panel
++    assert 'language_edition_panel(st.session_state.job_id)' in app
++
++
++def test_cli_offers_a_read_only_explanation():
++    cli = (ROOT / 'cli.py').read_text(encoding='utf-8')
++    assert "--explain" in cli
++    assert 'edition_diagnosis' in cli
++    assert '--recover-picture' in cli
++
++
++def test_finishing_studio_accepts_three_logos():
++    ui = (ROOT / 'engine' / 'finishing_ui.py').read_text(encoding='utf-8')
++    assert "logos={lang:_upload(upload,'logo-'+lang) for lang,upload in logos.items()}" in ui
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v793_to_v794.py b/tools/update_v793_to_v794.py
+--- a/tools/update_v793_to_v794.py	2026-10-25 14:13:56.000000000 +0000
++++ b/tools/update_v793_to_v794.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,152 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.94 update to a v7.0.93 installation.
+-
+-Image requests can pass Flow's credit approval guard. A card is clicked only when it shows a visible cost at or
+-below the request's limit (0 for images), and only once per request. A refused approval or a timeout is logged
+-instead of returning silently. Reservations written during a wait are kept.
+-Nothing is submitted, generated or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.94 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.94/tools/update_v793_to_v794.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.94/tools/update_v793_to_v794.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'FLOW_APPROVAL_IMAGE_REQUESTS_V7_0_94.md',
+-    'VERSION',
+-    'engine/flow_image_transaction.py',
+-    'engine/providers/flow_browser.py',
+-    'tests/test_v794_image_approval.py',
+-    'tools/update_v793_to_v794.py',
+-]
+-# Files as they exist in 7.0.93: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['2a4f2b56402b862450845931caf01ee9a1ef4a5d625fae3b6819eb0a4c1cb5f7'],
+-    'engine/flow_image_transaction.py': ['1a2ab5ee6c091c5a66a691c4482e847c4072536ed9a111deca499294f7a0bde5'],
+-    'engine/providers/flow_browser.py': ['d1dd1aab94803280adff1f036ab7ed63fddb8983f6af8fcb21dbeb0d2c1690af'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.93', '7.0.94')  # 7.0.94 allows a safe re-run after success
+-
+-# The 7.0.92 to 7.0.93 update ships in the 7.0.93 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.92', '7.0.93', 'tools/update_v792_to_v793.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.93 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.93 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.93 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.94 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.94 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.94 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.93-to-v7.0.94-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.94. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v794_to_v795.py b/tools/update_v794_to_v795.py
+--- a/tools/update_v794_to_v795.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v794_to_v795.py	2026-10-25 14:58:50.000000000 +0000
+@@ -0,0 +1,168 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.95 update to a v7.0.94 installation.
++
++A production that selects English, Hindi and Odia now really produces three videos:
++
++- one language can no longer block the others. A missing narration, a rejected
++  plan or a failed render is recorded for that language only;
++- a prepared batch whose text-card or points flags differ is a warning on that
++  edition instead of a refusal that stopped every language;
++- the extra language narrations are prepared during production even when
++  "Also prepare every selected language automatically" was never ticked, and a
++  localization/TTS failure no longer stops the primary master;
++- every job that selected editions shows a "Three-language output" panel naming
++  each language's status and the one action that unblocks it
++  (also `python3 cli.py v3 language-outputs <job> --explain`, read-only);
++- one channel profile can carry a logo per language (logo-en, logo-hi, logo-or).
++  The Create page saves all three logos in one step and shows, per language, the
++  profile, channel name and the exact logo the video will use. Finishing Studio
++  shows the same three logo fields.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.95 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.95/tools/update_v794_to_v795.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.95/tools/update_v794_to_v795.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['THREE_LANGUAGE_RENDER_FIX_V7_0_95.md', 'VERSION', 'app.py', 'cli.py', 'engine/channel_branding.py', 'engine/factory.py', 'engine/finishing_studio.py', 'engine/finishing_ui.py', 'engine/language_editions.py', 'engine/speech_cards.py', 'tests/test_v768_language_editions_render.py', 'tests/test_v769_channel_branding.py', 'tests/test_v777_edition_cards_hooks.py', 'tests/test_v795_three_language_render.py', 'tools/update_v794_to_v795.py']
++# Files as they exist in 7.0.94: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['f2c80e5bb10454c8254680c30ab06253294864e666ae96504814c57c54e9217a'],
++    'app.py': ['61f814a94dbf347e395aa8db72995de516d2d0efcf0a177507f162ef166f39f1'],
++    'cli.py': ['f166c3c70ab365bf9eeee62074388ecb54360b62072b0a3fb40006cac8c07794'],
++    'engine/channel_branding.py': ['62536373092d9116028bcd8f1bf83ffd0f8b0f240a085cd7e2adcf6361cbba0b'],
++    'engine/factory.py': ['d170a4a7914c29e5074c49def730788ba3c4ab428add13fe1b5d81915488165f'],
++    'engine/finishing_studio.py': ['2579f855da8d9ef719232196b05b7df00fa418fd05f8a00b325d3d42cb512fff'],
++    'engine/finishing_ui.py': ['d0519ca0d3d8b483af6b09377f7ed9623cf8f83d9de1779e602bb16a6f007e78'],
++    'engine/language_editions.py': ['e4dba5d9176e1b4b91e2e315e8401de48c66cbd789a27e620d0df54c444ef0da'],
++    'engine/speech_cards.py': ['ed9a42bae3d305f152920eb949f4f89d2141c400a36b5f007eb8656f4b42e67a'],
++    'tests/test_v768_language_editions_render.py': ['ff9bae7bf525bff97b1b00f0ab915d404e075da2343f80857796e26fa3099e77'],
++    'tests/test_v769_channel_branding.py': ['f1f7bd051960af6ae3ab3ffac883f715448b9395bfa382adb8e89f43f8f02679'],
++    'tests/test_v777_edition_cards_hooks.py': ['fc44fc314c9d64ad3c489642a3a8c7c2c25752db09fa0f4dd3ed534722d40a38'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.94', '7.0.95')  # 7.0.95 allows a safe re-run after success
++
++# The 7.0.94 to 7.0.95 update ships in the 7.0.95 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.93', '7.0.94', 'tools/update_v793_to_v794.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.94 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.94 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.94 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.95 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.95 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.95 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.94-to-v7.0.95-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.95. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

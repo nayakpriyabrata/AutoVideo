@@ -1,0 +1,1393 @@
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/RESUME_LOOP_FIX_V7_0_96.md b/RESUME_LOOP_FIX_V7_0_96.md
+--- a/RESUME_LOOP_FIX_V7_0_96.md	1970-01-01 00:00:00.000000000 +0000
++++ b/RESUME_LOOP_FIX_V7_0_96.md	2026-10-26 07:14:22.000000000 +0000
+@@ -0,0 +1,137 @@
++# AutoVideoAI 7.0.96 · a blocked Resume now moves forward instead of repeating the same wait
++
++Job `20261022-143856-7-small-daily-habits-tha-9729` could not be resumed. Every attempt ended at
++"Recovery needs attention — Saved request unresolved; no new generation started", with shot
++`storyboard/shot_023_open.jpg` still missing and Hindi/Odia stuck at `needs_picture`.
++
++## What was actually happening
++
++The saved request for `shot_023_open.jpg` named Flow project `ca1709fe-…`. By the time Resume ran,
++Flow was showing a different project — the request had been submitted in a project the job never
++recorded (`2d019101-…`), and the single-valued project binding had been overwritten by later work.
++
++The recovery path then did this, on every Resume:
++
++1. `tx.recover()` reopened the journal's project with `ensure_project(...)`;
++2. Flow did not land on that project, so `capture()` refused with
++   `Image project changed; no download attempted` — correct in itself: reading whichever project Flow
++   shows could adopt **another shot's image**;
++3. that refusal is a generic error, so it was retried three times and ended as
++   `Image recovery checkpoint retained: Image project changed …`, which deliberately does **not** allow
++   a fresh request (a browser or download problem must never cause a resubmission);
++4. `reconcile_job` recorded the journal as `pending`, `check_job` still saw it, `require_safe_job`
++   raised, and the dashboard printed "Saved request unresolved; no new generation started" — identical
++   to the previous attempt, with no new information and no way out.
++
++In the runs where the project *did* open, the six-minute wait found only the two uploaded references.
++That verdict did allow a fresh request, but the automatic budget (three submissions per shot) counts
++**every** archived journal, including the ones the published advice told you to create by hand. The
++documented command therefore increased the very counter that was blocking it: archive once more and the
++cap was hit again, this time with nothing left to archive.
++
++The advice itself was also wrong about money. `config/flow_models.yaml` sets `credits_per_image: 0` and
++`flow_image_transaction.py` states "Image requests are free in Flow", so
++`--confirm-new-credit-spend` asked you to approve a spend that never happens.
++
++## What 7.0.96 changes
++
++- **A project that cannot be reopened is a verdict, not a retry.** After `ensure_project`,
++  `require_saved_project()` compares the live URL with the journal's URL. If Flow is showing a different
++  project, recovery stops at once: no wait, no download, no adoption of another project's gallery, no
++  second or third attempt. The journal records `recovery_state: saved_project_not_reachable` together
++  with `saved_project_url` and `observed_project_url`.
++- **One fresh, free image request is then submitted automatically**, in a new project, exactly as for
++  the "only references were found" case. Waiting again in a dead project can never produce the image.
++- **A generic browser or download failure still never resubmits**; it is recorded as
++  `recovery_checkpoint_retained` and now says so instead of looping silently. A fresh request that
++  fails before its new project is bound (browser closed, project creation refused) is recorded as
++  `fresh_request_not_started`, so the next blocked Resume explains that too.
++- **The automatic budget can no longer block itself.** Only archives this app created
++  (`*.flow-request.auto-archived-*.json`) count toward the three automatic submissions per shot. An
++  archive you run yourself (`cli.py v3 archive-request`, `*.flow-request.archived-*.json`) is one
++  authorised submission of its own and always allows exactly one more free image request.
++- **No credit confirmation for image requests.** `cli.py v3 archive-request` and
++  `tools/archive_uncertain_flow_image.py` archive an isolated image journal without
++  `--confirm-new-credit-spend`. The flag is still accepted for old scripts, and is still required for
++  any journal that is not a free image request.
++- **The reason is visible, in one line.** The blocked-Resume message, the Queue panel and
++  `tools/flow_resume_preflight.py` now print the last recovery verdict for each journal, the saved
++  project, and the single command that moves the job forward. The preflight tool stays read-only: it
++  opens no browser and submits nothing.
++
++## What to do with the current job
++
++1. Stop the dashboard (one production slot at a time).
++2. Install 7.0.96 (below).
++3. Read the diagnosis — no browser, no requests:
++
++   ```
++   python3 tools/flow_resume_preflight.py outputs/20261022-143856-7-small-daily-habits-tha-9729
++   ```
++
++4. Resume once:
++
++   ```
++   python3 cli.py v3 resume 20261022-143856-7-small-daily-habits-tha-9729
++   ```
++
++   If the saved project cannot be reopened, recovery now says so and submits **one** free image request
++   for `shot_023_open.jpg` in a new project. If the automatic budget is already used up, the message
++   names the exact archive command; run it, then Resume once. Nothing else is archived or resubmitted.
++
++5. When the frame is accepted, finish the three languages:
++
++   ```
++   python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --explain
++   python3 cli.py v3 language-outputs 20261022-143856-7-small-daily-habits-tha-9729 --recover-picture
++   ```
++
++   `needs_picture` is not a second bug: this job never reached the FFmpeg staging render, so
++   `production/visual_master.json` does not exist and Hindi/Odia have nothing to mix onto. The
++   picture-only master built from the finished video (the panel checkbox, or `--recover-picture` above)
++   is the v7.0.95 answer, and it can only run after the missing frame is resolved.
++
++## Install
++
++1. Stop the dashboard.
++2. Extract `AutoVideoAI-v7.0.96-Resume-Loop-Fix.zip` beside your installation folder.
++3. Run the updater from inside the installation folder:
++
++   ```
++   python3 ../AutoVideoAI-v7.0.96/tools/update_v795_to_v796.py .            # dry run: shows the plan
++   python3 ../AutoVideoAI-v7.0.96/tools/update_v795_to_v796.py . --apply    # installs the code
++   ```
++
++   It accepts an installed 7.0.95 (or an already-updated 7.0.96), backs replaced files up under
++   `code-update-backups/v7.0.95-to-v7.0.96-<timestamp>`, and leaves outputs, saved jobs, settings,
++   browser profiles, music, characters and channel profiles untouched. An installation older than
++   7.0.95 must be updated one zip at a time first.
++
++## Tests
++
++`tests/test_v796_resume_loop.py` reproduces the field state with fakes only — no browser, no Flow
++request, no credits — and asserts:
++
++- a saved project that cannot be reopened escalates once: zero waits, zero downloads;
++- a real image sitting in the project Flow happens to show is never downloaded or adopted;
++- the "only references" wait still records its own verdict;
++- a fresh request that cannot start is recorded as `fresh_request_not_started`, end to end through
++  `reconcile_job`, and the blocked message names it;
++- `generate()` replaces a lost request once and then finishes;
++- the automatic budget stops with the exact flag-free archive command, and that command then allows
++  exactly one more submission (the old deadlock);
++- an explicit archive of an image journal needs no credit confirmation, while a non-image journal
++  still does;
++- the blocked-Resume message, the preflight tool and the dashboard diagnosis name the verdict and the
++  next command.
++
++Contract changes to two older tests are intentional: `tests/test_v791_reference_labels.py` now expects
++an image journal to be archived without the flag (and adds a non-image journal that still needs it), and
++`tests/test_v792_stalled_recovery.py` expects the archive command without `--confirm-new-credit-spend`.
++
++## Not verified live
++
++No Flow project was opened and no image was requested while building this release. The escalation,
++the budget accounting and the messages are covered by fake-bridge tests; the real project binding,
++the 360-second wait and the fresh submission still depend on your Flow session, and the first real
++Resume is the confirmation.
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/VERSION b/VERSION
+--- a/VERSION	2026-10-25 14:34:18.000000000 +0000
++++ b/VERSION	2026-10-26 07:05:34.000000000 +0000
+@@ -1 +1 @@
+-7.0.95
++7.0.96
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/app.py b/app.py
+--- a/app.py	2026-10-25 14:58:26.000000000 +0000
++++ b/app.py	2026-10-26 07:04:22.000000000 +0000
+@@ -207,6 +207,15 @@
+     project_url = state.get("flow_project_url")
+     if project_url:
+         st.markdown(f"[Open the saved Flow project]({project_url})")
++    if state.get("flow_recovery_state"):
++        # 7.0.96: say why the last resume stopped and what moves the job forward, instead of
++        # leaving the same wait to run again.
++        st.caption(f"Last saved-request result: `{state['flow_recovery_state']}`"
++                   + (f" — {state['flow_last_recovery_error']}" if state.get("flow_last_recovery_error") else ""))
++        if state.get("flow_next_action"):
++            st.info(state["flow_next_action"])
++        if state.get("flow_saved_project_url") and state.get("flow_saved_project_url") != project_url:
++            st.caption(f"Saved project in the request: {state['flow_saved_project_url']}")
+ 
+     safe_recovery = bool(state.get("safe_automatic_recovery"))
+     try:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/cli.py b/cli.py
+--- a/cli.py	2026-10-25 14:36:46.000000000 +0000
++++ b/cli.py	2026-10-26 07:04:04.000000000 +0000
+@@ -216,11 +216,12 @@
+     dash = sub.add_parser("dashboard", help="Open the HTML Studio dashboard")
+     dash.add_argument("--port", type=int, default=8501)
+ 
+-    ar = sub.add_parser("archive-request", help="Archive one unresolved Flow image request (kept on record) so the next Resume makes ONE new submission; spends credits")
++    ar = sub.add_parser("archive-request", help="Archive one unresolved Flow image request (kept on record) so the next Resume makes ONE new submission; image requests are free in Flow, so no credit approval is needed")
+     ar.add_argument("job_id")
+     ar.add_argument("image", help="e.g. storyboard/shot_020_open.jpg")
+     ar.add_argument("--confirm-new-credit-spend", action="store_true",
+-                    help="required: you approve that the next Resume spends credits on one new submission")
++                    help="only for a non-image journal: you approve that the next Resume spends credits on one new submission. "
++                         "An image request is free in Flow, so this flag is not required for it (accepted for old scripts)")
+     r = sub.add_parser("resume", help="Resume a job")
+     r.add_argument("job_id")
+     r.add_argument('--replace-unresolved-images', action=argparse.BooleanOptionalAction, default=None,
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/factory.py b/engine/factory.py
+--- a/engine/factory.py	2026-10-25 14:35:50.000000000 +0000
++++ b/engine/factory.py	2026-10-26 07:13:52.000000000 +0000
+@@ -635,8 +635,55 @@
+                      pause_on_unresolved=bool(self._settings(job_id).get("flow_pause_on_unresolved_request", False)))
+         state.setdefault("actions", [{"label": "Resume saved job", "command": f"python3 cli.py v3 resume {job_id}"}])
+         state.setdefault("flow_project_url", self._flow_project_url(job_id))
++        # 7.0.96: a paused job used to repeat the same wait with no explanation. The last
++        # recovery verdict and the one command that moves it forward are read-only facts.
++        diagnosis = self.flow_journal_diagnosis(job_id)
++        if diagnosis:
++            state.setdefault("flow_recovery_state", diagnosis.get("recovery_state"))
++            state.setdefault("flow_last_recovery_error", diagnosis.get("last_recovery_error"))
++            state.setdefault("flow_saved_project_url", diagnosis.get("saved_project_url"))
++            state.setdefault("flow_next_action", diagnosis.get("next_action"))
++            if diagnosis.get("archive_command"):
++                commands = {a.get("command") for a in state["actions"]}
++                if diagnosis["archive_command"] not in commands:
++                    state["actions"].append({"label": "Allow one new free image request",
++                                             "command": diagnosis["archive_command"]})
+         return state
+ 
++    def flow_journal_diagnosis(self, job_id: str) -> dict:
++        """Read the last saved Flow recovery verdict; never opens a browser. 7.0.96."""
++        try:
++            from .flow_resume_safety import check_job
++            root = self.pm.job_dir(job_id)
++            rows = check_job(root).get("unresolved", [])
++        except Exception:
++            return {}
++        row = next((r for r in rows if r.get("recovery_state")), rows[0] if rows else None)
++        if not row:
++            return {}
++        notes = {
++            "saved_project_not_reachable": ("The saved Flow project no longer opens, so another wait cannot "
++                                            "produce this image. One new image request is free in Flow."),
++            "no_generated_output_in_project": ("The saved project holds only the uploaded references. Resume "
++                                               "submits one fresh free image request automatically."),
++            "blocked_multiple_outputs": ("Two or more real images are saved. Review the project and keep one; "
++                                         "nothing is resubmitted."),
++            "recovery_checkpoint_retained": ("The Flow browser or a download failed. Nothing is resubmitted; fix "
++                                             "the browser and Resume. The saved project is kept."),
++            "fresh_request_not_started": ("The old request was archived, but the new free image request could not "
++                                          "start. Resume again once the Flow browser is healthy; nothing was submitted."),
++        }
++        command = ""
++        journal = str(row.get("journal") or "")
++        if journal.endswith(".flow-request.json") and row.get("recovery_state") in (
++                "saved_project_not_reachable", "no_generated_output_in_project"):
++            command = f"python3 cli.py v3 archive-request {job_id} {journal[:-len('.flow-request.json')]}"
++        return {"journal": journal, "recovery_state": row.get("recovery_state", ""),
++                "last_recovery_error": row.get("last_recovery_error", ""),
++                "saved_project_url": row.get("saved_project_url", ""),
++                "next_action": notes.get(row.get("recovery_state", ""), ""),
++                "archive_command": command}
++
+     def _write_pause_state(self, job_id: str, shot_id: str, reason: str,
+                            kind: str = "flow_recovery",
+                            project_url: str = "",
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_image_transaction.py b/engine/flow_image_transaction.py
+--- a/engine/flow_image_transaction.py	2026-10-25 14:12:32.000000000 +0000
++++ b/engine/flow_image_transaction.py	2026-10-26 07:03:44.000000000 +0000
+@@ -238,13 +238,23 @@
+     """Two or more real outputs are saved. Never resubmitted or replaced automatically."""
+ 
+ 
++class SavedProjectUnavailable(RuntimeError):
++    """The journal's project cannot be opened again, so its output can never be proven or downloaded."""
++
++
+ NO_OUTPUT_TOKENS = ('No completed image', 'No generated image yet')
+ BLOCKED_TOKENS = ('Extra images are saved', 'non-reference images are saved')
+-FRESH_IMAGE_REQUESTS = 3  # total submissions per shot, including the first. Image requests are free in Flow.
++FRESH_IMAGE_REQUESTS = 3  # total automatic submissions per shot, including the first. Image requests are free in Flow.
++AUTO_ARCHIVE = '.flow-request.auto-archived-'
++MANUAL_ARCHIVE = '.flow-request.archived-'
+ 
+ NO_OUTPUT_MESSAGE = ('No generated image is in the saved Flow project: only the uploaded references were found '
+                      'after the wait, so the earlier submission produced nothing. Image requests cost no Flow credits, '
+                      'so a fresh image request will be submitted in a new project.')
++PROJECT_LOST_MESSAGE = ('The saved Flow project for {image} cannot be reopened: Flow is showing {live} instead of '
++                        'the saved project {saved}. Nothing was downloaded and no image from another project was '
++                        'adopted. Image requests cost no Flow credits, so one fresh image request will be submitted '
++                        'in a new project.')
+ BLOCKED_MESSAGE = ('Two or more real images are saved for {image}. Recovery stopped without submitting or replacing; '
+                    'review the saved Flow project and choose which image to keep.')
+ 
+@@ -258,6 +268,37 @@
+     return any(token in str(error) for token in tokens)
+ 
+ 
++def observed_project_url(bridge) -> str:
++    """The project the browser is really showing, normalised for comparison."""
++    try:
++        url = bridge.current_project_url()
++    except Exception:
++        return ''
++    normalize = getattr(bridge, 'normalize_project_url', None)
++    try:
++        return normalize(url) if callable(normalize) else str(url or '')
++    except Exception:
++        return str(url or '')
++
++
++def require_saved_project(bridge, request, output=None):
++    """Refuse to read another project's gallery when the journal project cannot be reopened.
++
++    A saved request is only ever recovered from the exact project it was submitted in. When
++    that project no longer opens, waiting again can never produce the image, and scanning the
++    project Flow happens to show could adopt a different shot's image. This raises
++    ``SavedProjectUnavailable`` so the caller escalates to one fresh (free) image request.
++    """
++    saved = str(request.get('project_url') or '')
++    if not saved:
++        return ''
++    live = observed_project_url(bridge)
++    if live and live != saved:
++        raise SavedProjectUnavailable(PROJECT_LOST_MESSAGE.format(
++            image=(Path(output).name if output else 'this image'), live=live, saved=saved))
++    return live
++
++
+ def recover(provider, request, output, compiled=None, attempts=3):
+     """Only reopen, wait and download. Never upload, fill or submit here."""
+     from .providers.flow_browser import FlowRequestPending
+@@ -266,10 +307,20 @@
+     if completed(output, request) or recover_checkpoint(output, request):
+         return request
+     last = None
++    bridge = None
++    saved_project = str(request.get('project_url') or '')
+     for attempt in range(attempts):
+         try:
+             bridge = provider._ensure()
+             bridge.ensure_project(request.get('project_name') or 'AutoVideo-Image', project_url=request['project_url'])
++            live_project = require_saved_project(bridge, request, output)
++            if saved_project and not live_project:
++                # The tab never reached the saved project. Retry the same navigation once more,
++                # then stop: no wait inside an unknown page can ever finish this request.
++                if attempt + 1 < attempts:
++                    raise RuntimeError('Saved Flow project did not open; retrying the same project')
++                raise SavedProjectUnavailable(PROJECT_LOST_MESSAGE.format(
++                    image=Path(output).name, live='no project page', saved=saved_project))
+             # First consume existing media. This avoids another six-minute wait
+             # after a download interruption. If only references exist, wait once.
+             try:
+@@ -309,18 +360,34 @@
+             # Waiting again cannot create an output that Flow never produced. Stop this run now.
+             request['last_recovery_error'] = NO_OUTPUT_MESSAGE[:500]
+             request['recovery_state'] = 'no_generated_output_in_project'
++            request['saved_project_url'] = saved_project
+             write_json(journal_path(output), request)
+             pending = FlowRequestPending(NO_OUTPUT_MESSAGE)
+             pending.fresh_request_allowed = True  # read by generate(); the only case that may resubmit
+             raise pending from error
++        except SavedProjectUnavailable as error:
++            # The submission project is gone (or was never the saved one). Downloading from whichever
++            # project Flow shows could adopt another shot's image, so nothing is read here. One fresh
++            # (free) image request in a new project is the only action that can finish this shot.
++            request['recovery_state'] = 'saved_project_not_reachable'
++            request['saved_project_url'] = saved_project
++            request['observed_project_url'] = observed_project_url(bridge) if bridge is not None else ''
++            request['last_recovery_error'] = str(error)[:500]
++            write_json(journal_path(output), request)
++            pending = FlowRequestPending(str(error))
++            pending.fresh_request_allowed = True
++            raise pending from error
+         except Exception as error:
+             last = error
++            request['recovery_state'] = 'recovery_checkpoint_retained'
+             request['last_recovery_error'] = str(error)[:500]
+             write_json(journal_path(output), request)
+             if attempt + 1 < attempts:
+                 try: provider.close()
+                 except Exception: pass
+-    raise FlowRequestPending('Image recovery checkpoint retained: ' + str(last)) from last
++    pending = FlowRequestPending('Image recovery checkpoint retained: ' + str(last))
++    pending.fresh_request_allowed = False  # a browser/download problem is never solved by resubmitting
++    raise pending from last
+ 
+ 
+ def approval_context(bridge, output, request):
+@@ -351,10 +418,22 @@
+ def fresh_request_count(output):
+     """Number of archived (old, unresolved) submissions for this shot image."""
+     output = Path(output)
+-    return len(list(output.parent.glob(output.name + '.flow-request.archived-*.json')))
++    return (len(list(output.parent.glob(output.name + MANUAL_ARCHIVE + '*.json')))
++            + automatic_fresh_request_count(output))
++
++
++def automatic_fresh_request_count(output):
++    """Archived submissions that this app replaced on its own.
++
++    Only these count against FRESH_IMAGE_REQUESTS. An archive the user runs explicitly is one
++    authorised submission of its own and must never be blocked by the automatic budget, which
++    used to make ``cli.py v3 archive-request`` a dead end: it increased the count it was told to fix.
++    """
++    output = Path(output)
++    return len(list(output.parent.glob(output.name + AUTO_ARCHIVE + '*.json')))
+ 
+ 
+-def archive_saved_request(output):
++def archive_saved_request(output, automatic=False):
+     """Rename an unresolved image journal so a fresh request can be submitted. Nothing is deleted.
+ 
+     Image requests cost no Flow credits, so no credit flag is needed. Refuses if a valid non-reference image
+@@ -372,14 +451,15 @@
+             raise RuntimeError(f"{entry['file']} is a valid image that is not a classified uploaded reference; "
+                                'recover it instead of resubmitting')
+     stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + uuid.uuid4().hex[:6]
+-    archived = output.with_name(output.name + '.flow-request.archived-' + stamp + '.json')
++    tag = AUTO_ARCHIVE if automatic else MANUAL_ARCHIVE
++    archived = output.with_name(output.name + tag + stamp + '.json')
+     path.rename(archived)
+     return archived
+ 
+ 
+ def generate(provider, shot, compiled, output, vertical, request_hash):
+     """Image generation with fresh requests. Only a saved request with no output is ever replaced, and only up to
+-    FRESH_IMAGE_REQUESTS submissions per shot. Two real outputs, and video requests, are never resubmitted here."""
++    FRESH_IMAGE_REQUESTS automatic submissions per shot. Two real outputs, and video requests, are never resubmitted here."""
+     from .providers.flow_browser import FlowRequestPending
+     output = Path(output)
+     while True:
+@@ -388,11 +468,13 @@
+         except FlowRequestPending as error:
+             if not getattr(error, 'fresh_request_allowed', False):
+                 raise
+-            used = fresh_request_count(output)
++            used = automatic_fresh_request_count(output)
+             if used + 1 >= FRESH_IMAGE_REQUESTS:
+                 raise FlowRequestPending(str(error) + f' Automatic fresh image requests stopped after {used + 1} '
+-                                         'submission(s); review the saved Flow project before any further action.') from error
+-            archived = archive_saved_request(output)
++                                         'submission(s); review the saved Flow project before any further action. '
++                                         f'To allow ONE more free submission run: python3 cli.py v3 archive-request '
++                                         f'{_job_name(output)} storyboard/{output.name}') from error
++            archived = archive_saved_request(output, automatic=True)
+             print(f'[Flow] {output.name}: the saved image request produced no image. Submitting a fresh free image '
+                   f'request ({used + 2} of {FRESH_IMAGE_REQUESTS}); the old request is kept as {archived.name}.')
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_request_archive.py b/engine/flow_request_archive.py
+--- a/engine/flow_request_archive.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/flow_request_archive.py	2026-10-26 07:03:52.000000000 +0000
+@@ -1,8 +1,12 @@
+ """Archive one unresolved Flow image journal so that ONE explicit Resume makes ONE new submission.
+ 
+ Used by `cli.py v3 archive-request` and by tools/archive_uncertain_flow_image.py. The journal is renamed,
+-never deleted, so the old Flow request stays on record. Spending credits still requires the explicit
+---confirm-new-credit-spend flag, and nothing is submitted by this module.
++never deleted, so the old Flow request stays on record. Nothing is submitted by this module.
++
++v7.0.96: an image request costs no Flow credits (config/flow_models.yaml: credits_per_image 0), so an
++image journal is archived without any credit confirmation. --confirm-new-credit-spend is still accepted
++for scripts written for older releases, and is still required for any journal that is not a free image
++request. An explicit archive never counts against the automatic fresh-request budget.
+ """
+ from __future__ import annotations
+ 
+@@ -12,12 +16,18 @@
+ import uuid
+ from pathlib import Path
+ 
+-from .flow_image_transaction import completed, journal_path
++from .flow_image_transaction import SCOPES, completed, journal_path
+ from .isolated_frame_regeneration import image_valid
+ 
+ ALLOWED_PHASES = {'submission_uncertain', 'submitted'}
+ 
+ 
++def free_image_request(request) -> bool:
++    """v7.0.96: an isolated single image request costs no Flow credits."""
++    return (str(request.get('kind') or '') == 'image'
++            and str(request.get('scope') or '') in SCOPES)
++
++
+ def archive_uncertain_request(output, confirm_new_credit_spend=False):
+     """Return (exit_code, lines). 0 = done or dry run, 2 = refused, nothing changed."""
+     output = Path(output).resolve()
+@@ -52,8 +62,13 @@
+                  f'Phase:    {phase}  acknowledged={request.get("submission_acknowledged")}',
+                  f'Project:  {request.get("project_url")}',
+                  f'Archive:  {archived.name}']
+-        if not confirm_new_credit_spend:
++        if not confirm_new_credit_spend and not free_image_request(request):
+             return 0, lines + ['Dry run. Add --confirm-new-credit-spend to archive. Nothing was changed.']
+         path.rename(archived)
+-        return 0, lines + ['Archived. Press Resume once: that makes ONE new submission in a new Flow project.',
++        note = ('Archived. Press Resume once: that makes ONE new free image request in a new Flow project.'
++                if free_image_request(request) else
++                'Archived. Press Resume once: that makes ONE new submission in a new Flow project.')
++        return 0, lines + [note,
++                           'Image requests are free in Flow, so no credit approval was needed.'
++                           if free_image_request(request) else
+                            'Do not press Resume again unless the user approves another credit spend.']
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_resume_recovery.py b/engine/flow_resume_recovery.py
+--- a/engine/flow_resume_recovery.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/flow_resume_recovery.py	2026-10-26 07:13:48.000000000 +0000
+@@ -6,6 +6,32 @@
+ from .isolated_frame_regeneration import write_json, sha, image_valid
+ 
+ 
++def note_recovery_error(root, row, error):
++    """v7.0.96: leave the reason in the image journal so the next blocked Resume explains itself.
++
++    A fresh image request that fails while its new project is being created writes a journal with
++    ``phase: preparing`` and no project URL. Without this note the only trace is one line in
++    resume-reconciliation.json, and the dashboard repeats the generic block message.
++    """
++    from .flow_image_transaction import SCOPE
++    path = root / row['journal']
++    try:
++        data = json.loads(path.read_text())
++    except (OSError, ValueError):
++        return
++    if data.get('scope') != SCOPE:
++        return
++    if not data.get('last_recovery_error'):
++        data['last_recovery_error'] = str(error)[:500]
++    if not data.get('recovery_state'):
++        data['recovery_state'] = ('fresh_request_not_started' if str(data.get('phase') or '') == 'preparing'
++                                  else 'recovery_checkpoint_retained')
++    try:
++        write_json(path, data)
++    except OSError:
++        pass
++
++
+ def reconcile_job(job_dir, settings=None, progress=None, provider_factory=None):
+     from .providers.flow_browser import FlowBrowserProvider
+     from .flow_image_transaction import SCOPE, recover, generate
+@@ -87,6 +113,7 @@
+             from .automatic_recovery import recoverable_download_interruption
+             events.append({'journal': row['journal'], 'status': 'pending', 'reason': str(error)[:500],
+                            'recoverable': recoverable_download_interruption(error)})
++            note_recovery_error(root, row, error)
+         finally:
+             if provider:
+                 try: provider.close()
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/engine/flow_resume_safety.py b/engine/flow_resume_safety.py
+--- a/engine/flow_resume_safety.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/flow_resume_safety.py	2026-10-26 07:04:22.000000000 +0000
+@@ -51,7 +51,14 @@
+                 # keep blocking until explicitly reconciled.
+                 continue
+             if state in ('pending', 'submitted', 'running', 'generating', 'unknown', 'unreadable'):
+-                rows.append({'journal': str(journal.relative_to(root)), 'state': state, 'local_image_exists': image_present})
++                # v7.0.96: carry the last recovery verdict so a blocked Resume explains itself
++                # instead of repeating the same wait.
++                rows.append({'journal': str(journal.relative_to(root)), 'state': state, 'local_image_exists': image_present,
++                             'phase': str(data.get('phase') or ''),
++                             'recovery_state': str(data.get('recovery_state') or ''),
++                             'last_recovery_error': str(data.get('last_recovery_error') or '')[:300],
++                             'saved_project_url': str(data.get('saved_project_url') or data.get('project_url') or ''),
++                             'observed_project_url': str(data.get('observed_project_url') or '')})
+         except (OSError, ValueError, TypeError) as exc:
+             rows.append({'journal': str(journal.relative_to(root)), 'state': 'unreadable', 'reason': type(exc).__name__})
+     return {'job_id': root.name, 'safe_to_generate': not rows, 'unresolved_count': len(rows), 'unresolved': rows,
+@@ -63,20 +70,28 @@
+         self.report = report
+         job = report['job_id']
+         images = []
++        reasons = []
+         for row in report.get('unresolved', []):
+             journal = str(row.get('journal') or '')
+             if journal.endswith('.flow-request.json'):
+-                images.append(journal[:-len('.flow-request.json')])
+-        steps = ''.join(f"python3 cli.py v3 archive-request {job} {image} --confirm-new-credit-spend; "
+-                        for image in images)
++                image = journal[:-len('.flow-request.json')]
++                images.append(image)
++                if row.get('recovery_state'):
++                    reasons.append(f"{image}: {row['recovery_state']}"
++                                   + (f" ({row['last_recovery_error']})" if row.get('last_recovery_error') else ''))
++        steps = ''.join(f"python3 cli.py v3 archive-request {job} {image}; " for image in images)
+         message = (f"Safe Resume blocked: {report['unresolved_count']} unresolved Flow request journal(s) for {job}. "
+                    f"Saved request(s): {', '.join(images) or 'see logs/resume-reconciliation.json'}. ")
++        if reasons:
++            message += "Last recovery result: " + '; '.join(reasons) + ". "
+         if images:
+-            message += ("If the saved Flow project has no generated image, the request cannot finish. Approving ONE new "
+-                        "submission (this spends credits) and running "
+-                        f"`{steps.rstrip('; ')}` archives the old request, kept on record, and the next Resume "
+-                        "makes one new submission. The archive refuses when a real image is already saved. "
+-                        f"Without that approval, run `python3 tools/flow_resume_preflight.py outputs/{job}`. ")
++            message += ("Resume reopens the exact saved project, consumes a finished image if there is one, and waits "
++                        "once. When that project no longer holds the image, a wait cannot create it. Image requests "
++                        "cost no Flow credits, so ONE fresh image request may be submitted without credit approval: "
++                        f"`{steps.rstrip('; ')}`. That archives the old request, kept on record, and the next Resume "
++                        "makes one new free image request. The archive refuses when a real image is already saved. "
++                        "Nothing is submitted by the archive command itself. Read-only diagnosis of every journal: "
++                        f"`python3 tools/flow_resume_preflight.py outputs/{job}`. ")
+         message += "See logs/resume-reconciliation.json for recovery results."
+         super().__init__(message)
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v791_reference_labels.py b/tests/test_v791_reference_labels.py
+--- a/tests/test_v791_reference_labels.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tests/test_v791_reference_labels.py	2026-10-26 07:04:42.000000000 +0000
+@@ -156,11 +156,24 @@
+     return data
+ 
+ 
+-def test_archive_without_the_confirm_flag_changes_nothing(tmp_path, capsys):
++def test_an_image_journal_is_archived_without_the_credit_flag(tmp_path, capsys):
++    # 7.0.96: an image request costs no Flow credits, so the old confirmation step was pure friction.
+     output = tmp_path / 'shot_020_open.jpg'
+     journal(output)
+     assert run_tool(str(output)) == 0
+-    assert tx.journal_path(output).is_file()
++    assert not tx.journal_path(output).exists()
++    assert len(list(tmp_path.glob('shot_020_open.jpg.flow-request.archived-*.json'))) == 1
++    printed = capsys.readouterr().out
++    assert 'free' in printed.lower()
++
++
++def test_a_non_image_journal_still_needs_the_credit_flag(tmp_path, capsys):
++    output = tmp_path / 'take_01.mp4'
++    path = tx.journal_path(output)
++    path.write_text(json.dumps({'schema_version': 1, 'scope': 'video_flow_v1', 'kind': 'video',
++                                'status': 'pending', 'phase': 'submitted'}), encoding='utf-8')
++    assert run_tool(str(output)) == 0
++    assert path.is_file()
+     assert 'Nothing was changed' in capsys.readouterr().out
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v792_stalled_recovery.py b/tests/test_v792_stalled_recovery.py
+--- a/tests/test_v792_stalled_recovery.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tests/test_v792_stalled_recovery.py	2026-10-26 07:04:42.000000000 +0000
+@@ -8,7 +8,8 @@
+ 1. Uploaded references are recognised by their live AV_<hash>_<file> label and are never downloaded,
+    including for journals written before the label existed.
+ 2. When the wait finds no generated tile, recovery stops after that single wait with an explicit reason.
+-3. The blocked-Resume message names the exact archive command, which needs --confirm-new-credit-spend.
++3. The blocked-Resume message names the exact archive command. (7.0.96: image requests are free in Flow,
++   so the message no longer asks for a credit confirmation and the command needs no flag.)
+ """
+ import json
+ import subprocess
+@@ -159,7 +160,9 @@
+     assert report['safe_to_generate'] is False
+     error = FlowResumeBlocked(report)
+     assert ('python3 cli.py v3 archive-request 20261022-143856-7-small-daily-habits-tha-9729 '
+-            'storyboard/shot_020_open.jpg --confirm-new-credit-spend') in str(error)
++            'storyboard/shot_020_open.jpg') in str(error)
++    assert '--confirm-new-credit-spend' not in str(error)      # 7.0.96: free image requests need no approval
++    assert 'cost no Flow credits' in str(error)
+     assert 'python3 tools/flow_resume_preflight.py' in str(error)
+ 
+ 
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tests/test_v796_resume_loop.py b/tests/test_v796_resume_loop.py
+--- a/tests/test_v796_resume_loop.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v796_resume_loop.py	2026-10-26 07:14:14.000000000 +0000
+@@ -0,0 +1,309 @@
++"""v7.0.96: a Resume that cannot progress must escalate once, not repeat the same wait forever.
++
++Field case (job 20261022-143856-7-small-daily-habits-tha-9729, shot_023_open.jpg): the saved journal named
++project ca1709fe-..., but Flow was showing another project (the request had been submitted in a project the
++job never recorded). Every Resume therefore reopened the wrong project, `capture()` refused with "Image
++project changed", the three attempts ended as "Image recovery checkpoint retained", the journal stayed
++unresolved, and Resume reported "Saved request unresolved; no new generation started" again and again.
++
++The old guidance made it worse: it told the user to archive the request with --confirm-new-credit-spend,
++but image requests are free (config/flow_models.yaml: credits_per_image 0), and every archive increased the
++automatic fresh-request count that generate() uses as a hard stop, so the documented command led to a dead end.
++
++Tested here with fakes only: no browser, no Flow request, no credits.
++"""
++import json
++from pathlib import Path
++
++import pytest
++from PIL import Image
++
++from engine import flow_image_transaction as tx
++from engine.flow_request_archive import archive_uncertain_request
++from engine.flow_resume_safety import FlowResumeBlocked, check_job
++from engine.providers.flow_browser import FlowBrowser, FlowRequestPending
++
++SAVED = 'https://flow.google.com/project/ca1709fe-6a77-41a3-95be-4fafe7192ae2'
++LIVE = 'https://flow.google.com/project/2d019101-aaaa-bbbb-cccc-dddddddddddd'
++LOCATION_LABEL = 'AV_197ff6e22dbe_location_master.jpg'
++CHARACTER_LABEL = 'AV_5a1ca5dde04e_character.png'
++
++
++def picture(path, color):
++    Image.new('RGB', (128, 96), color).save(path)
++    return str(path)
++
++
++def tile(sig, label=''):
++    hint = "Tile displaying a user's image " + label if label else 'Tile displaying a generated image'
++    return {'kind': 'image', 'sig': sig, 'tile_hint': hint, 'hint': hint}
++
++
++class Bridge:
++    """Flow tab that cannot open the saved project any more."""
++
++    normalize_project_url = staticmethod(FlowBrowser.normalize_project_url)
++
++    def __init__(self, tiles, shown=LIVE, openable=True, served=None):
++        self.tiles, self.shown, self.openable = list(tiles), shown, openable
++        self.served = served or {}
++        self.project = shown
++        self.downloads = []
++        self.wait_calls = 0
++
++    def current_project_url(self): return self.project
++
++    def ensure_project(self, *a, **k):
++        wanted = k.get('project_url')
++        self.project = wanted if (self.openable and wanted) else self.shown
++
++    def media_assets(self): return [dict(t) for t in self.tiles]
++
++    def download_latest_asset(self, path, preferred_signature, **kw):
++        self.downloads.append(preferred_signature)
++        Path(path).write_bytes(Path(self.served[preferred_signature]).read_bytes())
++
++    def wait_for_agent_generation(self, **kw):
++        self.wait_calls += 1
++        return False
++
++
++class Provider:
++    def __init__(self, bridge): self.bridge = bridge
++    def _ensure(self): return self.bridge
++    def close(self): pass
++
++
++@pytest.fixture
++def lost_project(tmp_path):
++    job = tmp_path / '20261022-143856-7-small-daily-habits-tha-9729'
++    (job / 'storyboard').mkdir(parents=True)
++    (job / 'production_manifest.json').write_text('{}')
++    output = job / 'storyboard' / 'shot_023_open.jpg'
++    location = picture(job / 'storyboard' / 'location_master.jpg', 'red')
++    character = picture(job / 'storyboard' / 'character.png', 'blue')
++    request = {'schema_version': 1, 'scope': tx.SCOPE, 'kind': 'image', 'status': 'pending',
++               'phase': 'submitted', 'submission_acknowledged': True, 'project_url': SAVED,
++               'project_name': 'AutoVideo-Image-19-22', 'request_hash': 'h1', 'shot_id': 'shot_023',
++               'vertical': False, 'submitted_prompt': 'x', 'source_prompt': 'x',
++               'baseline': [], 'signature': '',
++               'reference_hashes': {location: tx.sha(location), character: tx.sha(character)},
++               'capture_probes': {}}
++    tx.write_json(tx.journal_path(output), request)
++    return job, output, request, [location, character]
++
++
++def test_a_saved_project_that_cannot_be_reopened_escalates_instead_of_retrying(lost_project):
++    job, output, request, _refs = lost_project
++    table = [tile('/asb/ref-loc', LOCATION_LABEL), tile('/asb/ref-chr', CHARACTER_LABEL)]
++    bridge = Bridge(table, shown=LIVE, openable=False)
++    with pytest.raises(FlowRequestPending) as info:
++        tx.recover(Provider(bridge), request, output, compiled={})
++    # The decisive path: no six-minute wait in an unrelated project, no download, no retry loop.
++    assert info.value.fresh_request_allowed is True
++    assert bridge.wait_calls == 0
++    assert bridge.downloads == []
++    assert 'cannot be reopened' in str(info.value)
++    assert LIVE in str(info.value) and SAVED in str(info.value)
++    saved = json.loads(tx.journal_path(output).read_text())
++    assert saved['recovery_state'] == 'saved_project_not_reachable'
++    assert saved['saved_project_url'] == SAVED
++    assert saved['observed_project_url'] == LIVE
++    assert not output.exists()
++
++
++def test_another_projects_gallery_is_never_read_or_adopted(lost_project):
++    job, output, request, _refs = lost_project
++    # The project Flow shows holds a real generated image: it belongs to some other shot, so it must be ignored.
++    other = picture(Path(job) / 'elsewhere.jpg', 'green')
++    table = [tile('/asb/ref-loc', LOCATION_LABEL), tile('/asb/someone-elses-frame')]
++    bridge = Bridge(table, shown=LIVE, openable=False, served={'/asb/someone-elses-frame': other})
++    with pytest.raises(FlowRequestPending):
++        tx.recover(Provider(bridge), request, output, compiled={})
++    assert bridge.downloads == []
++    assert not output.exists()
++
++
++def test_the_journal_records_why_the_wait_found_nothing(lost_project):
++    job, output, request, _refs = lost_project
++    bridge = Bridge([tile('/asb/ref-loc', LOCATION_LABEL), tile('/asb/ref-chr', CHARACTER_LABEL)], openable=True)
++    bridge.ensure_project = lambda *a, **k: setattr(bridge, 'project', SAVED)
++    with pytest.raises(FlowRequestPending) as info:
++        tx.recover(Provider(bridge), request, output, compiled={})
++    assert bridge.wait_calls == 1                     # one wait, then a decisive verdict
++    assert info.value.fresh_request_allowed is True
++    saved = json.loads(tx.journal_path(output).read_text())
++    assert saved['recovery_state'] == 'no_generated_output_in_project'
++    assert saved['saved_project_url'] == SAVED
++
++
++def test_generate_replaces_the_lost_request_once_and_finishes(lost_project, monkeypatch):
++    job, output, request, _refs = lost_project
++    calls = []
++
++    def fake(provider, shot, compiled, output, vertical, request_hash):
++        calls.append(Path(output).name)
++        if len(calls) == 1:
++            pending = FlowRequestPending('the saved project cannot be reopened')
++            pending.fresh_request_allowed = True
++            raise pending
++        return {'path': str(output), 'provider': 'flow', 'credits': 0}
++
++    monkeypatch.setattr(tx, '_generate_once', fake)
++    assert tx.generate(None, None, {}, output, False, 'h1')['credits'] == 0
++    assert len(calls) == 2                              # one recovery attempt, then one fresh request
++    assert tx.automatic_fresh_request_count(output) == 1
++    assert tx.fresh_request_count(output) == 1
++    archived = list(Path(output).parent.glob(output.name + '.flow-request.auto-archived-*.json'))
++    assert len(archived) == 1
++    assert not tx.journal_path(output).exists()
++
++
++def test_the_automatic_budget_stops_with_a_command_that_actually_works(lost_project, monkeypatch):
++    job, output, request, _refs = lost_project
++    calls = []
++
++    def always_pending(provider, shot, compiled, output, vertical, request_hash):
++        # Each submission writes its own journal, exactly like _generate_once does.
++        calls.append(1)
++        tx.write_json(tx.journal_path(output), dict(request, project_name=f'AutoVideo-Image-{len(calls)}'))
++        pending = FlowRequestPending('the saved project cannot be reopened')
++        pending.fresh_request_allowed = True
++        raise pending
++
++    monkeypatch.setattr(tx, '_generate_once', always_pending)
++    with pytest.raises(FlowRequestPending) as info:
++        tx.generate(None, None, {}, output, False, 'h1')
++    assert len(calls) == tx.FRESH_IMAGE_REQUESTS
++    message = str(info.value)
++    assert 'stopped after 3 submission(s)' in message
++    # v7.0.96: the message names the exact, flag-free command.
++    assert ('python3 cli.py v3 archive-request 20261022-143856-7-small-daily-habits-tha-9729 '
++            'storyboard/shot_023_open.jpg') in message
++    assert '--confirm-new-credit-spend' not in message
++
++    # The old deadlock: the recommended archive increased the count it was told to fix, so the
++    # next Resume was refused immediately and forever. It must now allow exactly one submission.
++    assert tx.journal_path(output).is_file()
++    archived = tx.archive_saved_request(output)
++    assert '.flow-request.archived-' in archived.name
++    assert '.flow-request.auto-archived-' not in archived.name
++    assert tx.automatic_fresh_request_count(output) == tx.FRESH_IMAGE_REQUESTS - 1
++
++    calls.clear()
++    monkeypatch.setattr(tx, '_generate_once', lambda *a, **k: calls.append(1) or {'path': str(output)})
++    assert tx.generate(None, None, {}, output, False, 'h1') == {'path': str(output)}
++    assert len(calls) == 1                              # one explicit archive, one authorised submission
++
++
++def test_an_explicit_archive_is_free_and_needs_no_credit_flag(lost_project):
++    job, output, request, _refs = lost_project
++    code, lines = archive_uncertain_request(output)
++    assert code == 0
++    assert not tx.journal_path(output).exists()
++    assert any('free' in line.lower() for line in lines)
++    assert not any('Nothing was changed' in line for line in lines)
++
++
++def test_the_blocked_resume_message_is_honest_and_actionable(lost_project):
++    job, output, request, _refs = lost_project
++    request.update(recovery_state='saved_project_not_reachable',
++                   last_recovery_error='Flow is showing another project')
++    tx.write_json(tx.journal_path(output), request)
++    report = check_job(job)
++    assert report['safe_to_generate'] is False
++    row = report['unresolved'][0]
++    assert row['recovery_state'] == 'saved_project_not_reachable'
++    assert row['saved_project_url'] == SAVED
++    message = str(FlowResumeBlocked(report))
++    assert 'saved_project_not_reachable' in message        # the why, from the journal
++    assert 'cost no Flow credits' in message
++    assert ('python3 cli.py v3 archive-request 20261022-143856-7-small-daily-habits-tha-9729 '
++            'storyboard/shot_023_open.jpg') in message
++    assert '--confirm-new-credit-spend' not in message
++    assert 'python3 tools/flow_resume_preflight.py' in message
++
++
++def test_the_preflight_tool_explains_the_loop_and_the_one_command(lost_project, capsys):
++    job, output, request, _refs = lost_project
++    request.update(recovery_state='saved_project_not_reachable',
++                   last_recovery_error='Flow is showing another project',
++                   saved_project_url=SAVED, observed_project_url=LIVE)
++    tx.write_json(tx.journal_path(output), request)
++    from tools import flow_resume_preflight as preflight
++    import sys
++    monkeyed = sys.argv
++    sys.argv = ['flow_resume_preflight.py', str(job)]
++    try:
++        assert preflight.main() == 3
++    finally:
++        sys.argv = monkeyed
++    printed = capsys.readouterr().out
++    assert 'saved_project_not_reachable' in printed
++    assert 'Next action' in printed
++    assert f'python3 cli.py v3 archive-request {job.name} storyboard/shot_023_open.jpg' in printed
++
++
++def test_the_dashboard_guidance_reads_the_last_recovery_verdict(lost_project):
++    from types import SimpleNamespace
++    from engine.factory import Factory
++
++    job, output, request, _refs = lost_project
++    request.update(recovery_state='saved_project_not_reachable',
++                   last_recovery_error='Flow is showing another project', saved_project_url=SAVED)
++    tx.write_json(tx.journal_path(output), request)
++
++    class Manager:
++        def job_dir(self, job_id):
++            return str(job if job_id == job.name else Path(job) / job_id)
++
++    diagnosis = Factory.flow_journal_diagnosis(SimpleNamespace(pm=Manager()), job.name)
++    assert diagnosis['recovery_state'] == 'saved_project_not_reachable'
++    assert diagnosis['saved_project_url'] == SAVED
++    assert 'free' in diagnosis['next_action'].lower()
++    assert diagnosis['archive_command'].endswith('storyboard/shot_023_open.jpg')
++
++
++def test_a_recovery_checkpoint_is_never_resubmitted(lost_project, monkeypatch):
++    job, output, request, _refs = lost_project
++    def broken(provider, shot, compiled, output, vertical, request_hash):
++        raise FlowRequestPending('Image recovery checkpoint retained: download incomplete')
++    monkeypatch.setattr(tx, '_generate_once', broken)
++    with pytest.raises(FlowRequestPending):
++        tx.generate(None, None, {}, output, False, 'h1')
++    assert tx.fresh_request_count(output) == 0
++    assert tx.journal_path(output).is_file()
++
++
++def test_a_resume_that_cannot_start_the_fresh_request_says_so(lost_project):
++    """reconcile_job end to end: the lost project is archived, the new request fails to start, and the
++    next blocked Resume names that instead of repeating 'Saved request unresolved'."""
++    from engine.flow_resume_recovery import reconcile_job
++
++    job, output, request, _refs = lost_project
++    requests = []
++
++    class Bridge:
++        normalize_project_url = staticmethod(FlowBrowser.normalize_project_url)
++        def current_project_url(self): return LIVE
++        def ensure_project(self, *a, **k): return None
++        def media_assets(self): return []
++        def download_latest_asset(self, *a, **k):
++            raise AssertionError('no download may be attempted in another project')
++        def create_isolated_image_project(self, name):
++            requests.append(name)
++            raise RuntimeError('Flow browser closed while creating the new project')
++
++    class Provider:
++        def _ensure(self): return Bridge()
++        def close(self): pass
++
++    report = reconcile_job(job, {}, lambda *a, **k: None, provider_factory=Provider)
++    assert requests, 'the fresh submission must be attempted'
++    assert tx.automatic_fresh_request_count(output) == 1
++    saved = json.loads(tx.journal_path(output).read_text())
++    assert saved['recovery_state'] == 'fresh_request_not_started'
++    assert 'closed while creating' in saved['last_recovery_error']
++    message = str(FlowResumeBlocked(report))
++    assert 'fresh_request_not_started' in message
++    assert 'closed while creating' in message
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/archive_uncertain_flow_image.py b/tools/archive_uncertain_flow_image.py
+--- a/tools/archive_uncertain_flow_image.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tools/archive_uncertain_flow_image.py	2026-10-26 07:04:38.000000000 +0000
+@@ -1,8 +1,9 @@
+ #!/usr/bin/env python3
+ """Archive one unresolved Flow image journal so the next Resume makes ONE new submission.
+ 
+-Same as `cli.py v3 archive-request <job> storyboard/<image> --confirm-new-credit-spend`.
+-The journal is renamed, never deleted. Without --confirm-new-credit-spend nothing changes.
++Same as `cli.py v3 archive-request <job> storyboard/<image>`. The journal is renamed, never deleted.
++An image request costs no Flow credits, so no credit confirmation is needed; the flag is accepted for
++older scripts and is still required for a journal that is not a free image request.
+ 
+     python3 tools/archive_uncertain_flow_image.py outputs/<job>/storyboard/shot_020_open.jpg [--confirm-new-credit-spend]
+ """
+@@ -20,7 +21,8 @@
+     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+     parser.add_argument('output', type=Path, help='the shot image path, e.g. outputs/<job>/storyboard/shot_020_open.jpg')
+     parser.add_argument('--confirm-new-credit-spend', action='store_true',
+-                        help='required: approve that the next Resume spends credits on one new submission')
++                        help='only for a non-image journal: approve that the next Resume spends credits on one '
++                             'new submission. Not required for a free image request.')
+     args = parser.parse_args(argv)
+     code, lines = archive_uncertain_request(args.output, args.confirm_new_credit_spend)
+     for line in lines:
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/flow_resume_preflight.py b/tools/flow_resume_preflight.py
+--- a/tools/flow_resume_preflight.py	2026-10-25 14:12:18.000000000 +0000
++++ b/tools/flow_resume_preflight.py	2026-10-26 07:13:52.000000000 +0000
+@@ -1,5 +1,9 @@
+ #!/usr/bin/env python3
+-"""Read-only preflight; exit code 3 means generation is blocked."""
++"""Read-only preflight; exit code 3 means generation is blocked.
++
++v7.0.96: prints, for every saved Flow journal, why the last recovery could not finish and
++the one command that moves the job forward. Nothing is opened, downloaded or submitted.
++"""
+ import argparse
+ import json
+ import sys
+@@ -7,13 +11,58 @@
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ from engine.flow_resume_safety import check_job
+ 
++NEXT_ACTION = {
++    'saved_project_not_reachable': (
++        'The saved project cannot be reopened, so no wait can produce the image. Image requests are free in '
++        'Flow: archive the journal (kept on record) and Resume once to submit ONE new free image request.'),
++    'no_generated_output_in_project': (
++        'The saved project holds only the uploaded references. Resume submits ONE fresh free image request '
++        'automatically; if the automatic budget is used up, archive the journal and Resume once.'),
++    'blocked_multiple_outputs': (
++        'Two or more real images are saved. Review the saved project and keep one; nothing is resubmitted.'),
++    'fresh_request_not_started': (
++        'The old request was archived, but the new free image request could not start (Flow browser or a new '
++        'project). Resume again once the Flow browser is open and healthy; nothing was submitted.'),
++    'recovery_checkpoint_retained': (
++        'The browser or the download failed. Nothing is resubmitted. Fix the browser/network and Resume; the '
++        'saved project and the request are kept.'),
++}
++
++
++def journal_diagnosis(job, row):
++    image = str(row.get('journal') or '')[:-len('.flow-request.json')]
++    state = row.get('recovery_state') or 'unrecorded'
++    job_dir = Path(job).expanduser().absolute()
++    lines = [f'  Image:        {image}',
++             f'  Journal:      {row.get("state")}  phase={row.get("phase") or "?"}',
++             f'  Local image:  {"yes" if row.get("local_image_exists") else "no"}',
++             f'  Last result:  {state}']
++    if row.get('last_recovery_error'):
++        lines.append(f'  Detail:       {row["last_recovery_error"]}')
++    archives = sorted(Path(job_dir / image).parent.glob(Path(image).name + '.flow-request.*-archived-*.json'))
++    automatic = [p for p in archives if '.flow-request.auto-archived-' in p.name]
++    lines.append(f'  Old requests: {len(archives)} archived ({len(automatic)} automatic)')
++    lines.append(f'  Next action:  {NEXT_ACTION.get(state, "Resume once; it reopens the exact saved project and reports what it found.")}')
++    if state in ('saved_project_not_reachable', 'no_generated_output_in_project'):
++        lines.append(f'  Command:      python3 cli.py v3 archive-request {job_dir.name} {image}')
++    return lines
++
++
+ def main():
+     ap = argparse.ArgumentParser(description=__doc__)
+     ap.add_argument('job', help='outputs/<job-id>')
+     args = ap.parse_args()
+     report = check_job(args.job)
+     print(json.dumps(report, indent=2))
++    if not report['safe_to_generate']:
++        print('\nWhy generation is blocked (read-only):')
++        for row in report['unresolved']:
++            print(f'\n{row.get("journal")}')
++            print('\n'.join(journal_diagnosis(args.job, row)))
++        print('\nResume always reopens each saved request first. An image request costs no Flow credits, so the '
++              'archive command above allows exactly ONE new free image request on the next Resume.')
+     return 0 if report['safe_to_generate'] else 3
+ 
++
+ if __name__ == '__main__':
+     raise SystemExit(main())
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v794_to_v795.py b/tools/update_v794_to_v795.py
+--- a/tools/update_v794_to_v795.py	2026-10-25 14:58:50.000000000 +0000
++++ b/tools/update_v794_to_v795.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,168 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.95 update to a v7.0.94 installation.
+-
+-A production that selects English, Hindi and Odia now really produces three videos:
+-
+-- one language can no longer block the others. A missing narration, a rejected
+-  plan or a failed render is recorded for that language only;
+-- a prepared batch whose text-card or points flags differ is a warning on that
+-  edition instead of a refusal that stopped every language;
+-- the extra language narrations are prepared during production even when
+-  "Also prepare every selected language automatically" was never ticked, and a
+-  localization/TTS failure no longer stops the primary master;
+-- every job that selected editions shows a "Three-language output" panel naming
+-  each language's status and the one action that unblocks it
+-  (also `python3 cli.py v3 language-outputs <job> --explain`, read-only);
+-- one channel profile can carry a logo per language (logo-en, logo-hi, logo-or).
+-  The Create page saves all three logos in one step and shows, per language, the
+-  profile, channel name and the exact logo the video will use. Finishing Studio
+-  shows the same three logo fields.
+-
+-Nothing is generated, rendered or charged by this update itself.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.95 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.95/tools/update_v794_to_v795.py .            # dry run: shows the plan
+-    python3 ../AutoVideoAI-v7.0.95/tools/update_v794_to_v795.py . --apply    # installs the code
+-
+-Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
+-music, characters and channel profiles are never copied, moved or deleted.
+-Stop the dashboard before --apply.
+-"""
+-
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = ['THREE_LANGUAGE_RENDER_FIX_V7_0_95.md', 'VERSION', 'app.py', 'cli.py', 'engine/channel_branding.py', 'engine/factory.py', 'engine/finishing_studio.py', 'engine/finishing_ui.py', 'engine/language_editions.py', 'engine/speech_cards.py', 'tests/test_v768_language_editions_render.py', 'tests/test_v769_channel_branding.py', 'tests/test_v777_edition_cards_hooks.py', 'tests/test_v795_three_language_render.py', 'tools/update_v794_to_v795.py']
+-# Files as they exist in 7.0.94: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['f2c80e5bb10454c8254680c30ab06253294864e666ae96504814c57c54e9217a'],
+-    'app.py': ['61f814a94dbf347e395aa8db72995de516d2d0efcf0a177507f162ef166f39f1'],
+-    'cli.py': ['f166c3c70ab365bf9eeee62074388ecb54360b62072b0a3fb40006cac8c07794'],
+-    'engine/channel_branding.py': ['62536373092d9116028bcd8f1bf83ffd0f8b0f240a085cd7e2adcf6361cbba0b'],
+-    'engine/factory.py': ['d170a4a7914c29e5074c49def730788ba3c4ab428add13fe1b5d81915488165f'],
+-    'engine/finishing_studio.py': ['2579f855da8d9ef719232196b05b7df00fa418fd05f8a00b325d3d42cb512fff'],
+-    'engine/finishing_ui.py': ['d0519ca0d3d8b483af6b09377f7ed9623cf8f83d9de1779e602bb16a6f007e78'],
+-    'engine/language_editions.py': ['e4dba5d9176e1b4b91e2e315e8401de48c66cbd789a27e620d0df54c444ef0da'],
+-    'engine/speech_cards.py': ['ed9a42bae3d305f152920eb949f4f89d2141c400a36b5f007eb8656f4b42e67a'],
+-    'tests/test_v768_language_editions_render.py': ['ff9bae7bf525bff97b1b00f0ab915d404e075da2343f80857796e26fa3099e77'],
+-    'tests/test_v769_channel_branding.py': ['f1f7bd051960af6ae3ab3ffac883f715448b9395bfa382adb8e89f43f8f02679'],
+-    'tests/test_v777_edition_cards_hooks.py': ['fc44fc314c9d64ad3c489642a3a8c7c2c25752db09fa0f4dd3ed534722d40a38'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.94', '7.0.95')  # 7.0.95 allows a safe re-run after success
+-
+-# The 7.0.94 to 7.0.95 update ships in the 7.0.95 zip. Apply it first on an older installation.
+-EARLIER_STEPS = [
+-    ('7.0.93', '7.0.94', 'tools/update_v793_to_v794.py'),
+-]
+-
+-
+-def chain_message(current):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.94 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.94 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.94 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this 7.0.95 update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current))
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.95 folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
+-            'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every 7.0.95 code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v7.0.94-to-v7.0.95-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to 7.0.95. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -ruN -x RELEASE_MANIFEST.json -x '*.pyc' -x __pycache__ -x code-update-backups -x .pytest_cache a/tools/update_v795_to_v796.py b/tools/update_v795_to_v796.py
+--- a/tools/update_v795_to_v796.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v795_to_v796.py	2026-10-26 07:14:18.000000000 +0000
+@@ -0,0 +1,172 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.96 update to a v7.0.95 installation.
++
++A Resume that could not collect a saved Flow image used to repeat the same six-minute wait
++forever, then stop at "Saved request unresolved; no new generation started":
++
++- when the saved request names a Flow project that cannot be reopened (or Flow is showing a
++  different project), recovery no longer waits in that page and no longer retries three times.
++  Nothing is downloaded from another project, because that image can belong to a different shot.
++  The journal records why, and one fresh FREE image request is submitted in a new project;
++- the three-submission automatic budget is counted per shot for automatic replacements only,
++  so the published archive command can no longer block itself; an explicit archive always
++  allows exactly one more free image request;
++- image requests cost no Flow credits (config/flow_models.yaml: credits_per_image 0), so the
++  archive command no longer needs --confirm-new-credit-spend (the flag is still accepted);
++- the blocked-Resume message, the Queue panel and `tools/flow_resume_preflight.py` now state the
++  last recovery verdict, the saved project, and the one command that moves the job forward;
++- `tools/flow_resume_preflight.py` is read-only and explains every journal.
++
++Nothing is generated, rendered or charged by this update itself.
++
++Usage (run from the existing installation folder, after extracting the 7.0.96 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.96/tools/update_v795_to_v796.py .            # dry run: shows the plan
++    python3 ../AutoVideoAI-v7.0.96/tools/update_v795_to_v796.py . --apply    # installs the code
++
++Only code and documentation are replaced. Outputs, saved jobs, browser profiles,
++music, characters and channel profiles are never copied, moved or deleted.
++Stop the dashboard before --apply.
++"""
++
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = ['RESUME_LOOP_FIX_V7_0_96.md', 'VERSION', 'app.py', 'cli.py',
++           'engine/factory.py', 'engine/flow_image_transaction.py', 'engine/flow_request_archive.py',
++           'engine/flow_resume_recovery.py', 'engine/flow_resume_safety.py', 'tests/test_v791_reference_labels.py',
++           'tests/test_v792_stalled_recovery.py', 'tests/test_v796_resume_loop.py',
++           'tools/archive_uncertain_flow_image.py', 'tools/flow_resume_preflight.py',
++           'tools/update_v795_to_v796.py']
++# Files as they exist in 7.0.95: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': ['38c62ac999db99b05bbaf34f800f7e8614d9f9d4497ed51148982014e952dd24'],
++    'app.py': ['ba6b11582e96f1b58bc10b491e961912601af4d80bd91ab363df5273af4ad5df'],
++    'cli.py': ['3d4768bfadaa911f3a043a0894f1a4bc06b177db8f2e4afa1d42e3ca7298ff04'],
++    'engine/factory.py': ['4bf2cff95a4af619c8cd6c4d03c5861b02307cf2fab900f4aa921aab96659229'],
++    'engine/flow_image_transaction.py': ['436d34ead58a60139c28b41706aaccf2fb48b5913265ed4aa0351aaa8eb6dd4d'],
++    'engine/flow_request_archive.py': ['f405085fb17411d91fdf2820bd28941c6681c59ab6fc76fc702c8415acc8391b'],
++    'engine/flow_resume_recovery.py': ['c0910077bcf8a7f58e72b3e83a48700489ed1b6a6ec2f91e4ea65d98da871a1b'],
++    'engine/flow_resume_safety.py': ['26d132a73815d1431e8e282fd1722733bb12dab42f668e6fc6c198069dff5299'],
++    'tests/test_v791_reference_labels.py': ['f5dbba0c85bb4b7e1a8dfd2f4b916bea5543d945242b3c9e4020e452362e5df9'],
++    'tests/test_v792_stalled_recovery.py': ['7372e121c46e6126acbb9fcdccef8831089f55feb1549a694f7fccd2776676bb'],
++    'tools/archive_uncertain_flow_image.py': ['3e8d6313a8126096dbcd7aa4eb143c4ad8743232f37eb073976d01c29831c1ca'],
++    'tools/flow_resume_preflight.py': ['4315bffbee2383be1c76fea29627dcef88ce3cb2c9d0aeeecaa7fb92b80d6df5'],
++}
++
++ACCEPTED_INSTALLS = ('7.0.95', '7.0.96')  # 7.0.96 allows a safe re-run after success
++
++# The 7.0.95 to 7.0.96 update ships in the 7.0.96 zip. Apply it first on an older installation.
++EARLIER_STEPS = [
++    ('7.0.94', '7.0.95', 'tools/update_v794_to_v795.py'),
++]
++
++
++def chain_message(current):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.95 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.95 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.95 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this 7.0.96 update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current))
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the 7.0.96 folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        if destination.exists() and sha(destination) not in ALLOWED.get(name, []) + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++    plan = {'target': str(target), 'installed_version': current, 'apply': args.apply,
++            'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every 7.0.96 code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v7.0.95-to-v7.0.96-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to 7.0.96. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat).')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

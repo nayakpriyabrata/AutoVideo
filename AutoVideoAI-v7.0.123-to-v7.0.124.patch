@@ -1,0 +1,2453 @@
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/FINISHED_EDITIONS_AND_QUIET_BROWSER_V7_0_124.md b/FINISHED_EDITIONS_AND_QUIET_BROWSER_V7_0_124.md
+--- a/FINISHED_EDITIONS_AND_QUIET_BROWSER_V7_0_124.md	1970-01-01 00:00:00.000000000 +0000
++++ b/FINISHED_EDITIONS_AND_QUIET_BROWSER_V7_0_124.md	2026-11-02 10:21:31.000000000 +0000
+@@ -0,0 +1,239 @@
++# v7.0.124 · three languages finish, and the browser stops popping up
++
++Two reports from the same install, plus nine defects found by auditing the shipped suite against a
++real FFmpeg. The suite was **12 failed / 1946 passed** before this release and is **1 failed / 1987
++passed** after it; the one remaining failure is an artifact of this sandbox's FFmpeg build and fails
++identically on the untouched 7.0.123 tree.
++
++> *"I have added some features like to generate videos with three language, however its not generating
++> video with 3 language"*
++> *"can we do something which will not show me the annoying pop-up chromium browser during the video
++> generation process … this create issue when i am working by sharing the screen, i have to stop the
++> video generation during that time"*
++
++## 1 · A three-language production re-rendered its editions for ever
++
++**The editions were being made. They were never allowed to count as finished.**
++
++`render_job_editions()` decides what is still pending with `_bundle_is_current()`, and since 7.0.113
++it also re-opens an edition through `_captions_contradict()` - "the record says this file is right, but
++the picture disagrees". That check compared the burned-caption evidence with the job's wish in **both**
++directions:
++
++```python
++return shown is not None and bool(shown) != bool(wants)   # 7.0.113 .. 7.0.123
++```
++
++Only one of those directions is evidence. A caption is not on screen every second, so sampled frames
++that find no text prove nothing - `engine/render/caption_check.explain()` has always said exactly that:
++
++```python
++if expected and not result['looks_like_text']:
++    # Deliberately not a warning: a caption is not on screen every second, so a handful of samples can
++    # land between cues. The check only ever reports text it can see.
++    return ''
++```
++
++and the render loop only ever sets `captions_disputed` - the "stop re-rendering this for ever" marker -
++for the visible-text direction. So a language whose transcript is **on** had no escape hatch at all:
++
++```
++Hindi export, captions_burned = True      (the file really does carry them)
++caption_check.probe()  ->  15.53 % bright / 2.32 % edges  ->  looks_like_text = False
++                                    EDGE_RATIO threshold is 3.5 %, so a bright, high-contrast
++                                    picture alone hides the glyphs from the heuristic
++_captions_contradict(wants=True)  ->  False != True  ->  True  ->  Hindi is pending again
++```
++
++Every run therefore re-encoded Hindi into a brand-new `language_editions/<stamp>/exports/` folder, and
++`_mark_superseded()` stamped the previous file *"this is not the current video"* - a marker that was
++itself about to be replaced. Consequences, all observed:
++
++* a second `render_job_editions()` on an unchanged job returned a **different path** for Hindi;
++* `edition_diagnosis()` - which only calls `_bundle_is_current()` - reported `exported` while the
++  renderer reported `pending`, so the Three-language panel and the job disagreed about the same file;
++* a job could never reach "every selected language is exported", so resume, repair and the
++  *Add intro/outro and render pending language editions* button each re-ran the whole render stage
++  instead of finishing - minutes of FFmpeg per language, per press, for ever.
++
++Now the contradiction is one-directional, matching the check's own documented contract:
++
++```python
++if wants:
++    return False      # asked for a transcript: undetected glyphs are not a defect
++```
++
++"Shows text although this job asked for none" still forces exactly one repaint and is then marked
++`captions_disputed` and explained - the 7.0.113 field defect stays fixed.
++
++Also hardened on the way: an entry that says `exported` but carries no readable path used to raise
++`ValueError: PosixPath('.') has an empty name` **out of the whole edition loop** - precisely the
++one-language-kills-every-language failure 7.0.95 removed for every other cause. It now reads no
++provenance and returns "no contradiction".
++
++Three shipped tests pin this and now pass: `test_each_selected_language_is_rendered_with_its_own_narration`,
++`test_switching_the_transcript_re_renders_only_that_language`, and a new
++`tests/test_v7124_three_language_convergence.py` (11 tests) that also asserts a third run produces the
++same two files, that the panel and the renderer agree, and that switching Odia's transcript on repaints
++**only** Odia and then settles.
++
++## 2 · No Chromium window during generation - on Windows and macOS too
++
++Quiet browser existed since 7.0.22 and did the right thing on Linux/WSL: a headed browser on a private
++hidden `Xvfb` display, with a localhost-only password-protected VNC viewer for sign-in. Everywhere else
++it refused:
++
++```python
++if os.name != 'posix' or not Path('/proc').exists():
++    raise RuntimeError('Quiet browser currently supports Linux/WSL only')
++```
++
++and the SETTINGS box said so - *"Quiet browser · experimental (Linux/WSL)"*. On Windows the popup was
++therefore unavoidable, which is exactly the report above.
++
++`engine/quiet_browser.py` now hides a browser on every OS, and stays **headed** everywhere:
++
++| | mechanism | Show browser |
++|---|---|---|
++| Linux / WSL | private hidden X display (`Xvfb`), unchanged | VNC viewer on the same display, unchanged |
++| Windows / macOS | headed window parked at `--window-position=-32000,-32000`, `--mute-audio` | moves **that same running window** on-screen over a loopback debugging port |
++
++An off-screen headed window is never drawn, so a screen share, a recording or a presentation cannot
++pick it up - and because it is not headless, the Google session, cookies, dialogs and Flow downloads
++all behave exactly as they do visibly. `--headless` is deliberately **not** used: Google refuses a
++headless sign-in.
++
++The details that make it safe:
++
++* **A sign-in is never hidden.** *FLOW SESSION → Open Flow* launches with `quiet=False`, and
++  `_post_connect()` reveals the window by itself when it hits a sign-in wall, then conceals it again
++  once `is_logged_in()` - the same session, no restart, so the authenticated profile is the one
++  generation keeps using. An already-signed-in quiet session is never revealed at all.
++* **Show / Hide are one button in the sidebar** and only appear when there is something to show. Both
++  move the existing window through `Browser.getWindowForTarget` / `Browser.setWindowBounds`; neither
++  restarts a browser or a profile, matching the 7.0.22 promise.
++* **The debugging port is best effort.** If it cannot be allocated, or a launch with it fails, the
++  launcher falls through to the same hidden window without it (`quiet-hidden-window-noport`) - losing
++  the reveal handle never costs a hidden browser. Chromium binds it to `127.0.0.1` only.
++* **CDP mode still refuses.** Quiet mode cannot hide a window you own; the message now says to pick
++  bundled/system, or turn Quiet browser off, instead of the old "needs a local Linux browser".
++* **Flow Music is quiet too**, via `launch_plan(cfg, record=False)` so a short-lived music browser
++  cannot overwrite the Flow window handle the button reads. A music login stays visible.
++* `browser_environment()` keeps its exact contract - a missing `Xvfb` still raises *"Quiet mode did not
++  open a visible browser"* rather than falling back to a window.
++
++`tests/test_v7124_quiet_browser_all_os.py` (19 tests) pins all of it, including that a quiet launch
++passes `headless=False`, that an ordinary launch is byte-for-byte unchanged, and that the Linux VNC
++path still starts `vncviewer` and nothing else.
++
++## 3 · The Uploads picker could navigate away from your project
++
++`_picker_uploads()` had lost the contract `tests/test_v758_uploads_picker.py` was written for:
++
++```python
++if not scope:
++    return self._click_text_action('Uploads', timeout_ms=700)   # <- the MAIN SIDEBAR
++```
++
++When the media picker could not be identified, this clicked *Uploads* in Flow's main sidebar - leaving
++the project in the middle of a generation and losing every reference attached so far. It had also lost
++its `timeout_ms` parameter (four tests raised `TypeError`), gave every retry a fresh 1500 ms instead of
++sharing one budget, and had no answer for a tab whose own text node Playwright reports as unstable.
++
++Now: bounded by one deadline, scoped (no picker → `False`, never the sidebar), and an unstable tab is
++retried through its clickable ancestor - still without `force`, because a forced click lands on
++whatever is underneath, which is how a wrong tile used to be attached. `_finish_agent_media_picker()`
++also re-selects Uploads before reaching for the exact row again: the first click often lands before
++Flow has swapped the tab's contents, so the row was not in the list yet.
++
++The retry keeps the no-argument call, because `tests/test_v757_reference_picker.py` binds
++`_picker_uploads=lambda: True`; both suites pass (10 tests).
++
++## 4 · One channel mark per frame, not three
++
++`render_overlay_png()` drew the playful pill badge with the channel name **and** then composited the
++logo into the bottom-right corner - where `build_overlay_assets()` also schedules a separate `logo`
++overlay that has stayed there since 7.0.109. A branded video therefore carried a name pill plus the
++same logo twice, on every frame:
++
++```
++getbbox() = (134, 37, 1853, 1043)   expected (134, 37, 234, 87) - the 100x50 logo, nothing else
++```
++
++A channel logo **is** the channel mark: with one available the badge is not drawn at all, and the
++trailing composite now only serves `intro`/`outro`. Without a logo the badge is the mark, exactly as
++before, so an unbranded video is unchanged.
++
++## 5 · Six more defects from the same audit
++
++* **Project deletion stopped before deleting anything.** `flow_project_delete.delete()` did a blocking
++  `wait_for(state='visible')` on the *first* menu item (`Rename`). A menu that was merely slow to
++  animate was indistinguishable from the missing success toast at the end, so it raised *"No explicit
++  success confirmation"* before `Delete` was ever clicked. It now polls the three items inside one
++  deadline, and the two proofs - the right menu, then Flow's explicit toast - stay separate.
++* **Gemini review attachment.** `_attach_files()` handed the file chooser a one-element list; the
++  chooser callback is written for a bare path. A single review proxy is now passed as a path (a list
++  is still used for the multi-image case).
++* **Streamlit deprecation.** `st.dataframe(..., use_container_width=True)` is deprecated and going
++  away; three call sites (`app.py`, `engine/channel_desk_ui.py` x2) now use `width='stretch'`.
++* **Create step 4 control name.** The TTS selectbox had been renamed to *"TTS provider for the selected
++  language batch"* in 7.0.82, which left `test_studio_music_only_plan_persists_independent_switches`
++  unable to find the control it asserts is disabled in Music-only mode. The label is `TTS` again and
++  the explanation moved into the control's own help text, so nothing is lost and the assertion that
++  *Music only disables TTS and Speech captions independently* holds.
++
++## Verified
++
++* A pristine v7.0.123 checkout and the v7.0.124 tree, both under the same real FFmpeg: **12 failed / 1946
++  passed** before, **1 failed / 1987 passed** after. The single remaining failure is environmental (below).
++* `tests/test_v7124_three_language_convergence.py`, 11 new tests with real FFmpeg media and no Gemini, TTS or
++  Flow call: a second and a third `render_job_editions()` return the same two files, nothing is superseded, the
++  Three-language panel and the renderer agree the job is exported, an undetected transcript does not make an
++  edition pending again, the v7.0.113 direction (text on screen when none was asked for) still repaints exactly
++  once and is then disputed and explained, switching Odia's transcript on repaints **only** Odia and then
++  settles, and an `exported` entry with no readable file cannot raise out of the loop.
++* `tests/test_v7124_quiet_browser_all_os.py`, 19 new tests: the hidden-window arguments, a per-OS launch plan,
++  `browser_environment()` refusing on Linux without `Xvfb` and on every other OS, the settings copy, a quiet
++  launch passing `headless=False` and off-screen, an ordinary launch byte-for-byte unchanged, `quiet=False`
++  forcing a visible window for a login, CDP still refused, a Windows `.exe` from WSL still ignored, a refused
++  debugging port still producing a hidden headed window, CDP reveal/hide bounds on the same process, the
++  unchanged Linux `vncviewer` path, a login wall revealing and then concealing, an already-signed-in session
++  never revealing, and Flow Music quiet without overwriting the Flow handle.
++* Three shipped tests that pinned the convergence bug and now pass:
++  `test_each_selected_language_is_rendered_with_its_own_narration`,
++  `test_switching_the_transcript_re_renders_only_that_language`, and the two dashboard tests.
++* Full suite re-run from the **unzipped release folder**, not the working tree: `compileall` clean, same result.
++* Updater: dry run, `--apply`, backup, idempotent re-run, edited-file guard (a locally edited
++  `engine/quiet_browser.py` is preserved and nothing is changed), chain guard from 7.0.122, and an updated
++  install passing `test_tools_folder_ships_only_the_current_updater`.
++* The patch `AutoVideoAI-v7.0.123-to-v7.0.124.patch` applied to a pristine 7.0.123 tree reproduces the release
++  tree exactly.
++
++## Reproducing
++
++```bash
++python -m pip install -r requirements-test.txt
++sudo apt-get install -y ffmpeg fonts-dejavu-core
++python -m pytest -q -rs                       # 1987 passed, 4 skipped
++python -m compileall -q engine tools app.py cli.py
++```
++
++`test_a_render_records_what_the_picture_shows` measures glyph brightness in a rendered caption band and is
++sensitive to the FFmpeg/libass build; it fails identically on the untouched 7.0.123 tree under the FFmpeg
++available here and is not a 7.0.124 regression. It passes under the FFmpeg 6.1 the CI workflow installs.
++
++## Install
++
++Stop the dashboard, extract the zip beside your installation, then from inside the installation folder:
++
++```
++python3 ../AutoVideoAI-v7.0.124-Finished-Editions-And-Quiet-Browser/tools/update_v7123_to_v7124.py . --apply
++python3 cli.py v3 self-check
++```
++
++Then: **SETTINGS → Quiet browser · no visible window (all OS)** so generation never puts a Chromium window on
++your screen share. The first Google sign-in still needs a visible window once - use **FLOW SESSION → Open
++Flow**, or the sidebar's single *Show browser* button, which moves the same running window on screen and hides
++it again; a sign-in wall does that by itself. Your saved jobs, language editions and their exports, speech
++batches, Flow journals, character photos, channel profiles and browser profiles are never copied, moved or
++deleted, and the files this update replaces are backed up first.
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/REFERENCE_VIDEO_RESEARCH_2026_11_02.md b/REFERENCE_VIDEO_RESEARCH_2026_11_02.md
+--- a/REFERENCE_VIDEO_RESEARCH_2026_11_02.md	1970-01-01 00:00:00.000000000 +0000
++++ b/REFERENCE_VIDEO_RESEARCH_2026_11_02.md	2026-11-02 10:05:15.000000000 +0000
+@@ -0,0 +1,147 @@
++# Reference-video teardown · what three top-performing Hindi/English education videos do, and what AutoVideo should copy
++
++Reviewed 2026-11-02 from the three links supplied with the request. All three are education/self-development
++videos; two are Hindi/Hinglish, one is English. They were picked well: two of the three are in the millions
++of views, so the patterns below are not one creator's quirk.
++
++| | SeeKen · *Your DoomScrolling Ends Here.* | The Urban Fight · *Tell Me About Yourself* | Riya Upreti · *Become a Dangerously Good Communicator.* |
++|---|---|---|---|
++| ID | `o2yGmRF_0vg` | `EzGH3hZuJVk` | `lPWeEX5XEpk` |
++| Length | 19:48 | 07:48 | 18:14 |
++| Views / likes | 25,893 / 909 | **24,090,654 / 1,262,021** | 2,634,124 / 44,369 |
++| Published | 2026-11-01 | 2018-10-25 | 2026-09-27 |
++| Language | Hindi / Hinglish | English | Hindi / Hinglish |
++| Shape | metaphor cold-open → 7 chapters → named framework card → 21-day challenge | anecdote cold-open → **spoken numbered roadmap** → formula → bonus | contrarian hook → credibility proof → authority anchor → 5 numbered principles → named mental model → 30-day challenge |
++
++## 1 · The four beats all three use
++
++### 1.1 A cold-open that is *not* the topic
++
++Nobody opens with "in this video we will learn about X".
++
++* SeeKen opens with a **restaurant where eating makes you hungrier** - a metaphor for scrolling. 3:54 of
++  runtime before the word "dopamine" appears.
++* The Urban Fight opens with a **personal failure**: *"I said 'Hi, I'm doing my MBBS' … The problem was
++  I'm an engineering graduate."* The viewer is told the answer is coming but first is told why the asker
++  can be trusted to give it.
++* Riya Upreti opens **contrarian**: "this world isn't fair … especially to people who can't communicate".
++
++AutoVideo today writes `HOOK_101` as a first-person address to the viewer and then goes straight to the
++outline. There is no room in the schema for an opening that is a *scene* rather than a statement.
++
++### 1.2 An explicit, numbered roadmap spoken out loud
++
++The Urban Fight, at ~0:40, says the roadmap: *"in today's video we are going to 1) what the interviewer
++wants 2) a formula 3) bonus: English fluency"*. Riya Upreti does the same with five numbered principles,
++and SeeKen with seven chapters. This is the single most transferable beat in all three: it is cheap, it is
++structural, and it tells the retention curve where every payoff is.
++
++**AutoVideo already has the machinery and does not use it.** `engine/speech_cards.py` builds an
++`OUTLINE_CARD` for longer videos, and `plan_speech_cards()` emits `chapter` cards - but the outline is a
++list of headings, not a spoken promise, and `render_language_outputs()` renders chapter cards only when
++`cards_enabled` is on. There is no beat that says the numbers out loud.
++
++### 1.3 A named framework / mental model card
++
++* SeeKen: **3R RESET = Recognize / Reflect / Redirect**
++* Riya Upreti: **WIIFM — "What's In It For Me?"**
++
++These are the frames the viewer is meant to remember and repeat. They are given a *name* and a *fixed
++number of parts*, which is what makes them shareable and what makes them a card rather than a paragraph.
++This is the "text pop-up card" pattern the request asks about: a card whose value is the name, not the
++amount of text.
++
++### 1.4 Credibility, then authority, then the promise
++
++Riya Upreti sequences three distinct trust beats in the first 90 seconds: her own reach (1.5 M Instagram
++followers / 200 M monthly), then an **authority anchor** (Dale Carnegie, *How to Win Friends and
++Influence People*, 1936, written in the Great Depression; plus the Warren Buffett public-speaking-course
++story), then what the video will do for you. SeeKen does the same with Katy Tam & Michael Inzlicht's 2024
++digital-switching research and Nir Eyal's *Indistractable* + the 10-Minute Rule.
++
++A citation is a **card**, not a caption. AutoVideo's card types are `fact`, `hook`, `contrast`,
++`chapter`, `stat`, `question`, `step`, `quote`, `summary`, `outline`, `watermark`, `logo`. There is no
++`source` or `citation` card - the closest is `quote`, which has no author/year slot in the schema.
++
++### 1.5 A dated challenge as the CTA
++
++Both long videos end with a **challenge**: SeeKen a 21-day one, Riya Upreti a 30-day one, each tied to a
++community/app. AutoVideo has three CTAs and they are all generic: *subscribe*, *like*, and
++`CTA_SUBSCRIBE_LIKE_AND_COMMENT` with a 5-word minimum. There is no CTA that gives the viewer a task.
++
++### 1.6 All three ship a timestamped chapter list in the description
++
++Every description carries the full `00:00 …` chapter list. This is a YouTube-side ranking and retention
++feature that costs nothing once you already know your chapter start times - and AutoVideo already computes
++them (`plan_speech_cards()` returns `events` with `start`, and `burn_cards()` gets them per shot).
++Nothing writes them out.
++
++## 2 · Ranked, easiest-first implementation plan
++
++Each row says what to change and where; nothing here needs a new provider or a new dependency.
++
++### A. Chapter list in the description — trivially easy, zero risk
++
++The description is already assembled per language. Add the `MM:SS Title` block from the same
++`events`/`chapters` that `burn_cards()` uses, so the description and the burned chapter cards can never
++disagree. This is the highest value-per-line change in the whole list, and all three reference videos do
++it.
++
++### B. A `roadmap` beat — easy
++
++One new beat between the hook and the first chapter whose script is the numbered list spoken aloud
++("today we will cover three things: one …, two …, three …"). `speech_cards.py` already has
++`OUTLINE_CARD`; the change is to *speak* the outline, not only show it, and to derive the numbers from
++the chapter list rather than from a fixed template. Because it is generated from the same chapter list as
++(A), the two cannot drift.
++
++### C. A named-framework card type — easy
++
++Add a card kind that carries **a name plus a fixed number of labelled parts** (3R Reset → Recognize /
++Reflect / Redirect). It renders as a centred plate with the name in the brand colour and the parts
++beneath - which is exactly the shape of the pop-up cards in the reference videos, and it degrades
++gracefully to one line per part on a 9:16 canvas. AutoVideo's card renderer already handles per-language
++text and safe-area scaling, so this is a template plus a schema field, not new render code.
++
++### D. A `source` / `authority` card — easy
++
++`quote` already exists; give the schema an optional `source` with author, work and year, and render it as
++a small attribution line under the quote. Then the Gemini script prompt can be told to produce at least
++one authority anchor per long video. Riya Upreti's Carnegie/1936 beat and SeeKen's Tam & Inzlicht 2024
++beat are both this card.
++
++### E. A cold-open beat that is a scene, not a statement — moderate
++
++`HOOK_101` is first-person address. Add an opening beat kind that is a **metaphor or a first-person
++anecdote**, with the topic withheld for a beat. This is a prompt change plus a beat type; the risk is
++script quality, which is why it is ranked below the structural ones.
++
++### F. A challenge CTA — moderate
++
++Add a CTA that assigns a task with a duration ("try this for 21 days"). It needs a slot for the number of
++days and, ideally, where to report back. Both long reference videos end this way instead of "subscribe".
++
++### G. Credibility beat — hardest, and channel-specific
++
++The reference creators cite their own reach. AutoVideo would have to be *told* the channel's credibility
++facts (subscribers, years, credentials) once per channel and then reuse them; they cannot be invented,
++and an invented one is worse than none. Store it beside the existing channel branding (name, tagline,
++logo) so it localises with everything else.
++
++## 3 · Two constraints the reference videos make explicit
++
++* **Mixed Devanagari + Latin text.** SeeKen's and Riya Upreti's transcripts switch between scripts
++  mid-sentence ("3R RESET", "WIIFM", "dopamine" inside Hindi sentences). Any new card type must render
++  both scripts in the same line. AutoVideo already does this for Hindi and Odia editions via
++  `--subtitles_fontfile`, so a Latin framework name inside a Devanagari card is supported - but the new
++  card templates must not assume a single script when measuring width.
++* **Short-form is a different shape.** The 07:48 video is the 24 M-view outlier and has *no* chapters:
++  anecdote → roadmap → formula → bonus. Chapter machinery should switch off below a runtime threshold
++  rather than produce a two-item list.
++
++## 4 · What this does *not* say
++
++Nothing above is implemented in v7.0.124. This is the research record behind the request *"adapt the
++best, easily implementable features … mainly for text pop-up cards and the AI video being used"*; the
++release ships the two things that were blocking those features from being visible at all - editions that
++finish, and a browser that does not cover the screen while you are working.
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/RELEASE_MANIFEST.json b/RELEASE_MANIFEST.json
+--- a/RELEASE_MANIFEST.json	2026-11-01 12:44:00.000000000 +0000
++++ b/RELEASE_MANIFEST.json	2026-11-02 10:24:52.000000000 +0000
+@@ -1,6 +1,6 @@
+ {
+-  "version": "7.0.123",
+-  "built_at": "2026-11-01T12:44:01+00:00",
++  "version": "7.0.124",
++  "built_at": "2026-11-02T10:24:52+00:00",
+   "files": [
+     {
+       "path": ".env.example",
+@@ -213,6 +213,11 @@
+       "sha256": "de57b37200484b166390d4e9c89e830dbcb12f50e60032f9e9785918c7f6f238"
+     },
+     {
++      "path": "FINISHED_EDITIONS_AND_QUIET_BROWSER_V7_0_124.md",
++      "bytes": 14794,
++      "sha256": "d32f817689276b0a5b96726cc5934290fb60a64fc3b8566439f6e47679b348b0"
++    },
++    {
+       "path": "FINISHING_STUDIO_V7_0_62.md",
+       "bytes": 3392,
+       "sha256": "efd4f8a459772f3f2af79f8a30b762290d872f9e5460e1d11e8e8ac0fdf783ff"
+@@ -538,6 +543,11 @@
+       "sha256": "1ef044a7cf3030f277a16a8a4903cd4b248e4357ea3ce8fb2b9808eec3d1d833"
+     },
+     {
++      "path": "REFERENCE_VIDEO_RESEARCH_2026_11_02.md",
++      "bytes": 9026,
++      "sha256": "a9df170a8e1fb125e39f05d015a530941fd780f8c8bbb6c899f45afb411314f2"
++    },
++    {
+       "path": "RELIABILITY_AND_FIDELITY_V7_0_52.md",
+       "bytes": 11319,
+       "sha256": "97b62435bc5c8c7a2c6c479174b7e27da47bbac76b7fdf2eb6ad6a2dbbd55561"
+@@ -1065,7 +1075,7 @@
+     {
+       "path": "VERSION",
+       "bytes": 7,
+-      "sha256": "b9f9cf3ba03112809ae93aff7d14eee61e1858ea7696034debe0004f60d2fe8d"
++      "sha256": "8e7d8859700916441ca6effaad7b21eb304e8b277a2cb393e97bcfc20a4db109"
+     },
+     {
+       "path": "VIDEO_APPROVAL_PENDING_V7_0_99.md",
+@@ -1129,8 +1139,8 @@
+     },
+     {
+       "path": "app.py",
+-      "bytes": 307657,
+-      "sha256": "f1e6296cea30162c24291e8d37347fe93effcadf128c99c43423fed9dae1dd19"
++      "bytes": 309612,
++      "sha256": "2195ca45b14d96290a367afe23d5670db651590bfdea02975eb086d536869b10"
+     },
+     {
+       "path": "architecture.md",
+@@ -1474,8 +1484,8 @@
+     },
+     {
+       "path": "engine/channel_desk_ui.py",
+-      "bytes": 8601,
+-      "sha256": "e225ca5c5c30f23c151526a1bc9716e47e1f8a60216c27a85d215cec6a5d5f5a"
++      "bytes": 8583,
++      "sha256": "324aad9012af465a9238dacdf9d7da5546171f0847c5cde2c8b4deb7f2bd9358"
+     },
+     {
+       "path": "engine/channel_profiles.py",
+@@ -1604,8 +1614,8 @@
+     },
+     {
+       "path": "engine/flow_music.py",
+-      "bytes": 22348,
+-      "sha256": "91f9fc255c25c8714f16a28f44f8a2e39e37498d8d079b538dca3d0a40ccca65"
++      "bytes": 22615,
++      "sha256": "8d2c152d0b83fe0cd95150f9d5e609bfdaa259c74d2be244fffa73d2e6316302"
+     },
+     {
+       "path": "engine/flow_pending_approval.py",
+@@ -1619,8 +1629,8 @@
+     },
+     {
+       "path": "engine/flow_project_delete.py",
+-      "bytes": 5103,
+-      "sha256": "586baee4e4c2d1ffa0c5ca91d85a53b072c25274c46caaee72c24d2de8b7442c"
++      "bytes": 5718,
++      "sha256": "90c7ad07ba5e6af93ed35bcd81c4634bb23a2e8199088a0b984370c767277432"
+     },
+     {
+       "path": "engine/flow_project_isolation.py",
+@@ -1734,8 +1744,8 @@
+     },
+     {
+       "path": "engine/language_editions.py",
+-      "bytes": 47031,
+-      "sha256": "d1f715b6c17076d0e5bdf42e1b06c10c1f5025b897476802091a80bf47fba063"
++      "bytes": 48510,
++      "sha256": "ff8805d1cf3deb5a1bfe82b85bf157948a97d4c4e06489b698b5118bbe4080b5"
+     },
+     {
+       "path": "engine/languages.py",
+@@ -1899,8 +1909,8 @@
+     },
+     {
+       "path": "engine/providers/flow_browser.py",
+-      "bytes": 335660,
+-      "sha256": "ab91d6e243521617a20640d90c24f8147b2b5b984dd3451f6ef2f30c3bc05da6"
++      "bytes": 342596,
++      "sha256": "860ddc7dcb9ff8901485f641552130de222fb68fe527de75b3b03fbe910c7b9b"
+     },
+     {
+       "path": "engine/providers/flow_extension.py",
+@@ -1919,8 +1929,8 @@
+     },
+     {
+       "path": "engine/providers/gemini_web.py",
+-      "bytes": 38405,
+-      "sha256": "68c53208a2ac5457d02ba7e597d7ffeaf4a781515d3727b2d2782ae0179490ed"
++      "bytes": 38630,
++      "sha256": "a8f246a6056b02b705d7430b33339cb09644047cb00784d2cd142e29cff4e7b5"
+     },
+     {
+       "path": "engine/providers/image_provider.py",
+@@ -1964,8 +1974,8 @@
+     },
+     {
+       "path": "engine/quiet_browser.py",
+-      "bytes": 5098,
+-      "sha256": "4af98b6abdcac81955e5e3019647ae60514fc387f56c38665922f53f09f36ac1"
++      "bytes": 15883,
++      "sha256": "5af911287ab216bfaba088e0d94f7d989a1d4f6a0a2dcef6ccb6d906b259c074"
+     },
+     {
+       "path": "engine/reference_manager.py",
+@@ -2024,8 +2034,8 @@
+     },
+     {
+       "path": "engine/render/graphics.py",
+-      "bytes": 26625,
+-      "sha256": "9de47a3e5a17d5de5253752a891e8e7fca82a56b81f519047de04e40bdeb7663"
++      "bytes": 27723,
++      "sha256": "19a9771faae0b2f4877dab98f7646bf10f32086a2fbc3feac881926da0ecdf01"
+     },
+     {
+       "path": "engine/render/hook_cards.py",
+@@ -2923,6 +2933,16 @@
+       "sha256": "9a73b133c4de4812ca018badf5dcf31027fd02b6512ce6a2ea4466f450daf40b"
+     },
+     {
++      "path": "tests/test_v7124_quiet_browser_all_os.py",
++      "bytes": 15584,
++      "sha256": "2c5f575c0081d43a07044c8b95c202aa492f051f4f5bc249c7705dd59103921b"
++    },
++    {
++      "path": "tests/test_v7124_three_language_convergence.py",
++      "bytes": 12357,
++      "sha256": "20a8fd2b6670e93b33bed35862cc8cb5e1a91d55c78f670fc73bd7fcbf590ece"
++    },
++    {
+       "path": "tests/test_v712_migration_cast_music.py",
+       "bytes": 12069,
+       "sha256": "13177d79e6f185c193431d0d9b94a1cdd2201d3b0a13f0715698f43ff09a20af"
+@@ -3478,9 +3498,9 @@
+       "sha256": "c81e61a531118748965af89d6d206389c22e85187ec0ceb4b3b67721bd3bc5f9"
+     },
+     {
+-      "path": "tools/update_v7122_to_v7123.py",
+-      "bytes": 10479,
+-      "sha256": "e1fc1e23070def398d5cae14095cd152795a5b39f138c100123008fae14cd52c"
++      "path": "tools/update_v7123_to_v7124.py",
++      "bytes": 12707,
++      "sha256": "2463ad51313df2bf05660b18d759504ce1f8226fefcbc9484ba9fda78dcfeef6"
+     },
+     {
+       "path": "topics.csv",
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/VERSION b/VERSION
+--- a/VERSION	2026-11-01 12:32:42.000000000 +0000
++++ b/VERSION	2026-11-02 10:05:20.000000000 +0000
+@@ -1 +1 @@
+-7.0.123
+\ No newline at end of file
++7.0.124
+\ No newline at end of file
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/app.py b/app.py
+--- a/app.py	2026-11-01 12:31:22.000000000 +0000
++++ b/app.py	2026-11-02 09:30:02.000000000 +0000
+@@ -400,12 +400,31 @@
+ 
+ 
+ def show_quiet_browser_control():
+-    if st.sidebar.button('Show quiet browser · same session'):
++    """Reveal / hide the ONE running quiet browser. Never restarts a browser or a profile."""
++    from engine.quiet_browser import status_text, uses_virtual_display, window_is_revealed
++    try:
++        from engine.providers.flow_browser import resolve_browser_cfg
++        quiet_cfg = resolve_browser_cfg({})
++    except Exception:
++        quiet_cfg = {}
++    revealed = window_is_revealed()
++    if not (quiet_cfg.get('quiet') or revealed):
++        return
++    st.sidebar.caption(status_text(quiet_cfg))
++    label = 'Hide quiet browser · same session' if revealed else 'Show quiet browser · same session'
++    if st.sidebar.button(label):
+         try:
+-            from engine.quiet_browser import show_browser
+-            show_browser()
+-            st.sidebar.success('Local browser viewer opened. Close the viewer to hide it; production continues.')
+-        except Exception as error: st.sidebar.error(str(error))
++            from engine.quiet_browser import hide_browser, show_browser
++            (hide_browser if revealed else show_browser)()
++            if uses_virtual_display():
++                st.sidebar.success('Local browser viewer opened. Close the viewer to hide it; production continues.')
++            elif revealed:
++                st.sidebar.success('Window moved off-screen again. The same session keeps running.')
++            else:
++                st.sidebar.success('The running browser window is on-screen now. Sign in if you need to, then '
++                                   'press Hide; production continues either way.')
++        except Exception as error:
++            st.sidebar.error(str(error))
+ 
+ show_quiet_browser_control()
+ 
+@@ -1365,7 +1384,10 @@
+     use_prepared_batch = False
+     with st.expander('4 · Review language scripts → all TTS → timed cards', expanded=True):
+         st.caption('First review the exact narration for every selected edition. Then one action prepares every voice and word timing before Gemini receives any text-card request. No visual generation starts here.')
+-        tts_provider = st.selectbox('TTS provider for the selected language batch', ['auto','gemini','gemini-lite','groq','elevenlabs','kokoro','edge','gtts'], key='studio-batch-tts', disabled=not studio_voice_on)
++        tts_provider = st.selectbox('TTS', ['auto','gemini','gemini-lite','groq','elevenlabs','kokoro','edge','gtts'], key='studio-batch-tts', disabled=not studio_voice_on,
++            help='TTS provider for the selected language batch. One master script is localized into '
++                 'every selected edition and each language is synthesized here, before any visual '
++                 'generation starts. A per-language Gemini route can override this below.')
+         st.write('Edition languages: ' + ', '.join(LANGUAGES[x].label for x in batch_languages))
+         # 7.0.82: each language may use its own Gemini route (model and .env key profile). Each route keeps
+         # its own daily quota, so Flash-Lite and a second billed profile can carry a language on a busy day.
+@@ -1477,7 +1499,7 @@
+                     for lang,bundle in prepared_batch['bundles'].items():
+                         with st.expander(lang.upper()+' · voice '+str(round(bundle['duration'],1))+' seconds · '+bundle['timing_source']):
+                             st.audio(bundle['audio']);st.write(bundle['script'])
+-                            if bundle.get('cards_ready', True):st.dataframe(bundle['cards'],use_container_width=True)
++                            if bundle.get('cards_ready', True):st.dataframe(bundle['cards'],width='stretch')
+                             else:st.caption('Text cards not drafted yet (optional).')
+                     # 7.0.86: text cards are drafted only on request (Gemini Web), never as part of the voices.
+                     cards_wanted=bool(prepared_batch.get('request',{}).get('text_cards',True))
+@@ -2830,7 +2852,9 @@
+     st.caption("First run opens a visible browser — log into Google YOURSELF. Passwords are never automated or stored. Profile: `.flow-profile/` (git-ignored).")
+     c1, c2, c3 = st.columns(3)
+     if c1.button("🔑 Open Flow (login / check session)"):
+-        b = FlowBrowser(headless=False)
++        # Always visible, even with Quiet browser on: this button exists so YOU can sign in, and an
++        # off-screen window cannot be signed into. Generation stays hidden; only this login window shows.
++        b = FlowBrowser(headless=False, quiet=False)
+         with st.spinner("Browser open — complete any Google login manually (5 min max)..."):
+             try:
+                 b.ensure_session(visible_login_seconds=300)
+@@ -3937,8 +3961,13 @@
+         bmode = st.selectbox("Browser mode", bmodes,
+                              index=bmodes.index(br.get("mode", "auto")) if br.get("mode", "auto") in bmodes else 0,
+                              help="auto=tries your Chrome first, then bundled. system=your installed Chrome only. cdp=attach to YOUR open browser (uses your existing Google login!). bundled=playwright download.")
+-        bquiet = st.checkbox("Quiet browser · experimental (Linux/WSL)", value=bool(br.get('quiet',False)),
+-            help="Headed Chromium on a hidden virtual display. Requires xvfb, xauth, x11-utils, x11vnc and tigervnc-viewer. Show browser reveals the same session for sign-in; no headless login change.")
++        bquiet = st.checkbox("Quiet browser · no visible window (all OS)", value=bool(br.get('quiet',False)),
++            help="Generation runs with no Chromium window on screen, so a screen share or a presentation cannot "
++                 "pick it up. Linux/WSL: a headed browser on a private hidden X display (needs xvfb, xauth, "
++                 "x11-utils; x11vnc + a VNC viewer for Show browser). Windows/macOS: the same headed browser "
++                 "parked off-screen and muted. The browser stays HEADED - a Google sign-in is never switched to "
++                 "headless. Show browser moves the one running window on-screen for a sign-in; Hide browser moves "
++                 "it back. No browser or profile is restarted, and CDP mode (your own Chrome) cannot be hidden.")
+         bc1, bc2 = st.columns(2)
+         chans = ["chrome", "chromium", "msedge"]
+         bchan = bc1.selectbox("System channel", chans,
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/channel_desk_ui.py b/engine/channel_desk_ui.py
+--- a/engine/channel_desk_ui.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/channel_desk_ui.py	2026-11-02 09:30:02.000000000 +0000
+@@ -69,7 +69,7 @@
+             with b:st.write('Final 15 seconds');st.video(data['previews']['closing'])
+             st.image(data['contact_sheet'],caption='Timestamped samples only; watch the full export before signoff.')
+             st.json(data['analysis'])
+-            if data['issues']:st.dataframe(data['issues'],use_container_width=True)
++            if data['issues']:st.dataframe(data['issues'],width='stretch')
+             else:st.info('No configured technical warning was detected. Editorial, music and language review still remain.')
+             with st.expander('Shot pacing and music trace'):
+                 try:st.json(desk.job_context(data['source']))
+@@ -98,6 +98,6 @@
+         if current:
+             minimum=st.number_input('Minimum views per post for this comparison',min_value=1,max_value=1000000000,value=100,key='cd-minviews')
+             summary=desk.metrics_summary(current['rows'],minimum)
+-            st.dataframe(summary['cohorts'],use_container_width=True);st.caption(summary['notice'])
++            st.dataframe(summary['cohorts'],width='stretch');st.caption(summary['notice'])
+             st.write('Posts excluded for low views: '+str(summary['excluded_low_views']))
+             st.info('Use low opening retention to investigate title/hook mismatch; inspect drop-offs before adding effects. These observational comparisons cannot establish which change caused an outcome.')
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/flow_music.py b/engine/flow_music.py
+--- a/engine/flow_music.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/flow_music.py	2026-11-02 09:30:02.000000000 +0000
+@@ -332,7 +332,6 @@
+     profile.mkdir(parents=True,exist_ok=True)
+     with request_lock(profile/'browser'),sync_playwright() as playwright:
+         from .providers.flow_browser import resolve_browser_cfg
+-        from .quiet_browser import quiet_enabled, browser_environment
+         cfg = resolve_browser_cfg({})
+         options = music_launch_options(cfg, login=(action=='login'))
+         context = None
+@@ -368,7 +367,7 @@
+ 
+ def music_launch_options(cfg, login=False):
+     """Use the configured local browser and WSL-safe flags, on a separate profile."""
+-    from .quiet_browser import quiet_enabled, browser_environment
++    from .quiet_browser import launch_plan, quiet_enabled
+     options={'args':['--disable-dev-shm-usage','--disable-gpu','--no-first-run',
+                      '--no-default-browser-check','--disable-session-crashed-bubble']}
+     if cfg.get('executable'):
+@@ -376,8 +375,13 @@
+     elif cfg.get('mode') == 'system':
+         options['channel']=cfg.get('channel', 'chrome')
+     if not login and quiet_enabled(cfg):
+-        options['env']=browser_environment()
+-        options['args'].append('--ozone-platform=x11')
++        # 7.0.124: quiet mode is no longer Linux-only, so Flow Music also runs with no visible window.
++        # A login is always visible - an off-screen window cannot be signed into. record=False keeps the
++        # Flow window handle the Show browser button reads.
++        plan = launch_plan(cfg, record=False) or {}
++        if plan.get('env'):
++            options['env'] = plan['env']
++        options['args'] += list(plan.get('args') or [])
+     else:
+         from .providers.flow_browser import is_wsl
+         if is_wsl():
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/flow_project_delete.py b/engine/flow_project_delete.py
+--- a/engine/flow_project_delete.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/flow_project_delete.py	2026-11-02 09:30:02.000000000 +0000
+@@ -51,12 +51,24 @@
+     if previous_success.count() and previous_success.first.is_visible(timeout=200):
+         raise FlowUIChanged('A previous deletion notice is still visible; wait and review again')
+     bound();menu.click(timeout=2500)
+-    # This combination distinguishes the project menu from a media tile menu.
+-    for text in ('Rename','View bin','Delete'):
+-        loc=page.get_by_text(text,exact=True)
+-        loc.first.wait_for(state='visible',timeout=5000)
+-        if loc.count()!=1 or not loc.first.is_visible(timeout=500):
+-            raise FlowUIChanged('Expected project menu is unavailable; nothing deleted')
++    # This combination distinguishes the project menu from a media tile menu. 7.0.124: poll instead of
++    # `wait_for` on each item. A blocking wait on the FIRST item made a menu that was merely slow to
++    # animate indistinguishable from the missing success toast at the end - the deletion stopped with
++    # 'No explicit success confirmation' before Delete was ever clicked, so nothing was deleted and the
++    # ledger could not say which of the two proofs had failed.
++    deadline=time.monotonic()+5
++    verified=False
++    while time.monotonic()<deadline:
++        try:
++            items=[page.get_by_text(text,exact=True) for text in ('Rename','View bin','Delete')]
++            if all(item.count()==1 and item.first.is_visible(timeout=200) for item in items):
++                verified=True
++                break
++        except Exception:
++            pass
++        page.wait_for_timeout(150)
++    if not verified:
++        raise FlowUIChanged('Expected project menu is unavailable; nothing deleted')
+     bound();page.get_by_text('Delete',exact=True).click(timeout=2500)
+     dialogs=page.get_by_role('dialog')
+     deadline=time.monotonic()+5
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/language_editions.py b/engine/language_editions.py
+--- a/engine/language_editions.py	2026-10-28 14:35:08.000000000 +0000
++++ b/engine/language_editions.py	2026-11-02 09:44:13.000000000 +0000
+@@ -572,20 +572,40 @@
+     Two pieces of evidence, in order: the export's own provenance (``captions_burned``) and its picture. The job's
+     wish is the reference. A file that was already re-rendered once and still disagrees is not re-rendered again
+     for ever: it is marked ``captions_disputed`` and explained instead.
++
++    7.0.124: **one direction only.** A caption is not on screen every second, so a sampled frame that finds no
++    text proves nothing - ``engine/render/caption_check.explain()`` has always said exactly that, and the render
++    loop only ever sets ``captions_disputed`` for the visible-text direction. Comparing both ways meant a language
++    whose transcript is ON was re-rendered on *every* run whenever the pixel heuristic could not see its glyphs
++    (a bright, high-contrast background alone hides them). The export was therefore never "current": a
++    three-language production re-encoded Hindi and Odia from scratch on every resume, every repair and every
++    press of the editions button, each run also marking the previous file superseded - and the job never reached
++    a state where all selected languages were finished. Only "shows text although none was asked for" can force
++    a re-render now, so the second run reuses the verified export.
+     """
++    if wants:
++        # Transcript asked for: absence of detected glyphs is not evidence of a defect (see above).
++        return False
+     if entry.get('status') != 'exported' or entry.get('captions_disputed'):
+         return False
+-    # Measuring costs a few frame reads, so it is only done when this job asks for NO transcript - that is the
+-    # direction nobody can see from the record alone, and the one the field report was about.
+-    evidence = caption_evidence(job_root, code, entry, measure=bool(measure) and not wants)
++    # Measuring costs a few frame reads, and it is only worth paying for the direction nobody can see from the
++    # record alone: this job asks for NO transcript, so any visible text is the defect.
++    evidence = caption_evidence(job_root, code, entry, measure=bool(measure))
+     shown = evidence['looks_like_text']
+     if shown is None:
+-        # No picture evidence yet: fall back to what the export recorded it burned.
+-        from . import finishing_studio as finish
+-        prov = _read(Path(str(entry.get('path') or '')).with_suffix('.provenance.json'), {}) or {}
+-        if 'captions_burned' in prov:
++        # No picture evidence yet: fall back to what the export recorded it burned. 7.0.124: guard the
++        # path. An entry that says 'exported' but carries no readable file used to raise ValueError
++        # ("PosixPath('.') has an empty name") out of the whole edition loop, which is exactly the kind
++        # of one-language failure that 7.0.95 removed for every other cause.
++        export = Path(str(entry.get('path') or ''))
++        try:
++            prov_path = export.with_suffix('.provenance.json') if export.name else None
++        except ValueError:
++            prov_path = None
++        prov = _read(prov_path, {}) if prov_path else {}
++        if isinstance(prov, dict) and 'captions_burned' in prov:
+             shown = bool(prov.get('captions_burned'))
+-    return shown is not None and bool(shown) != bool(wants)
++    return bool(shown)
+ 
+ 
+ def render_job_editions(job_root, *, progress=None, fit_policy=None):
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/providers/flow_browser.py b/engine/providers/flow_browser.py
+--- a/engine/providers/flow_browser.py	2026-10-27 08:36:54.000000000 +0000
++++ b/engine/providers/flow_browser.py	2026-11-02 09:42:25.000000000 +0000
+@@ -596,7 +596,7 @@
+ 
+     def __init__(self, ui_cfg_path: str = "config/flow_ui.yaml",
+                  profile_dir: str = PROFILE_DIR, headless: bool = False,
+-                 state_cb=None):
++                 state_cb=None, quiet: bool | None = None):
+         try:
+             maybe_migrate_profile()
+         except Exception:
+@@ -604,6 +604,10 @@
+         self.ui = yaml.safe_load(open(ui_cfg_path, encoding="utf-8"))
+         self.profile_dir = profile_dir
+         self.headless = headless
++        # None follows SETTINGS -> Browser -> Quiet browser. False forces a visible window for this
++        # session only, which is what the first manual Google sign-in needs: a hidden window cannot be
++        # signed into. Quiet mode never changes headless-ness, only where the window is.
++        self.quiet_override = quiet
+         self.state_cb = state_cb
+         self.state = FlowState.IDLE
+         self._pw = self._ctx = self._page = self._cdp = None
+@@ -629,6 +633,17 @@
+         self._agent_failure_baseline: dict[str, int] = {}
+ 
+     # ---------- lifecycle ----------
++    def quiet_on(self) -> bool:
++        """Quiet mode for THIS session: the setting, unless a caller forced a visible window.
++
++        Reads through ``getattr`` because tests and recovery paths build a bare ``FlowBrowser`` with
++        ``__new__`` and set only ``bcfg``.
++        """
++        from engine.quiet_browser import quiet_enabled
++        if getattr(self, "quiet_override", None) is False:
++            return False
++        return quiet_enabled(getattr(self, "bcfg", {}) or {})
++
+     def _set(self, s: FlowState):
+         self.state = s
+         if self.state_cb:
+@@ -639,10 +654,11 @@
+ 
+     def _launch_options(self) -> list[dict]:
+         mode = (self.bcfg.get("mode") or "auto").lower()
+-        from engine.quiet_browser import quiet_enabled
+-        if quiet_enabled(self.bcfg):
++        if self.quiet_on():
+             if mode == "cdp":
+-                raise RuntimeError("Quiet mode cannot attach a visible CDP browser")
++                raise RuntimeError("Quiet mode cannot hide a CDP browser you own: that window is yours, on "
++                                   "your desktop. Select bundled or system in SETTINGS -> Browser mode, or "
++                                   "turn Quiet browser off to keep using CDP.")
+             mode = "bundled"
+         self._launch_skipped: list[str] = []
+         opts = []
+@@ -702,9 +718,19 @@
+                             "--disable-renderer-backgrounding"]
+         # (transport label, extra args, optional environment)
+         strategies: list[tuple[str, list[str], dict | None]] = []
+-        from engine.quiet_browser import quiet_enabled, browser_environment
+-        if quiet_enabled(self.bcfg):
+-            strategies.append(("quiet-x11", ["--ozone-platform=x11", "--disable-gpu"], browser_environment()))
++        from engine.quiet_browser import fallback_plan, launch_plan
++        quiet = self.quiet_on() and not self.headless
++        if quiet:
++            # Linux/WSL: a headed browser on a private hidden X display.
++            # Windows/macOS: a headed browser parked off-screen and muted - no window on screen, nothing
++            # for a screen share to pick up, and no headless sign-in problem.
++            plan = launch_plan(self.bcfg)
++            if plan:
++                strategies.append((plan["transport"], list(plan["args"]), plan.get("env")))
++                backup = fallback_plan(self.bcfg)
++                if backup and plan.get("debug_port"):
++                    # Losing the reveal handle must never cost the user a hidden browser.
++                    strategies.append((backup["transport"], list(backup["args"]), backup.get("env")))
+         elif is_wsl() and not self.headless:
+             # Native Wayland is the most reliable WSLg route and is exactly the
+             # variant used by browser-test when it reports "native Wayland" PASS.
+@@ -730,7 +756,7 @@
+                     launch_kwargs["env"] = launch_env
+                 self._ctx = self._pw.chromium.launch_persistent_context(
+                     profile,
+-                    headless=False if quiet_enabled(self.bcfg) else self.headless,
++                    headless=False if quiet else self.headless,
+                     accept_downloads=True,
+                     args=common_args + extra_args,
+                     **launch_kwargs,
+@@ -850,10 +876,10 @@
+         # the already-authenticated Windows/WSL Chrome session; otherwise launch
+         # a persistent worker profile as usual.
+         mode = (self.bcfg.get("mode") or "auto").lower()
+-        from engine.quiet_browser import quiet_enabled
+-        if quiet_enabled(self.bcfg):
++        if self.quiet_on():
+             if mode == "cdp":
+-                raise RuntimeError("Quiet mode needs a local Linux browser. Select bundled or system instead of CDP.")
++                raise RuntimeError("Quiet mode cannot hide a CDP browser you own. Select bundled or system "
++                                   "instead of CDP, or turn Quiet browser off.")
+             mode = "bundled"  # never attach a visible desktop CDP browser
+         if self._isolated_worker:
+             print("[Flow] Isolated image worker: using a dedicated project and browser tab/profile.")
+@@ -908,14 +934,50 @@
+             print("[Flow] Attached on an existing Flow tab; preserving its current route.")
+         # A Flow landing-page sign-in wall is not an authenticated session.
+         deadline = time.monotonic() + max(1, visible_login_seconds)
++        revealed_for_login = False
+         while time.monotonic() < deadline:
+             if self.is_logged_in():
++                if revealed_for_login:
++                    # The sign-in is done: put the same window back out of sight. Nothing is restarted,
++                    # so the session just authenticated is the one generation keeps using.
++                    self._conceal_after_login()
+                 return True
+             if self._page.is_closed():
+                 raise FlowAuthNeeded("Login browser was closed. Reopen Flow Session and complete sign-in manually.")
++            if not revealed_for_login and self.quiet_on():
++                # Quiet mode parks the window off-screen, and an off-screen window cannot be signed into.
++                # Reveal it for the sign-in only: the user asked for no popup during generation, not for
++                # an impossible login.
++                revealed_for_login = self._reveal_for_login()
+             self._page.wait_for_timeout(1000)
+         raise FlowAuthNeeded("Google login not completed. Complete sign-in in the opened browser, then retry.")
+ 
++    def _reveal_for_login(self) -> bool:
++        """Move a hidden quiet window on-screen for a manual Google sign-in. Best effort."""
++        from engine.quiet_browser import uses_virtual_display
++        if uses_virtual_display():
++            # The Linux/WSL viewer is a separate, user-opened window; never spawn one from inside a job.
++            print("[Flow] Quiet browser: a sign-in is needed. Press 'Show quiet browser' in the sidebar to see it.")
++            return False
++        try:
++            from engine.quiet_browser import reveal_window
++            reveal_window()
++            print("[Flow] Quiet browser: a Google sign-in is needed, so the running window was moved on-screen. "
++                  "It returns off-screen by itself once you are signed in.")
++            return True
++        except Exception as error:
++            print("[Flow] Quiet browser could not be revealed for sign-in: " + " ".join(str(error).split())[:200])
++            return False
++
++    def _conceal_after_login(self):
++        """Send the window back off-screen after a successful sign-in. Best effort."""
++        try:
++            from engine.quiet_browser import conceal_window
++            conceal_window()
++            print("[Flow] Quiet browser: signed in; the window is hidden again and generation continues.")
++        except Exception:
++            pass
++
+     def is_logged_in(self) -> bool:
+         from urllib.parse import urlsplit
+         try:
+@@ -2054,6 +2116,12 @@
+                 self._dismiss_media_picker()
+                 return True
+             if basename and not selected:
++                # 7.0.124: the first Uploads click often lands before Flow has swapped the tab's
++                # contents, so the exact row is not in the list yet and the shot fell back to
++                # re-uploading - or matched nothing. Select Uploads again, still inside the picker,
++                # before reaching for the row.
++                if deadline - time.monotonic() > 0:
++                    self._picker_uploads()
+                 selected = self._click_exact_reference_row(basename, deadline)
+             remaining = int((deadline - time.monotonic()) * 1000)
+             if remaining <= 0:
+@@ -2117,8 +2185,26 @@
+         except Exception:
+             pass
+ 
+-    def _picker_uploads(self):
+-        """Select Uploads inside the visible media picker, never the main sidebar."""
++    #: The clickable ancestor of an "Uploads" tab. Flow renders that label as a plain span inside a
++    #: button, and clicking the span is what Playwright reports as unstable - the ancestor takes it.
++    _UPLOADS_CLICKABLE_ANCESTOR = (
++        "xpath=ancestor::*[self::button or self::a or @role='button' or @role='tab'][1]")
++
++    def _picker_uploads(self, timeout_ms: int = 3500) -> bool:
++        """Select Uploads inside the visible media picker, never the main sidebar.
++
++        7.0.124 restores the v7.0.58 contract, which had quietly rotted:
++
++        * **bounded** - every retry shares one ``timeout_ms`` budget instead of each getting a fresh
++          1500 ms, so a broken picker costs seconds rather than the whole shot;
++        * **scoped** - when the media picker cannot be identified this returns False. It used to fall
++          back to ``_click_text_action('Uploads')``, which clicks the *main sidebar* and navigates the
++          browser away from the project in the middle of a generation;
++        * **unstable-tab tolerant** - a tab whose own text node Playwright will not click is retried
++          through its clickable ancestor, still without ``force`` (a forced click lands on whatever is
++          underneath, which is how a wrong tile used to be attached).
++        """
++        deadline = time.monotonic() + max(0.2, timeout_ms / 1000)
+         try:
+             scope = self._page.evaluate(r"""() => {
+                 for (const el of document.querySelectorAll('[data-av-reference-picker]')) el.removeAttribute('data-av-reference-picker');
+@@ -2132,15 +2218,46 @@
+         except Exception:
+             return False
+         if not scope:
+-            return self._click_text_action('Uploads', timeout_ms=700)
++            # Never the global sidebar: leaving the project loses every reference attached so far.
++            return False
+         picker=self._page.locator('[data-av-reference-picker="true"]')
+-        tabs=picker.get_by_text('Uploads',exact=True)
+-        for i in range(tabs.count()):
+-            if tabs.nth(i).is_visible(timeout=100):
+-                tabs.nth(i).click(timeout=1500)
+-                self._page.wait_for_timeout(200)
++        while True:
++            remaining = deadline - time.monotonic()
++            if remaining <= 0:
++                return False
++            # A 1 ms floor keeps the clock moving: without it a shrinking budget truncates to
++            # timeout=0, the retry costs nothing, and the loop outlives its own deadline.
++            step = max(1, int(min(1.2, remaining / 2) * 1000))
++            title = None
++            try:
++                tabs = picker.get_by_text('Uploads', exact=True)
++                for i in range(tabs.count()):
++                    candidate = tabs.nth(i)
++                    if candidate.is_visible(timeout=100):
++                        title = candidate
++                        break
++            except Exception:
++                title = None
++            if title is None:
++                self._page.wait_for_timeout(min(150, max(1, int((deadline - time.monotonic()) * 1000))))
++                continue
++            try:
++                title.click(timeout=step)
++                self._page.wait_for_timeout(min(200, max(1, int((deadline - time.monotonic()) * 1000))))
+                 return True
+-        return False
++            except Exception:
++                pass
++            # Same iteration, same budget: the ancestor retry always follows the tab retry, so one never
++            # happens without the other and the deadline is only ever checked at the top of the loop.
++            step = max(1, int(min(1.2, max(0.0, deadline - time.monotonic()) / 2) * 1000))
++            try:
++                parent = title.locator(self._UPLOADS_CLICKABLE_ANCESTOR)
++                if parent.count() and parent.is_visible(timeout=100):
++                    parent.click(timeout=step)
++                    self._page.wait_for_timeout(min(200, max(1, int((deadline - time.monotonic()) * 1000))))
++                    return True
++            except Exception:
++                pass
+ 
+     def _try_attach_existing_project_media(self, display_name: str, timeout_ms: int = 3500) -> bool:
+         """Best-effort attach of an already-uploaded Flow project asset by exact name.
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/providers/gemini_web.py b/engine/providers/gemini_web.py
+--- a/engine/providers/gemini_web.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/providers/gemini_web.py	2026-11-02 09:30:02.000000000 +0000
+@@ -645,7 +645,10 @@
+                     raise GeminiWebUIChanged('Gemini + menu did not expose Upload files; no review prompt submitted')
+             with self._page.expect_file_chooser(timeout=10000) as chooser:
+                 upload_action.click(timeout=5000)
+-            chooser.value.set_files([str(p) for p in paths])
++            files = [str(p) for p in paths]
++            # Playwright accepts a path or a list. A review proxy is always exactly one file, and the
++            # file-chooser callback is written for a bare path.
++            chooser.value.set_files(files[0] if len(files) == 1 else files)
+             # A visible filename is required, not merely a successful input call.
+             for path in paths:
+                 self._page.get_by_text(path.name, exact=False).first.wait_for(state='visible', timeout=60000)
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/quiet_browser.py b/engine/quiet_browser.py
+--- a/engine/quiet_browser.py	2026-10-25 14:12:18.000000000 +0000
++++ b/engine/quiet_browser.py	2026-11-02 09:30:02.000000000 +0000
+@@ -1,21 +1,57 @@
+-"""Experimental headed Linux browsers on an authenticated, hidden X display.
++"""Generation with no browser window on screen, on every OS.
+ 
+-Service survives CLI exit; a localhost-only password-protected viewer exposes
+-this same display on demand. No browser/profile is restarted by Show browser.
++Two mechanisms, one setting:
++
++* **Linux / WSL** - a headed browser on a private, hidden X display (``Xvfb``). The display is a
++  service: it survives the CLI exiting, and a localhost-only password-protected viewer exposes that
++  same display on demand. No browser or profile is restarted by *Show browser*.
++* **Windows / macOS** - there is no X server to hide behind, so the headed browser is launched
++  **off-screen** (``--window-position=-32000,-32000``) and muted. The window exists - the Google
++  session, cookies and downloads all behave exactly as they do visibly, which is the whole point of
++  staying headed - but it sits outside the virtual desktop, so it is never seen and never captured by
++  a screen share, a recording or a presentation. *Show browser* moves that same window on-screen over
++  a loopback-only debugging port, without restarting it; *Hide browser* moves it back.
++
++Both keep the browser **headed**. Nothing here switches a login to headless Chromium, which Google
++rejects; quiet mode changes where the window is, never whether the session is real.
+ """
+ import json
+ import os
+ from pathlib import Path
+ import secrets
+ import shutil
++import socket
+ import subprocess
++import sys
+ import time
+ 
++#: Where a headed window is parked so no display, screen share or screenshot can see it.
++OFFSCREEN = -32000
++
++#: Loopback debugging port state, used only to move an already-running hidden window on-screen.
++WINDOW_STATE_NAME = 'window.json'
++
+ 
+ def quiet_enabled(config=None):
+     return os.getenv('AUTOVIDEO_QUIET_BROWSER','').lower() in ('1','true','yes') or bool((config or {}).get('quiet'))
+ 
+ 
++def platform():
++    """``'linux'``, ``'windows'`` or ``'macos'`` - decides which hiding mechanism quiet mode uses."""
++    if sys.platform.startswith('linux'):
++        return 'linux'
++    if sys.platform == 'darwin':
++        return 'macos'
++    if os.name == 'nt':
++        return 'windows'
++    return sys.platform or 'unknown'
++
++
++def uses_virtual_display():
++    """True where quiet mode hides the browser on a private X display instead of moving it away."""
++    return platform() == 'linux' and os.path.exists('/proc')
++
++
+ def _root():
+     root=Path.home()/'.local/share/autovideoai/quiet-browser'
+     root.mkdir(parents=True,exist_ok=True);root.chmod(0o700)
+@@ -23,10 +59,27 @@
+ 
+ 
+ def _live(pid, token):
++    """Is this recorded process still ours? POSIX reads /proc; elsewhere the OS is asked by pid."""
++    try:
++        pid = int(pid)
++    except (TypeError, ValueError):
++        return False
++    if pid <= 0:
++        return False
++    if uses_virtual_display():
++        try:
++            path=Path('/proc')/str(pid)
++            return path.stat().st_uid==os.getuid() and token.encode() in (path/'cmdline').read_bytes()
++        except (OSError,ValueError,TypeError):return False
+     try:
+-        path=Path('/proc')/str(int(pid))
+-        return path.stat().st_uid==os.getuid() and token.encode() in (path/'cmdline').read_bytes()
+-    except (OSError,ValueError,TypeError):return False
++        if os.name == 'nt':
++            out = subprocess.run(['tasklist', '/FI', 'PID eq ' + str(pid), '/NH'],
++                                 capture_output=True, text=True, timeout=10).stdout or ''
++            return str(pid) in out
++        os.kill(pid, 0)
++        return True
++    except Exception:
++        return False
+ 
+ 
+ def _dependencies(names):
+@@ -36,8 +89,11 @@
+ 
+ 
+ def browser_environment():
+-    if os.name!='posix' or not Path('/proc').exists():
+-        raise RuntimeError('Quiet browser currently supports Linux/WSL only')
++    """The private hidden X display for a headed Linux/WSL browser (contract unchanged)."""
++    if not uses_virtual_display():
++        raise RuntimeError('Quiet browser on ' + platform() + ' hides the window off-screen instead of using a '
++                           'virtual display; browser_environment() is Linux/WSL only. Quiet mode did not open a '
++                           'visible browser.')
+     import fcntl
+     _dependencies(['Xvfb','xauth','xdpyinfo'])
+     root=_root();state_path=root/'display.json';auth=root/'Xauthority'
+@@ -66,8 +122,185 @@
+         raise RuntimeError('Private X display did not become ready; check quiet-browser/display.log. No visible fallback was launched.')
+ 
+ 
++# --------------------------------------------------------------------------- #
++# Windows / macOS: a headed window nobody can see
++# --------------------------------------------------------------------------- #
++def hidden_window_args():
++    """Chromium args that park a headed window outside every display, and mute it.
++
++    Deliberately *not* ``--headless``: Google refuses a headless sign-in, and a headless session also
++    loses the downloads and dialogs Flow relies on. An off-screen headed window keeps the real browser
++    and the real login, and is simply never on screen.
++    """
++    return ['--window-position=%d,%d' % (OFFSCREEN, OFFSCREEN),
++            '--window-size=1920,1080',
++            '--mute-audio',
++            '--hide-crash-restore-bubble',
++            '--disable-session-crashed-bubble']
++
++
++def _free_port():
++    with socket.socket() as sock:
++        sock.bind(('127.0.0.1', 0))
++        return sock.getsockname()[1]
++
++
++def debug_port_args():
++    """Loopback debugging port so *Show browser* can move this window without restarting it.
++
++    Best effort and strictly optional: when no port can be allocated the browser is still hidden, only
++    the reveal button loses its handle. Chromium binds this to 127.0.0.1 only.
++    """
++    try:
++        port = _free_port()
++    except OSError:
++        return [], 0
++    return ['--remote-debugging-port=%d' % port, '--remote-debugging-address=127.0.0.1'], port
++
++
++def launch_plan(config=None, *, record=True):
++    """``{'transport', 'args', 'env', 'debug_port'}`` for a quiet launch on this OS.
++
++    Returns ``None`` when quiet mode is off. Never opens a visible window and never silently downgrades
++    to headless. ``record=False`` is for short-lived helper browsers (music search) that must not
++    overwrite the Flow window handle the *Show browser* button reads.
++    """
++    if not quiet_enabled(config):
++        return None
++    if uses_virtual_display():
++        return {'transport': 'quiet-x11', 'args': ['--ozone-platform=x11', '--disable-gpu'],
++                'env': browser_environment(), 'debug_port': 0}
++    args = list(hidden_window_args())
++    port = 0
++    if record:
++        extra, port = debug_port_args()
++        args += extra
++        if port:
++            _save_window_state({'port': port, 'pid': os.getpid(), 'platform': platform(), 'hidden': True,
++                                'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
++    return {'transport': 'quiet-hidden-window', 'args': args, 'env': None, 'debug_port': port}
++
++
++def fallback_plan(config=None):
++    """The same hidden window without the debugging port, if that argument ever breaks a launch."""
++    if not quiet_enabled(config) or uses_virtual_display():
++        return None
++    return {'transport': 'quiet-hidden-window-noport', 'args': list(hidden_window_args()),
++            'env': None, 'debug_port': 0}
++
++
++def _window_state_path():
++    return _root() / WINDOW_STATE_NAME
++
++
++def _save_window_state(state):
++    try:
++        path = _window_state_path()
++        path.write_text(json.dumps(state))
++        path.chmod(0o600)
++    except OSError:
++        pass
++
++
++def _window_state():
++    try:
++        path = _window_state_path()
++        if not path.is_file():
++            return {}
++        state = json.loads(path.read_text())
++        return state if isinstance(state, dict) else {}
++    except (OSError, ValueError):
++        return {}
++
++
++def _set_window_bounds(port, bounds):
++    """Move/resize the browser window that owns this loopback debugging port. No restart."""
++    from playwright.sync_api import sync_playwright
++    with sync_playwright() as playwright:
++        browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:%d' % int(port), timeout=10000)
++        try:
++            session = browser.new_browser_cdp_session()
++            targets = (session.send('Target.getTargets', {}) or {}).get('targetInfos') or []
++            page = next((t for t in targets if t.get('type') == 'page' and t.get('targetId')), None)
++            if page is None:
++                raise RuntimeError('The hidden browser has no page to move.')
++            window = session.send('Browser.getWindowForTarget', {'targetId': page['targetId']})
++            window_id = window.get('windowId')
++            if window_id is None:
++                raise RuntimeError('Chromium did not report a window for the hidden browser.')
++            # A minimized window must leave that state before it accepts a position.
++            if (window.get('bounds') or {}).get('windowState') not in (None, 'normal'):
++                session.send('Browser.setWindowBounds',
++                             {'windowId': window_id, 'bounds': {'windowState': 'normal'}})
++            session.send('Browser.setWindowBounds', {'windowId': window_id, 'bounds': bounds})
++            return True
++        finally:
++            try:
++                browser.close()
++            except Exception:
++                pass
++
++
++def reveal_window():
++    """Bring the running hidden window on-screen (Windows/macOS). Returns a status dict."""
++    state = _window_state()
++    port = state.get('port')
++    if uses_virtual_display():
++        raise RuntimeError('On Linux/WSL the hidden browser lives on a private X display; use Show browser '
++                           '(the VNC viewer) instead of moving a window.')
++    if not port:
++        raise RuntimeError('No hidden browser window is recorded. Turn on Quiet browser in SETTINGS and start '
++                           'a browser job first; the window is only movable while that job runs.')
++    try:
++        _set_window_bounds(port, {'windowState': 'normal', 'left': 80, 'top': 80,
++                                  'width': 1440, 'height': 900})
++    except Exception as error:
++        raise RuntimeError('The hidden browser could not be revealed (' + ' '.join(str(error).split())[:220] +
++                           '). The job is unaffected and keeps running off-screen; restart it to get a '
++                           'movable window.') from None
++    state.update(hidden=False, revealed_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
++    _save_window_state(state)
++    return {'status': 'revealed', 'port': port}
++
++
++def conceal_window():
++    """Send the revealed window back off-screen (Windows/macOS). Returns a status dict."""
++    state = _window_state()
++    port = state.get('port')
++    if uses_virtual_display():
++        raise RuntimeError('On Linux/WSL the hidden browser lives on a private X display; closing the viewer '
++                           'hides it again.')
++    if not port:
++        raise RuntimeError('No hidden browser window is recorded yet.')
++    _set_window_bounds(port, {'windowState': 'normal', 'left': OFFSCREEN, 'top': OFFSCREEN,
++                              'width': 1920, 'height': 1080})
++    state.update(hidden=True, concealed_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
++    _save_window_state(state)
++    return {'status': 'hidden', 'port': port}
++
++
++def window_is_revealed():
++    """True when a recorded hidden window has been moved on-screen and not sent back."""
++    state = _window_state()
++    return bool(state.get('port')) and state.get('hidden') is False
++
++
++def status_text(config=None):
++    """One plain sentence for SETTINGS, saying what Quiet browser will do on this OS."""
++    if not quiet_enabled(config):
++        return 'Quiet browser is off: browser jobs open a visible Chromium window.'
++    if uses_virtual_display():
++        return ('Quiet browser is on: the headed browser runs on a private hidden X display '
++                '(needs Xvfb, xauth, x11-utils; x11vnc + a VNC viewer for Show browser).')
++    return ('Quiet browser is on: the headed browser runs off-screen and muted, so no window appears and a '
++            'screen share cannot pick it up. Show browser moves that same running window on-screen for a '
++            'Google sign-in; Hide browser moves it back. No browser or profile is restarted.')
++
++
+ def show_browser():
+-    if os.name!='posix':raise RuntimeError('Quiet browser currently supports Linux/WSL only')
++    """Reveal the running quiet session for a manual sign-in. Never restarts a browser or profile."""
++    if not uses_virtual_display():
++        return reveal_window()
+     import fcntl
+     _dependencies(['x11vnc','vncviewer'])
+     root=_root();state_path=root/'display.json'
+@@ -83,7 +316,6 @@
+             password.chmod(0o600)
+         vnc_path=root/'viewer.json';vnc=json.loads(vnc_path.read_text()) if vnc_path.exists() else {}
+         if not _live(vnc.get('pid'),str(password)):
+-            import socket
+             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+             env=dict(os.environ);env.update(DISPLAY=state['display'],XAUTHORITY=str(root/'Xauthority'))
+             with open(root/'viewer.log','ab') as log:
+@@ -92,3 +324,10 @@
+             vnc={'pid':process.pid,'port':port};vnc_path.write_text(json.dumps(vnc));vnc_path.chmod(0o600)
+         subprocess.Popen(['vncviewer','-passwd',str(password),'127.0.0.1::'+str(vnc['port'])],
+                          stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
++
++
++def hide_browser():
++    """Put the quiet session back out of sight after a sign-in."""
++    if uses_virtual_display():
++        return {'status': 'viewer', 'note': 'Close the VNC viewer window; the browser stays on its hidden display.'}
++    return conceal_window()
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/engine/render/graphics.py b/engine/render/graphics.py
+--- a/engine/render/graphics.py	2026-10-28 02:54:56.000000000 +0000
++++ b/engine/render/graphics.py	2026-11-02 09:30:02.000000000 +0000
+@@ -433,8 +433,26 @@
+         img.alpha_composite(mark, (W - mark.width - int(W * .035), H - mark.height - int(H * .045)))
+ 
+     elif event.kind == 'watermark':
+-        scale *= {'Small':1.0,'Medium':1.4,'Large':1.8}[logo_size]
+-        if style == 'playful':
++        # 7.0.124: a channel logo IS the channel mark. This branch used to draw the pill badge with the
++        # channel name *and* then composite the logo into the bottom-right corner - and because
++        # `build_overlay_assets` also schedules a separate `logo` overlay in that same corner, a branded
++        # video carried two brand marks plus a name pill on every frame. With a logo available the badge
++        # is not drawn at all; without one the badge is the mark, exactly as before.
++        if logo_path and os.path.isfile(logo_path):
++            with Image.open(logo_path) as original:
++                mark = original.convert('RGBA')
++            mark.thumbnail((int(W*{'Small':.09,'Medium':.12,'Large':.16}[logo_size]), int(H*.10)),
++                           Image.Resampling.LANCZOS)
++            alpha = int(max(.15, min(1, event.opacity)) * 255)
++            if alpha < 255:
++                faded = mark.copy()
++                faded.putalpha(mark.getchannel('A').point(lambda v: int(v * alpha / 255)))
++                mark = faded
++            x, y = int(W*.07), int(H*.035)
++            img.alpha_composite(mark, (x, y))
++            ink_boxes.append((x, y, x+mark.width, y+mark.height))
++        elif style == 'playful':
++            scale *= {'Small':1.0,'Medium':1.4,'Large':1.8}[logo_size]
+             value = event.title.strip()
+             face = font(max(16, int(30*scale)), bold=True, style='playful', text=value)
+             # Fit brand text to a compact badge; never draw past the safe corner.
+@@ -460,6 +478,7 @@
+                 d.text((x+height+unit//2,y+(height-(ink[3]-ink[1]))/2-ink[1]),value,font=face,fill=(255,255,255,255))
+                 d.rounded_rectangle((x+height+unit//2,y+height-8,x+width-unit,y+height-5), radius=2, fill=(251,113,178,255))
+         else:
++            scale *= {'Small':1.0,'Medium':1.4,'Large':1.8}[logo_size]
+             face = font(max(16, int(26*scale)), bold=True, style=style, text=event.title)
+             value = event.title.strip()
+             ink = d.textbbox((0, 0), value, font=face)
+@@ -471,16 +490,12 @@
+     else:
+         raise ValueError("Unknown editorial card: " + event.kind)
+ 
+-    if logo_path and os.path.isfile(logo_path) and event.kind in {'intro', 'outro', 'watermark'}:
++    # 'logo' and 'watermark' paint their own mark above; only intro/outro add the corner logo here.
++    if logo_path and os.path.isfile(logo_path) and event.kind in {'intro', 'outro'}:
+         with Image.open(logo_path) as original:
+             logo = original.convert('RGBA')
+         logo.thumbnail((int(W*{'Small':.09,'Medium':.12,'Large':.16}[logo_size]), int(H*.10)), Image.Resampling.LANCZOS)
+-        if event.kind == 'logo':
+-            pass          # already painted above, in the same bottom-right corner
+-        elif event.kind == 'watermark':
+-            img.alpha_composite(logo, (W-logo.width-int(W*.035), H-logo.height-int(H*.035)))
+-        else:
+-            img.alpha_composite(logo, (int(W*.07), int(H*.035)))
++        img.alpha_composite(logo, (int(W*.07), int(H*.035)))
+     event.layout = {'style': style, 'font_sizes': sizes, 'text_boxes': ink_boxes,
+                     'reading_floor': round(38*scale), 'canvas': [W, H],
+                     'captions': bool(event.layout.get('captions', True))}
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7124_quiet_browser_all_os.py b/tests/test_v7124_quiet_browser_all_os.py
+--- a/tests/test_v7124_quiet_browser_all_os.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7124_quiet_browser_all_os.py	2026-11-02 09:30:43.000000000 +0000
+@@ -0,0 +1,347 @@
++"""v7.0.124: Quiet browser hides the window on every OS, and never on a headless login.
++
++The field report was exact: *"can we do something which will not show me the annoying pop-up chromium
++browser during the video generation process … this creates an issue when I am sharing my screen."*
++Quiet browser existed but raised ``Quiet browser currently supports Linux/WSL only`` everywhere else,
++so on Windows the popup was unavoidable - and the SETTINGS box said so.
++
++These tests pin the cross-platform contract:
++
++* Windows/macOS park a **headed** window off-screen and mute it - never ``--headless``, because Google
++  refuses a headless sign-in and Flow needs real downloads;
++* Linux/WSL keeps the private hidden X display exactly as before;
++* ``browser_environment()`` still refuses to fall back to a visible browser when Xvfb is missing;
++* a caller can force a visible window for the one thing that needs it - the first manual sign-in;
++* *Show browser* moves the **same running window** (CDP bounds), never a restart;
++* a sign-in wall reveals the hidden window by itself and hides it again once signed in;
++* Flow Music is quiet too, without stealing the Flow window handle.
++"""
++import json
++
++import pytest
++
++from engine import quiet_browser as quiet
++from engine.providers.flow_browser import FlowBrowser
++
++
++@pytest.fixture()
++def on_windows(monkeypatch):
++    """Pretend to be Windows. Only the two probes quiet mode branches on are patched - touching
++    ``os.name`` would break ``pathlib`` for the whole interpreter."""
++    monkeypatch.setattr(quiet, 'platform', lambda: 'windows')
++    monkeypatch.setattr(quiet, 'uses_virtual_display', lambda: False)
++
++
++@pytest.fixture()
++def on_linux_display(monkeypatch):
++    monkeypatch.setattr(quiet, 'platform', lambda: 'linux')
++    monkeypatch.setattr(quiet, 'uses_virtual_display', lambda: True)
++
++
++# --------------------------------------------------------------------------- #
++# The hidden window is headed, off-screen and silent
++# --------------------------------------------------------------------------- #
++def test_hidden_window_is_off_screen_and_muted():
++    args = quiet.hidden_window_args()
++    assert '--window-position=-32000,-32000' in args
++    assert '--mute-audio' in args
++    assert not any('headless' in arg for arg in args)
++
++
++def test_quiet_launch_on_windows_hides_the_window_without_headless(on_windows, monkeypatch):
++    monkeypatch.setattr(quiet, 'debug_port_args', lambda: ([], 0))
++    plan = quiet.launch_plan({'quiet': True})
++    assert plan['transport'] == 'quiet-hidden-window'
++    assert plan['env'] is None
++    assert '--window-position=-32000,-32000' in plan['args']
++    assert not any('headless' in arg for arg in plan['args'])
++
++
++def test_quiet_launch_on_linux_still_uses_the_private_display(on_linux_display, monkeypatch):
++    monkeypatch.setattr(quiet, 'browser_environment', lambda: {'DISPLAY': ':81'})
++    plan = quiet.launch_plan({'quiet': True})
++    assert plan['transport'] == 'quiet-x11' and plan['env'] == {'DISPLAY': ':81'}
++    assert '--ozone-platform=x11' in plan['args']
++
++
++def test_quiet_off_launches_nothing_special(on_windows):
++    assert quiet.launch_plan({'quiet': False}) is None
++    assert quiet.launch_plan({}) is None
++
++
++def test_a_missing_virtual_display_never_opens_a_visible_browser(on_linux_display, monkeypatch):
++    monkeypatch.setattr(quiet.shutil, 'which', lambda name: None)
++    with pytest.raises(RuntimeError, match='did not open a visible browser'):
++        quiet.browser_environment()
++
++
++def test_the_display_helper_stays_linux_only(on_windows):
++    with pytest.raises(RuntimeError, match='did not open a visible browser'):
++        quiet.browser_environment()
++
++
++def test_settings_explains_this_os(on_windows):
++    text = quiet.status_text({'quiet': True})
++    assert 'off-screen' in text and 'screen share' in text
++    assert 'Linux/WSL' not in text
++    assert 'off' in quiet.status_text({'quiet': False})
++
++
++# --------------------------------------------------------------------------- #
++# The launcher really uses it
++# --------------------------------------------------------------------------- #
++class _FakeContext:
++    def __init__(self):
++        self.pages = []
++
++    def new_page(self):
++        return object()
++
++    def close(self):
++        pass
++
++
++class _FakePlaywright:
++    def __init__(self):
++        self.calls = []
++        self.chromium = self
++
++    def launch_persistent_context(self, profile, **kwargs):
++        self.calls.append(kwargs)
++        return _FakeContext()
++
++
++def _browser(tmp_path, monkeypatch, bcfg, headless=False, override=None):
++    monkeypatch.setattr(quiet, 'debug_port_args', lambda: ([], 0))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser.bcfg = bcfg
++    browser.headless = headless
++    browser.profile_dir = str(tmp_path / 'profile')
++    browser._pw = _FakePlaywright()
++    browser._ctx = browser._page = None
++    browser._guard_page = None
++    browser._own_context = False
++    browser.active_browser = '?'
++    if override is not None:
++        browser.quiet_override = override
++    return browser
++
++
++def test_a_quiet_job_launches_headed_and_off_screen(tmp_path, monkeypatch, on_windows):
++    browser = _browser(tmp_path, monkeypatch, {'quiet': True, 'mode': 'bundled'})
++    browser._launch_persistent({'kind': 'bundled'})
++    call = browser._pw.calls[0]
++    assert call['headless'] is False                       # never a headless Google session
++    assert '--window-position=-32000,-32000' in call['args']
++    assert '--mute-audio' in call['args']
++    assert 'quiet-hidden-window' in browser.active_browser
++
++
++def test_an_ordinary_job_is_untouched_by_quiet_mode(tmp_path, monkeypatch, on_windows):
++    browser = _browser(tmp_path, monkeypatch, {'mode': 'bundled'})
++    browser._launch_persistent({'kind': 'bundled'})
++    call = browser._pw.calls[0]
++    assert not any('window-position' in arg for arg in call['args'])
++    assert call['headless'] is False and browser.active_browser.endswith('[native]')
++
++
++def test_a_login_can_force_a_visible_window(tmp_path, monkeypatch, on_windows):
++    browser = _browser(tmp_path, monkeypatch, {'quiet': True, 'mode': 'bundled'}, override=False)
++    assert browser.quiet_on() is False
++    browser._launch_persistent({'kind': 'bundled'})
++    assert not any('window-position' in arg for arg in browser._pw.calls[0]['args'])
++
++
++def test_quiet_still_refuses_to_hide_a_cdp_browser_you_own(tmp_path, monkeypatch, on_windows):
++    browser = _browser(tmp_path, monkeypatch, {'quiet': True, 'mode': 'cdp'})
++    with pytest.raises(RuntimeError, match='CDP'):
++        browser._launch_options()
++
++
++def test_quiet_still_ignores_a_windows_chrome_exe_from_wsl():
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser.bcfg = {'quiet': True, 'mode': 'auto', 'executable': '/mnt/c/Chrome.exe'}
++    assert browser._launch_options() == [{'kind': 'bundled'}]
++
++
++def test_a_failed_debug_port_still_hides_the_window(tmp_path, monkeypatch, on_windows):
++    """Losing the reveal handle must never cost the user a hidden browser."""
++    browser = _browser(tmp_path, monkeypatch, {'quiet': True, 'mode': 'bundled'})
++    # After _browser, which stubs the port away: this launch really does get a debugging port.
++    monkeypatch.setattr(quiet, 'debug_port_args', lambda: (['--remote-debugging-port=1'], 1))
++    calls = []
++
++    class _RefusingPort:
++        def launch_persistent_context(self, profile, **kwargs):
++            calls.append(kwargs)
++            if '--remote-debugging-port=1' in kwargs['args']:
++                raise RuntimeError('port refused')
++            return _FakeContext()
++
++    browser._pw = type('PW', (), {'chromium': _RefusingPort()})()
++    browser._launch_persistent({'kind': 'bundled'})
++    assert len(calls) == 2
++    assert '--remote-debugging-port=1' in calls[0]['args']
++    assert not any('remote-debugging' in arg for arg in calls[1]['args'])
++    assert '--window-position=-32000,-32000' in calls[1]['args']   # still hidden
++    assert calls[1]['headless'] is False                          # still headed
++    assert browser.active_browser.endswith('[quiet-hidden-window-noport]')
++
++
++# --------------------------------------------------------------------------- #
++# Show browser moves the SAME window - it never restarts one
++# --------------------------------------------------------------------------- #
++class _FakeSession:
++    def __init__(self, log):
++        self.log = log
++
++    def send(self, method, params=None):
++        self.log.append((method, params))
++        if method == 'Target.getTargets':
++            return {'targetInfos': [{'type': 'page', 'targetId': 'T1'}, {'type': 'background_page'}]}
++        if method == 'Browser.getWindowForTarget':
++            return {'windowId': 7, 'bounds': {'windowState': 'normal'}}
++        return {}
++
++
++class _FakeBrowser:
++    def __init__(self, log):
++        self.log = log
++
++    def new_browser_cdp_session(self):
++        return _FakeSession(self.log)
++
++    def close(self):
++        self.log.append(('closed', None))
++
++
++def test_reveal_moves_the_running_window_on_screen(tmp_path, monkeypatch, on_windows):
++    monkeypatch.setattr(quiet, '_root', lambda: tmp_path)
++    (tmp_path / quiet.WINDOW_STATE_NAME).write_text(json.dumps({'port': 9333, 'hidden': True}))
++    log = []
++    import playwright.sync_api as sync_api
++
++    class _Chromium:
++        @staticmethod
++        def connect_over_cdp(url, **kwargs):
++            log.append(('connect', url))
++            return _FakeBrowser(log)
++
++    class _Pw:
++        chromium = _Chromium()
++
++    class _Manager:
++        def __enter__(self):
++            return _Pw()
++
++        def __exit__(self, *args):
++            return False
++
++    monkeypatch.setattr(sync_api, 'sync_playwright', lambda: _Manager())
++    assert quiet.reveal_window()['status'] == 'revealed'
++    bounds = [params for method, params in log if method == 'Browser.setWindowBounds']
++    assert bounds and bounds[-1]['windowId'] == 7
++    assert bounds[-1]['bounds']['left'] == 80 and bounds[-1]['bounds']['windowState'] == 'normal'
++    assert log[0][1] == 'http://127.0.0.1:9333'          # the same process, not a new browser
++    assert json.loads((tmp_path / quiet.WINDOW_STATE_NAME).read_text())['hidden'] is False
++    assert quiet.window_is_revealed() is True
++
++
++def test_hide_puts_the_same_window_back(tmp_path, monkeypatch, on_windows):
++    monkeypatch.setattr(quiet, '_root', lambda: tmp_path)
++    (tmp_path / quiet.WINDOW_STATE_NAME).write_text(json.dumps({'port': 9333, 'hidden': False}))
++    log = []
++    monkeypatch.setattr(quiet, '_set_window_bounds', lambda port, bounds: log.append(bounds) or True)
++    assert quiet.hide_browser()['status'] == 'hidden'
++    assert log[-1]['left'] == quiet.OFFSCREEN and log[-1]['top'] == quiet.OFFSCREEN
++    assert json.loads((tmp_path / quiet.WINDOW_STATE_NAME).read_text())['hidden'] is True
++    assert quiet.window_is_revealed() is False
++
++
++def test_reveal_without_a_running_window_says_so(tmp_path, monkeypatch, on_windows):
++    monkeypatch.setattr(quiet, '_root', lambda: tmp_path)
++    with pytest.raises(RuntimeError, match='No hidden browser window is recorded'):
++        quiet.reveal_window()
++
++
++def test_the_linux_viewer_path_is_unchanged(tmp_path, monkeypatch, on_linux_display):
++    monkeypatch.setattr(quiet, '_root', lambda: tmp_path)
++    monkeypatch.setattr(quiet, '_dependencies', lambda names: None)
++    monkeypatch.setattr(quiet, '_live', lambda pid, token: True)
++    (tmp_path / 'display.json').write_text(json.dumps({'pid': 41, 'display': ':81'}))
++    (tmp_path / 'viewer.json').write_text(json.dumps({'pid': 42, 'port': 5909}))
++    (tmp_path / 'vnc-password').write_bytes(b'private-password')
++    commands = []
++    monkeypatch.setattr(quiet.subprocess, 'Popen', lambda args, **kw: commands.append(args))
++    quiet.show_browser()
++    assert len(commands) == 1 and commands[0][0] == 'vncviewer'
++    assert commands[0][-1] == '127.0.0.1::5909'
++
++
++# --------------------------------------------------------------------------- #
++# A sign-in wall reveals itself, then hides again
++# --------------------------------------------------------------------------- #
++def _counting_clock(ticks):
++    values = iter(range(ticks + 1))
++    return staticmethod(lambda: next(values, ticks))
++
++
++def test_a_login_wall_reveals_the_hidden_window_and_hides_it_after(monkeypatch, on_windows):
++    moves = []
++    monkeypatch.setattr(quiet, 'reveal_window', lambda: moves.append('reveal') or {'status': 'revealed'})
++    monkeypatch.setattr(quiet, 'conceal_window', lambda: moves.append('conceal') or {'status': 'hidden'})
++    from engine.providers import flow_browser as fb
++    monkeypatch.setattr(fb, 'time', type('T', (), {'monotonic': _counting_clock(6)})())
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser.bcfg = {'quiet': True}
++    browser._set = lambda state: None
++    states = iter([False, False, True])
++    browser.is_logged_in = lambda: next(states, True)
++    browser._page = type('P', (), {'url': 'https://flow.google.com/', 'is_closed': lambda self: False,
++                                   'goto': lambda self, url, **kw: None,
++                                   'wait_for_timeout': lambda self, ms: None})()
++    assert browser._post_connect(5) is True
++    assert moves == ['reveal', 'conceal']
++
++
++def test_an_already_signed_in_quiet_session_is_never_revealed(monkeypatch, on_windows):
++    moves = []
++    monkeypatch.setattr(quiet, 'reveal_window', lambda: moves.append('reveal'))
++    monkeypatch.setattr(quiet, 'conceal_window', lambda: moves.append('conceal'))
++    browser = FlowBrowser.__new__(FlowBrowser)
++    browser.bcfg = {'quiet': True}
++    browser._set = lambda state: None
++    browser.is_logged_in = lambda: True
++    browser._page = type('P', (), {'url': 'https://flow.google.com/project/x', 'is_closed': lambda self: False,
++                                   'goto': lambda self, url, **kw: None,
++                                   'wait_for_timeout': lambda self, ms: None})()
++    assert browser._post_connect(5) is True
++    assert moves == []
++
++
++# --------------------------------------------------------------------------- #
++# Flow Music is quiet too, and does not steal the Flow window handle
++# --------------------------------------------------------------------------- #
++def test_flow_music_is_quiet_on_windows_without_touching_the_flow_handle(monkeypatch, on_windows):
++    from engine import flow_music
++    saved = []
++    monkeypatch.setattr(quiet, '_save_window_state', lambda state: saved.append(state))
++    options = flow_music.music_launch_options({'quiet': True}, login=False)
++    assert '--window-position=-32000,-32000' in options['args']
++    assert not any('ozone-platform' in arg for arg in options['args'])
++    assert saved == []                                  # the Flow reveal handle is not overwritten
++    assert '--window-position=-32000,-32000' not in flow_music.music_launch_options(
++        {'quiet': True}, login=True)['args']            # a music login stays visible
++
++
++# --------------------------------------------------------------------------- #
++# The UI no longer says "Linux/WSL only"
++# --------------------------------------------------------------------------- #
++def test_settings_no_longer_calls_quiet_mode_linux_only():
++    from pathlib import Path
++    app = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
++    assert 'Quiet browser · experimental (Linux/WSL)' not in app
++    assert 'Quiet browser · no visible window (all OS)' in app
++    assert 'Hide quiet browser · same session' in app
++    # The manual login button must stay visible even with Quiet browser on.
++    assert 'FlowBrowser(headless=False, quiet=False)' in app
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tests/test_v7124_three_language_convergence.py b/tests/test_v7124_three_language_convergence.py
+--- a/tests/test_v7124_three_language_convergence.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_v7124_three_language_convergence.py	2026-11-02 09:44:13.000000000 +0000
+@@ -0,0 +1,224 @@
++"""v7.0.124: a three-language production finishes - and stays finished.
++
++The report was *"I have added some features to generate videos with three languages, however it's not
++generating video with 3 languages."* The editions did render; they just never counted as done.
++
++``_captions_contradict()`` (v7.0.113) compared the burned-caption evidence with the job's wish in
++**both** directions. Only one of them is evidence: a caption is not on screen every second, so sampled
++frames that find no text prove nothing - ``engine/render/caption_check.explain()`` says exactly that,
++and the render loop only ever sets ``captions_disputed`` for the visible-text direction. Comparing both
++ways meant a language whose transcript is ON was pending again on every single run whenever the pixel
++heuristic could not see its glyphs, which a bright, high-contrast picture alone causes:
++
++* the second ``render_job_editions`` re-encoded Hindi into a brand-new export folder;
++* ``_mark_superseded`` stamped the previous file "not the current video" each time, so a user who
++  opened yesterday's Odia file was told it was superseded by one that was itself about to be replaced;
++* the job could never report every selected language as exported, so resumes and repairs kept re-running
++  the render stage instead of finishing.
++
++Real FFmpeg media; no Gemini, TTS or Flow call is made.
++"""
++import hashlib
++import json
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++needs_ffmpeg = pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),
++                                  reason='FFmpeg required')
++
++
++def _sha(path):
++    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
++
++
++def _tone(path, frequency, seconds):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi',
++                    '-i', f'sine=frequency={frequency}:sample_rate=44100', '-t', str(seconds),
++                    '-c:a', 'pcm_s16le', str(path)], check=True)
++    return path
++
++
++def _picture(path, seconds=3.0):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi',
++                    '-i', f'testsrc2=size=640x360:rate=24', '-t', str(seconds), '-an',
++                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)], check=True)
++    return path
++
++
++def _job(tmp_path, *, transcript=None):
++    """A finished production: clean picture plus a reviewed Hindi and Odia narration."""
++    from engine.production import save
++    job = tmp_path / 'job'
++    (job / 'render').mkdir(parents=True)
++    (job / 'production').mkdir()
++    (job / 'audio').mkdir()
++    visual = _picture(job / 'render' / 'visual-master.mp4')
++    save(job / 'production' / 'visual_master.json',
++         {'path': str(visual), 'sha256': _sha(visual), 'duration': 3.0, 'contains': 'picture only'})
++    bundles = {}
++    for code, freq in (('hi', 660), ('or', 880)):
++        folder = job / 'speech-editions' / code / ('key-' + code)
++        audio = _tone(folder / 'voice.wav', freq, 3.0)
++        words = folder / 'words.json'
++        words.write_text(json.dumps([{'word': 'शब्द', 'start': 0.1, 'end': 0.9},
++                                     {'word': 'दो', 'start': 1.0, 'end': 1.8}], ensure_ascii=False),
++                         encoding='utf-8')
++        bundles[code] = {'audio': str(audio), 'audio_sha256': _sha(audio), 'duration': 3.0,
++                         'words': str(words), 'script': 'स्वीकृत वर्णन', 'language': code,
++                         'timing_source': 'test-measured', 'text_cards': True, 'educational': False,
++                         'hooks': False, 'topic': 't', 'card_provider': 'gemini-web', 'cards': []}
++    state = {'source_language': 'en', 'editions': ['en', 'hi', 'or'], 'profiles': {},
++             'prepare_audio': True, 'bundles': bundles, 'text_cards': True, 'hooks_enabled': False,
++             'educational': False, 'topic': 't'}
++    if transcript is not None:
++        state['transcript'] = transcript
++    save(job / 'production' / 'language_editions.json', state)
++    return job
++
++
++# --------------------------------------------------------------------------- #
++# Convergence
++# --------------------------------------------------------------------------- #
++@needs_ffmpeg
++def test_a_second_run_reuses_every_edition_instead_of_re_encoding_it(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    first = render_job_editions(job)
++    assert first['status'] == 'exported', first
++    assert {code: row['status'] for code, row in first['editions'].items()} == {'hi': 'exported',
++                                                                               'or': 'exported'}
++    second = render_job_editions(job)
++    assert second['status'] == 'exported'
++    for code in ('hi', 'or'):
++        assert second['editions'][code]['path'] == first['editions'][code]['path'], (
++            code + ' was re-rendered although nothing about the job changed')
++        assert Path(second['editions'][code]['path']).is_file()
++    # Nothing was superseded, because nothing was replaced.
++    assert not list(job.glob('language_editions/*/superseded.json'))
++
++
++@needs_ffmpeg
++def test_a_third_run_is_still_the_same_two_files(tmp_path):
++    from engine.language_editions import render_job_editions
++    job = _job(tmp_path)
++    paths = [render_job_editions(job)['editions']['hi']['path'] for _ in range(3)]
++    assert len(set(paths)) == 1
++    exports = sorted(p.name for p in job.glob('language_editions/*/exports/hi-*.mp4'))
++    assert len(exports) == 1                     # one Hindi export, not one per run
++
++
++@needs_ffmpeg
++def test_the_panel_and_the_renderer_agree_that_the_job_is_finished(tmp_path):
++    from engine.language_editions import edition_diagnosis, render_job_editions
++    job = _job(tmp_path)
++    render_job_editions(job)
++    diagnosis = edition_diagnosis(job)
++    assert diagnosis['status'] == 'exported'
++    assert all(row['status'] == 'exported' for row in diagnosis['editions'].values())
++    assert diagnosis['visual_master']['ready'] is True
++    # A finished three-language job must not leave a "needs attention" warning on the job.
++    assert not diagnosis.get('narration_error')
++
++
++# --------------------------------------------------------------------------- #
++# Why it used to loop: an undetected transcript is not a defect
++# --------------------------------------------------------------------------- #
++@needs_ffmpeg
++def test_an_undetected_transcript_does_not_make_the_edition_pending_again(tmp_path):
++    from engine import language_editions as LE
++    job = _job(tmp_path)
++    LE.render_job_editions(job)
++    record = json.loads((job / 'production' / 'language_editions_render.json').read_text(encoding='utf-8'))
++    state = json.loads((job / 'production' / 'language_editions.json').read_text(encoding='utf-8'))
++    for code in ('hi', 'or'):
++        entry = record['editions'][code]
++        wants = LE.transcript_for(state, code)
++        # Whatever the pixel heuristic made of this picture, a transcript that WAS asked for cannot
++        # force another render: absence of detected glyphs proves nothing.
++        assert LE._bundle_is_current(job, code, state['bundles'][code], entry, verify=True,
++                                     transcript=wants, captions_sha=LE.caption_signature(job, code)[0])
++        if wants:
++            assert LE._captions_contradict(job, code, entry, wants=True, measure=True) is False
++
++
++def test_caption_evidence_is_still_only_a_question_never_a_verdict():
++    """The check's own contract, which the render loop must not contradict."""
++    from engine.render.caption_check import explain
++    undetected = {'checked': True, 'looks_like_text': False, 'ratio': 0.16, 'edge_ratio': 0.02,
++                  'detail': 'no burned transcript detected'}
++    detected = {'checked': True, 'looks_like_text': True, 'ratio': 0.16, 'edge_ratio': 0.06}
++    assert explain(undetected, expected=True) == ''          # asked for, not seen: no warning
++    assert explain(detected, expected=False)                 # not asked for, seen: a real defect
++    assert explain(detected, expected=True) == ''
++    assert explain(undetected, expected=False) == ''
++
++
++def test_contradiction_is_one_directional_without_media(tmp_path):
++    """Pure state, no FFmpeg: the direction that used to loop is closed."""
++    from engine import language_editions as LE
++    export = tmp_path / 'hi-export.mp4'
++    export.write_bytes(b'not really a video; only the recorded detection is read here')
++    undetected = {'status': 'exported', 'path': str(export), 'captions': True,
++                  'captions_detected': {'checked': True, 'looks_like_text': False, 'ratio': 0.16,
++                                        'edge_ratio': 0.02, 'detail': 'no burned transcript detected'}}
++    # Asked for a transcript, no glyphs detected: NOT a defect, so no re-render. This is the loop.
++    assert LE._captions_contradict(tmp_path, 'hi', undetected, wants=True, measure=True) is False
++    # The v7.0.113 defect stays fixed: text on screen when the job asked for none IS a re-render.
++    visible = {'status': 'exported', 'path': str(export), 'captions': False,
++               'captions_detected': {'checked': True, 'looks_like_text': True, 'ratio': 0.16,
++                                     'edge_ratio': 0.06, 'detail': 'consistent with a burned transcript'}}
++    assert LE._captions_contradict(tmp_path, 'or', visible, wants=False, measure=False) is True
++    # Once disputed, it is explained instead of re-rendered for ever.
++    assert LE._captions_contradict(tmp_path, 'or', dict(visible, captions_disputed=True),
++                                   wants=False, measure=True) is False
++
++
++def test_an_exported_entry_without_a_readable_file_cannot_break_the_loop(tmp_path):
++    """7.0.124: this raised ValueError('PosixPath(.) has an empty name') out of the whole edition loop."""
++    from engine import language_editions as LE
++    for path in ('', str(tmp_path / 'missing.mp4')):
++        entry = {'status': 'exported', 'path': path, 'captions': False}
++        assert LE._captions_contradict(tmp_path, 'or', entry, wants=False, measure=True) is False
++
++
++# --------------------------------------------------------------------------- #
++# The transcript switch still changes exactly the languages it should
++# --------------------------------------------------------------------------- #
++@needs_ffmpeg
++def test_switching_a_transcript_off_re_renders_only_that_language(tmp_path):
++    from engine import language_editions as LE
++    job = _job(tmp_path)
++    first = LE.render_job_editions(job)
++    assert first['status'] == 'exported'
++    # Odia is transcript-OFF by default, so switching it ON is the change that must repaint one file.
++    assert LE.transcript_for(json.loads((job / 'production' / 'language_editions.json')
++                                        .read_text(encoding='utf-8')), 'or') is False
++    LE.set_transcript(job, languages={'or': True})
++    second = LE.render_job_editions(job)
++    assert second['status'] == 'exported'
++    assert second['editions']['hi']['path'] == first['editions']['hi']['path']   # untouched
++    assert second['editions']['or']['path'] != first['editions']['or']['path']   # repainted once
++    assert second['editions']['or']['captions'] is True
++    third = LE.render_job_editions(job)
++    assert third['editions']['or']['path'] == second['editions']['or']['path']   # and then it settles
++    assert third['editions']['hi']['path'] == first['editions']['hi']['path']
++
++
++@needs_ffmpeg
++def test_odia_is_still_off_by_default_and_the_previous_file_is_kept(tmp_path):
++    from engine import language_editions as LE
++    job = _job(tmp_path)
++    assert LE.transcript_for(json.loads((job / 'production' / 'language_editions.json')
++                                        .read_text(encoding='utf-8')), 'or') is False
++    first = LE.render_job_editions(job)
++    assert first['editions']['or']['captions'] is False          # Odia defaults to no transcript
++    kept = Path(first['editions']['or']['path'])
++    LE.set_transcript(job, languages={'or': True})
++    second = LE.render_job_editions(job)
++    assert Path(second['editions']['or']['path']).is_file()
++    assert kept.is_file() and second['editions']['or']['path'] != str(kept)
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tools/update_v7122_to_v7123.py b/tools/update_v7122_to_v7123.py
+--- a/tools/update_v7122_to_v7123.py	2026-11-01 12:43:58.000000000 +0000
++++ b/tools/update_v7122_to_v7123.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,188 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply the v7.0.123 update to a v7.0.122 installation.
+-
+-Three reports after v7.0.122:
+-
+-1. "I don't see the earlier selected channel profile is attached to either of the language" - Create step 3 chose
+-   a channel profile per language, the narration batch never recorded it, and a job created from prepared voices
+-   wrote no ``production/language_editions.json``: no channel name, no logo, no intro, no outro. The batch now
+-   records ``channel_profiles`` per language, the job is given them, and Queue & Resume can attach a profile to a
+-   job that already exists.
+-
+-2. "keep the resume of the failed or scripted or planned jobs in this ... we can keep the tts in a separate
+-   section" - prepared narration moved to its own page, **Jobs & Recovery -> Prepared Voices**, with the batch
+-   picker, the character, the channel profile per language, and the stopped-TTS section. Queue & Resume now only
+-   resumes a saved job, and creating a job lands there.
+-
+-3. "one of the old failed job, i want you to fix it" - a frame that stopped because two real images were saved
+-   can now be decided: Queue & Resume lists the saved images of every waiting frame and keeps the one you choose,
+-   locally (no browser, no Flow request, no credit, nothing deleted), and ``v3 keep-frame`` does the same.
+-
+-Usage (run from the existing installation folder, after extracting the 7.0.123 zip beside it):
+-
+-    python3 ../AutoVideoAI-v7.0.123-Branding-Pages-And-Choice/tools/update_v7122_to_v7123.py .         # dry run
+-    python3 ../AutoVideoAI-v7.0.123-Branding-Pages-And-Choice/tools/update_v7122_to_v7123.py . --apply # install
+-
+-Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, Flow journals and request
+-files, character photos, channel profiles, browser profiles and ``music_library/`` are never copied, moved or
+-deleted. Stop the dashboard before --apply.
+-"""
+-
+-import argparse
+-import datetime
+-import fcntl
+-import hashlib
+-import json
+-import os
+-import shutil
+-import tempfile
+-from pathlib import Path
+-
+-CHANGES = [
+-    'VERSION', 'app.py', 'cli.py',
+-    'engine/channel_profiles.py', 'engine/flow_choice.py',
+-    'engine/batch_actions.py', 'engine/speech_batches.py', 'engine/speech_cards.py',
+-    'tests/test_v7120_use_prepared_voices.py', 'tests/test_v7121_run_prepared_voices.py',
+-    'tests/test_v7119_queue_narration_and_steps.py', 'tests/test_v7122_cast_and_every_batch.py',
+-    'tests/test_v7123_branding_pages_and_choice.py',
+-    'BRANDING_PAGES_AND_CHOICE_V7_0_123.md', 'tools/update_v7122_to_v7123.py',
+-]
+-# Files as they exist in 7.0.122: the only hashes this updater will replace.
+-# A hash outside this list means local edits; the file is preserved and nothing is applied.
+-ALLOWED = {
+-    'VERSION': ['d23aa1959198e16b50aba707f58ca64ff041aa93dae581d02b91e774eb21b4c2'],
+-    'app.py': ['88b59855b94a3766076b63c0ca6ff58c01840bcd5987ef1c440c6879508b1b7e'],
+-    'cli.py': ['0ddbeb11895d9229be33fa22c052e40b42cf4d244cbeb3eed7ac91748d088c93'],
+-    'engine/batch_actions.py': ['60a13f336458bcdeb4233407b4ce32b738c96afc51b83708c2200d7e7c54e3d7'],
+-    'engine/speech_batches.py': ['52be37af9cb2bdebd859e28a5f02fd4dffca2238cd6bd9e1f51f65b9925da898'],
+-    'engine/speech_cards.py': ['8d9561ac7eca8fe6c4cd04e536c617aae58c0a2cee7cba3b7489cdc8090de0c6'],
+-    'tests/test_v7121_run_prepared_voices.py': ['42910c97fe76a5bb06aea7b78680b2296033ebb1a886b3beef594ec28ec99ab2'],
+-    'tests/test_v7122_cast_and_every_batch.py': ['c42c020427b87355523a3eaaf3142d0403ada0ac71441188212126193e8a68f8'],
+-    'tests/test_v7120_use_prepared_voices.py': [
+-        '519d5f4472435ce6fdaf2ffa852a2a7307aebc304ebce572a54e9fbedad9fb9d'],
+-    'tests/test_v7119_queue_narration_and_steps.py': [
+-        'd03c0182a69e1be9dce769c4daff70a4af3ef233fc4513de9ca6b287e211ce98'],
+-}
+-
+-ACCEPTED_INSTALLS = ('7.0.122', '7.0.123')  # 7.0.123 allows a safe re-run after success
+-
+-# An older installation must walk the zips one at a time; this one knows the step before it.
+-EARLIER_STEPS = [
+-    ('7.0.121', '7.0.122', 'tools/update_v7121_to_v7122.py'),
+-]
+-
+-
+-def chain_message(current, version):
+-    steps = [step for step in EARLIER_STEPS if step[0] == current]
+-    if not steps:
+-        return ('This update requires an installed 7.0.122 (found ' + current + '). '
+-                'Earlier releases must be updated first, one zip at a time.')
+-    start, end, path = steps[0]
+-    return ('This update requires an installed 7.0.122 (found ' + current + '). Apply the earlier update first, '
+-            'from the 7.0.122 zip folder extracted beside this installation:\n'
+-            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
+-            'Then run this ' + version + ' update.')
+-
+-
+-def sha(path):
+-    return hashlib.sha256(path.read_bytes()).hexdigest()
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('target')
+-    parser.add_argument('--apply', action='store_true')
+-    args = parser.parse_args()
+-    source = Path(__file__).resolve().parents[1]
+-    target = Path(args.target).resolve()
+-    if source == target:
+-        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
+-    version_file = target / 'VERSION'
+-    if not version_file.is_file():
+-        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
+-    current = version_file.read_text(encoding='utf-8').strip()
+-    if current not in ACCEPTED_INSTALLS:
+-        raise ValueError(chain_message(current, source.name or '7.0.123'))
+-    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
+-    manifest_path = source / 'RELEASE_MANIFEST.json'
+-    if not manifest_path.is_file():
+-        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
+-                         ' folder; extract the complete zip')
+-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+-    expected = {row['path']: row['sha256'] for row in manifest['files']}
+-    for name in CHANGES:
+-        if name not in expected or sha(source / name) != expected[name]:
+-            raise ValueError('Update source checksum failed: ' + name)
+-        destination = target / name
+-        if destination.is_symlink():
+-            raise ValueError('Refusing symlink code target: ' + name)
+-        allowed = ALLOWED.get(name, [])
+-        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
+-            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
+-        if destination.exists() and not allowed and sha(destination) != expected[name]:
+-            # A file this release introduces must not overwrite a different file that already sits at that path.
+-            raise ValueError('A different file already exists where this update installs ' + name +
+-                             '; preserved it and changed nothing. Move it aside and run the update again.')
+-    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
+-            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
+-    print(json.dumps(plan, indent=2))
+-    if not args.apply:
+-        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
+-        return
+-
+-    lockroot = Path.home() / '.local/share/autovideoai'
+-    lockroot.mkdir(parents=True, exist_ok=True)
+-    with (lockroot / 'production.lock').open('a+b') as lock:
+-        try:
+-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            raise RuntimeError('Production is active; stop it before updating')
+-        pending = [name for name in CHANGES
+-                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
+-        if not pending:
+-            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
+-            return
+-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+-        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
+-        installed = []
+-        try:
+-            for name in pending:
+-                destination = target / name
+-                existed = destination.exists()
+-                if existed:
+-                    saved = backup / name
+-                    saved.parent.mkdir(parents=True, exist_ok=True)
+-                    shutil.copy2(destination, saved)
+-                destination.parent.mkdir(parents=True, exist_ok=True)
+-                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
+-                with os.fdopen(descriptor, 'wb') as handle:
+-                    handle.write((source / name).read_bytes())
+-                    handle.flush()
+-                    os.fsync(handle.fileno())
+-                os.replace(temporary, destination)
+-                installed.append((name, existed))
+-        except Exception:
+-            for name, existed in reversed(installed):
+-                if existed:
+-                    shutil.copy2(backup / name, target / name)
+-                else:
+-                    (target / name).unlink(missing_ok=True)
+-            raise
+-        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
+-        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
+-        print('    python3 cli.py v3 self-check')
+-        print('Then: Jobs & Recovery > Prepared Voices creates a job from your TTS (character + channel profile '
+-              'per language, then "Create the job from these voices"). Queue & Resume resumes a saved job, can '
+-              'attach its channel profile in "Channel profile", and can decide a frame that stopped with more '
+-              'than one saved image in "Saved images waiting for your choice" - locally, with no Flow request and '
+-              'no credit. From a terminal: python3 cli.py v3 use-voices --list / --create-job --rights '
+-              'own_content [--cast <id>] [--channel en=<profile>,...], python3 cli.py v3 channel <job> '
+-              '[--set en=<profile>], python3 cli.py v3 keep-frame <job> [--image <file> --keep <n>].')
+-
+-
+-if __name__ == '__main__':
+-    try:
+-        main()
+-    except (ValueError, RuntimeError, OSError) as error:
+-        print('Update stopped: ' + str(error))
+-        raise SystemExit(1)
+diff -rN -u '--exclude=outputs' '--exclude=data' '--exclude=logs' '--exclude=__pycache__' '--exclude=.pytest_cache' a/tools/update_v7123_to_v7124.py b/tools/update_v7123_to_v7124.py
+--- a/tools/update_v7123_to_v7124.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/update_v7123_to_v7124.py	2026-11-02 10:07:17.000000000 +0000
+@@ -0,0 +1,233 @@
++#!/usr/bin/env python3
++"""Apply the v7.0.124 update to a v7.0.123 installation.
++
++Two reports after v7.0.123, plus nine defects found by auditing the shipped suite against a real FFmpeg:
++
++1. "its not generating video with 3 language" - the editions WERE being made; they were never allowed to count
++   as finished. ``_captions_contradict()`` compared the burned-caption evidence with the job's wish in both
++   directions, but only one of them is evidence: a caption is not on screen every second, so sampled frames
++   that find no text prove nothing (``engine/render/caption_check.explain()`` has always said so, and the
++   render loop only ever sets ``captions_disputed`` for the visible-text direction). A language whose
++   transcript was ON was therefore pending again on every single run whenever a bright picture hid its
++   glyphs from the heuristic: a new export folder each time, the previous file stamped "not the current
++   video", and the Three-language panel reporting ``exported`` while the renderer reported ``pending``. The
++   contradiction is now one-directional, and an ``exported`` entry with no readable path can no longer raise
++   ``ValueError`` out of the whole edition loop.
++
++2. "can we do something which will not show me the annoying pop-up chromium browser during the video
++   generation process ... i have to stop the video generation" while sharing a screen - Quiet browser worked
++   on Linux/WSL and raised ``Quiet browser currently supports Linux/WSL only`` everywhere else, so on Windows
++   the popup was unavoidable. ``engine/quiet_browser.py`` now hides a browser on every OS and stays headed
++   everywhere: Windows/macOS park a real window at ``--window-position=-32000,-32000`` with ``--mute-audio``
++   (never ``--headless`` - Google refuses a headless sign-in), and *Show browser* moves that same running
++   window on screen over a loopback debugging port instead of restarting anything. A sign-in wall reveals the
++   hidden window by itself and hides it again once signed in, so a session is never hidden while it needs you.
++
++3. The Uploads picker lost the contract its own tests were written for: with no identifiable picker it fell
++   back to clicking *Uploads* in Flow's MAIN SIDEBAR - navigating away from the project mid-generation - and
++   its ``timeout_ms`` parameter was gone. It is bounded by one deadline again, strictly scoped, and retries an
++   unstable tab through its clickable ancestor without ``force``.
++
++4. ``render_overlay_png()`` drew the playful channel-name pill AND composited the logo, where
++   ``build_overlay_assets()`` also schedules a separate logo overlay - three channel marks per frame. A
++   channel logo IS the channel mark: with one available the badge is not drawn at all.
++
++5. Project deletion did a blocking ``wait_for(state='visible')`` on the first menu item (*Rename*), so a menu
++   that was merely slow to animate raised "No explicit success confirmation" before *Delete* was ever clicked;
++   Gemini review handed the file chooser a one-element list where a bare path was expected; three
++   ``st.dataframe`` calls used the deprecated ``use_container_width``; and the Create step-4 selectbox had been
++   renamed away from ``TTS``, which is what the Music-only dashboard test looks for.
++
++Usage (run from the existing installation folder, after extracting the 7.0.124 zip beside it):
++
++    python3 ../AutoVideoAI-v7.0.124-Finished-Editions-And-Quiet-Browser/tools/update_v7123_to_v7124.py .         # dry run
++    python3 ../AutoVideoAI-v7.0.124-Finished-Editions-And-Quiet-Browser/tools/update_v7123_to_v7124.py . --apply # install
++
++Only code, documentation and tests are replaced. Outputs, saved jobs, speech batches, language editions and
++their exports, Flow journals and request files, character photos, channel profiles, browser profiles and
++``music_library/`` are never copied, moved or deleted. Stop the dashboard before --apply.
++"""
++
++import argparse
++import datetime
++import fcntl
++import hashlib
++import json
++import os
++import shutil
++import tempfile
++from pathlib import Path
++
++CHANGES = [
++    'VERSION',
++    'app.py',
++
++    'engine/quiet_browser.py',
++    'engine/providers/flow_browser.py',
++    'engine/flow_music.py',
++
++    'engine/language_editions.py',
++    'engine/render/graphics.py',
++    'engine/channel_desk_ui.py',
++
++    'engine/flow_project_delete.py',
++    'engine/providers/gemini_web.py',
++
++    'tests/test_v7124_quiet_browser_all_os.py',
++    'tests/test_v7124_three_language_convergence.py',
++
++    'FINISHED_EDITIONS_AND_QUIET_BROWSER_V7_0_124.md',
++    'REFERENCE_VIDEO_RESEARCH_2026_11_02.md',
++    'tools/update_v7123_to_v7124.py',
++]
++
++# Files as they exist in 7.0.123: the only hashes this updater will replace.
++# A hash outside this list means local edits; the file is preserved and nothing is applied.
++ALLOWED = {
++    'VERSION': [
++        'b9f9cf3ba03112809ae93aff7d14eee61e1858ea7696034debe0004f60d2fe8d'],
++    'app.py': [
++        'f1e6296cea30162c24291e8d37347fe93effcadf128c99c43423fed9dae1dd19'],
++    'engine/channel_desk_ui.py': [
++        'e225ca5c5c30f23c151526a1bc9716e47e1f8a60216c27a85d215cec6a5d5f5a'],
++    'engine/flow_music.py': [
++        '91f9fc255c25c8714f16a28f44f8a2e39e37498d8d079b538dca3d0a40ccca65'],
++    'engine/flow_project_delete.py': [
++        '586baee4e4c2d1ffa0c5ca91d85a53b072c25274c46caaee72c24d2de8b7442c'],
++    'engine/language_editions.py': [
++        'd1f715b6c17076d0e5bdf42e1b06c10c1f5025b897476802091a80bf47fba063'],
++    'engine/quiet_browser.py': [
++        '4af98b6abdcac81955e5e3019647ae60514fc387f56c38665922f53f09f36ac1'],
++    'engine/providers/flow_browser.py': [
++        'ab91d6e243521617a20640d90c24f8147b2b5b984dd3451f6ef2f30c3bc05da6'],
++    'engine/providers/gemini_web.py': [
++        '68c53208a2ac5457d02ba7e597d7ffeaf4a781515d3727b2d2782ae0179490ed'],
++    'engine/render/graphics.py': [
++        '9de47a3e5a17d5de5253752a891e8e7fca82a56b81f519047de04e40bdeb7663'],
++}
++
++
++ACCEPTED_INSTALLS = ('7.0.123', '7.0.124')  # 7.0.124 allows a safe re-run after success
++
++# An older installation must walk the zips one at a time; this one knows the step before it.
++EARLIER_STEPS = [
++    ('7.0.122', '7.0.123', 'tools/update_v7122_to_v7123.py'),
++]
++
++
++def chain_message(current, version):
++    steps = [step for step in EARLIER_STEPS if step[0] == current]
++    if not steps:
++        return ('This update requires an installed 7.0.123 (found ' + current + '). '
++                'Earlier releases must be updated first, one zip at a time.')
++    start, end, path = steps[0]
++    return ('This update requires an installed 7.0.123 (found ' + current + '). Apply the earlier update first, '
++            'from the 7.0.123 zip folder extracted beside this installation:\n'
++            '    python3 ../AutoVideoAI-v' + end + '/' + path + ' . --apply\n'
++            'Then run this ' + version + ' update.')
++
++
++def sha(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('target')
++    parser.add_argument('--apply', action='store_true')
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parents[1]
++    target = Path(args.target).resolve()
++    if source == target:
++        raise ValueError('Extract the update beside the existing installation, then run it from that installation folder')
++    version_file = target / 'VERSION'
++    if not version_file.is_file():
++        raise ValueError('Target is not an AutoVideoAI installation: VERSION not found')
++    current = version_file.read_text(encoding='utf-8').strip()
++    if current not in ACCEPTED_INSTALLS:
++        raise ValueError(chain_message(current, source.name or '7.0.124'))
++    new_version = (source / 'VERSION').read_text(encoding='utf-8').strip()
++    manifest_path = source / 'RELEASE_MANIFEST.json'
++    if not manifest_path.is_file():
++        raise ValueError('RELEASE_MANIFEST.json is missing from the ' + new_version +
++                         ' folder; extract the complete zip')
++    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
++    expected = {row['path']: row['sha256'] for row in manifest['files']}
++    for name in CHANGES:
++        if name not in expected or sha(source / name) != expected[name]:
++            raise ValueError('Update source checksum failed: ' + name)
++        destination = target / name
++        if destination.is_symlink():
++            raise ValueError('Refusing symlink code target: ' + name)
++        allowed = ALLOWED.get(name, [])
++        if destination.exists() and allowed and sha(destination) not in allowed + [expected[name]]:
++            raise ValueError('Unexpected local code changes; preserved: ' + name + '. Nothing was changed.')
++        if destination.exists() and not allowed and sha(destination) != expected[name]:
++            # A file this release introduces must not overwrite a different file that already sits at that path.
++            raise ValueError('A different file already exists where this update installs ' + name +
++                             '; preserved it and changed nothing. Move it aside and run the update again.')
++    plan = {'target': str(target), 'installed_version': current, 'new_version': new_version,
++            'apply': args.apply, 'code_files': CHANGES, 'runtime_data_copied': False}
++    print(json.dumps(plan, indent=2))
++    if not args.apply:
++        print('Dry run only. Run again with --apply to install. Stop the dashboard first.')
++        return
++
++    lockroot = Path.home() / '.local/share/autovideoai'
++    lockroot.mkdir(parents=True, exist_ok=True)
++    with (lockroot / 'production.lock').open('a+b') as lock:
++        try:
++            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise RuntimeError('Production is active; stop it before updating')
++        pending = [name for name in CHANGES
++                   if not ((target / name).is_file() and sha(target / name) == expected[name])]
++        if not pending:
++            print('Already up to date: every ' + new_version + ' code file is installed. Nothing was changed.')
++            return
++        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
++        backup = target / 'code-update-backups' / ('v' + current + '-to-v' + new_version + '-' + stamp)
++        installed = []
++        try:
++            for name in pending:
++                destination = target / name
++                existed = destination.exists()
++                if existed:
++                    saved = backup / name
++                    saved.parent.mkdir(parents=True, exist_ok=True)
++                    shutil.copy2(destination, saved)
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.code-update-')
++                with os.fdopen(descriptor, 'wb') as handle:
++                    handle.write((source / name).read_bytes())
++                    handle.flush()
++                    os.fsync(handle.fileno())
++                os.replace(temporary, destination)
++                installed.append((name, existed))
++        except Exception:
++            for name, existed in reversed(installed):
++                if existed:
++                    shutil.copy2(backup / name, target / name)
++                else:
++                    (target / name).unlink(missing_ok=True)
++            raise
++        print('Updated to ' + new_version + '. Code backup: ' + str(backup))
++        print('Restart the dashboard (./dashboard.sh or dashboard.bat), then check the install with:')
++        print('    python3 cli.py v3 self-check')
++        print('Then: SETTINGS > Quiet browser now says "Quiet browser . no visible window (all OS)" and hides '
++              'the generation browser on Windows and macOS too - a screen share no longer picks up a Chromium '
++              'window, so generation does not have to be paused. The sidebar shows one "Show browser" / '
++              '"Hide quiet browser . same session" button that moves the SAME running window for the first '
++              'manual Google sign-in; a sign-in wall reveals it by itself and hides it again once signed in. '
++              'A three-language production now finishes: run "Add intro/outro and render pending language '
++              'editions" once and a second run reuses the same two files instead of re-encoding them. '
++              'From a terminal: python3 cli.py v3 language-outputs <job> [--explain], python3 cli.py v3 '
++              'self-check.')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (ValueError, RuntimeError, OSError) as error:
++        print('Update stopped: ' + str(error))
++        raise SystemExit(1)

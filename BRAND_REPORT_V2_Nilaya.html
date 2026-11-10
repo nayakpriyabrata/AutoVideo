@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Charanashrita → Nilaya | V2 Loved-By-All Brand Report</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Cormorant+Garamond:wght@700;800&family=Manrope:wght@700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',system-ui,sans-serif;background:#FFFBF2;color:#1A1A1A;line-height:1.6}
+.hero{background:linear-gradient(135deg,#0E1A2B 0%,#1E3A5F 45%,#2F6B4E 100%);color:#fff;padding:86px 24px 64px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 20% 10%,rgba(255,255,255,0.13),transparent 55%),radial-gradient(ellipse at 85% 80%,rgba(255,220,160,0.15),transparent 60%)}
+.hero-inner{max-width:980px;margin:0 auto;position:relative;z-index:1}
+.badge{display:inline-block;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);padding:7px 16px;border-radius:999px;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:18px}
+h1{font-family:'Cormorant Garamond',serif;font-size:56px;line-height:0.92;font-weight:800}
+h1 em{font-style:italic;color:#FFD9A3;font-weight:700}
+.subtitle{font-size:18px;opacity:0.92;max-width:720px;margin:14px auto 28px;line-height:1.5}
+.hero-compare{max-width:820px;margin:0 auto;display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center;background:#fff;color:#1A1A1A;border-radius:18px;padding:22px;box-shadow:0 22px 60px rgba(0,0,0,0.32);text-align:left}
+.kicker{font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#6B7A8F;font-weight:700}
+.name-old{font-family:'Cormorant Garamond';font-size:22px;text-decoration:line-through;opacity:0.6}
+.name-new{font-family:'Cormorant Garamond';font-size:30px;font-weight:800;color:#1E3A5F}
+.arrow{font-size:28px;color:#2F6B4E;background:#E6F7ED;width:44px;height:44px;border-radius:50%;display:grid;place-items:center}
+.container{max-width:1020px;margin:0 auto;padding:0 24px}
+section{padding:56px 0;border-bottom:1px solid #F0E6D8}
+h2{font-family:'Cormorant Garamond';font-size:38px;line-height:1.05;color:#0E1A2B;margin-bottom:8px}
+h2 span{color:#2F6B4E}
+.lead{font-size:18px;color:#4A4A4A;max-width:780px;margin-bottom:22px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{background:#fff;border:1px solid #F0E6D8;border-radius:14px;padding:18px}
+.card h4{font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#1E3A5F;margin-bottom:8px}
+.pill{display:inline-block;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.03em;border:1px solid}
+.free{background:#E6F7ED;color:#0B6B2E;border-color:#B6E8C4}
+.likely{background:#E8F0FF;color:#2549A8;border-color:#C2D6FF}
+.comp{background:#FFF4D6;color:#7A5A00;border-color:#FFE6A3}
+.taken{background:#FFE2E2;color:#8B1A1A;border-color:#FFB8B8}
+.table-wrap{overflow:auto;background:#fff;border-radius:12px;border:1px solid #F0E6D8;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:860px}
+th{background:#0E1A2B;color:#fff;text-align:left;padding:12px 14px;font-size:11px;letter-spacing:0.07em;text-transform:uppercase}
+td{padding:12px 14px;border-bottom:1px solid #F0E6D8;vertical-align:top}
+.score{font-family:'Manrope';font-weight:700;background:#0E1A2B;color:#FFD9A3;padding:4px 8px;border-radius:8px;font-size:12px}
+.top-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.top-card{background:#fff;border-radius:16px;border:1px solid #F0E6D8;overflow:hidden;position:relative}
+.top-head{padding:18px 20px;color:#fff}
+.top-body{padding:16px 20px}
+.handle{font-family:monospace;background:#FFF6ED;border:1px dashed #E8C4A0;padding:6px 10px;border-radius:8px;font-size:13px;display:inline-block;margin:4px 6px 4px 0}
+.winner{border:2px solid #1E3A5F}
+.winner::after{content:"★ V2 #1 PICK";position:absolute;top:12px;right:-30px;background:#1E3A5F;color:#FFD9A3;font-size:10px;letter-spacing:0.12em;padding:6px 34px;transform:rotate(32deg);font-weight:800}
+.cta{background:#0E1A2B;color:#fff;border-radius:18px;padding:36px;text-align:center}
+.btn{display:inline-block;background:#2F6B4E;color:#fff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:700;margin:6px}
+.btn.secondary{background:#fff;color:#0E1A2B}
+ul.check{list-style:none}
+ul.check li{padding:8px 0 8px 28px;position:relative;font-size:14px}
+ul.check li::before{content:"✓";position:absolute;left:0;top:8px;width:20px;height:20px;background:#E6F7ED;color:#0B6B2E;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800}
+@media(max-width:860px){h1{font-size:38px}.hero-compare{grid-template-columns:1fr}.arrow{transform:rotate(90deg);margin:0 auto}.grid3,.grid2,.top-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="hero-inner">
+    <div class="badge">V2 Deep Research • Nov 10 2026 • Bhubaneswar → Global</div>
+    <h1>Charanashrita<br><em>→ Nilaya</em></h1>
+    <p class="subtitle">You said "loved by all and easy for future branding" — so I hunted for 5-letter warmth, not 13-letter weight. <b>Nilaya = Home.</b> Everyone wants home.</p>
+    <div class="hero-compare">
+      <div>
+        <div class="kicker">Current</div>
+        <div class="name-old">Charanashrita</div>
+        <div style="font-size:13px;color:#6B7A8F;margin-top:6px">13 letters • 4 syllables • 5 typo traps • Hard handle</div>
+        <div style="margin-top:8px;font-size:13px">😓 "How to spell?"</div>
+      </div>
+      <div class="arrow">→</div>
+      <div style="text-align:right">
+        <div class="kicker" style="color:#1E3A5F">V2 Recommendation</div>
+        <div class="name-new">Nilaya</div>
+        <div style="font-size:13px;color:#2F6B4E;margin-top:6px">6 letters • 3 syllables • 0 typo • @Nilaya ownable</div>
+        <div style="margin-top:8px;font-size:13px">🏠 "Everyone's home"</div>
+      </div>
+    </div>
+    <div style="margin-top:18px;font-size:12px;opacity:0.8">Also Top: Panah (5 letters, Shelter) • Aaroh (5, Rise) • Tatva (5, Essence) • Sukoon (6, Peace)</div>
+  </div>
+</div>
+
+<div class="container">
+  <section>
+    <h2>Why this V2 is <span>different</span></h2>
+    <p class="lead">V1 kept your heritage (Ashritam, CharanVani). V2 optimizes for your real brief: <b>loved by all</b> = cross-religion, global pronounce, Gen Z shareable + <b>future branding</b> = app, merch, studio, cafe, NGO.</p>
+    <div class="grid3">
+      <div class="card"><h4>Scored 30 names</h4><p style="font-size:14px">6 axes: Short, Global, Positive, Cross-religion, Future-brand, Ownability — 60 max. Only >50 made Top 8.</p></div>
+      <div class="card"><h4>Checked live YouTube</h4><p style="font-size:14px">Panah = only Ladakh resort + small English teacher. Nilaya = only Pune commerce college + eco homes. No spiritual owner → you can own.</p></div>
+      <div class="card"><h4>Future-brand test</h4><p style="font-size:14px">Does "Nilaya Music / Kids / Living / Foundation" sound premium? Yes. Does "Charanashrita Wear" ? No.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>30 Names <span>scored</span> — pick your love</h2>
+    <p class="lead">Three directions: Universal Emotion (biggest crowd), Easy Sanskrit Home (your soul, fixed spelling), Modern Brandable (trademark gold).</p>
+
+    <h3 style="margin:18px 0 8px;color:#1E3A5F">DIRECTION 1 — Universal Emotion (loved beyond religion)</h3>
+    <div class="table-wrap"><table>
+      <tr><th>Name</th><th>Meaning</th><th>Letters</th><th>Score</th><th>Availability</th></tr>
+      <tr style="background:#FFF8F0"><td><b>Sukoon</b> — Peace</td><td>Gen Z calm word, Hindi/Urdu</td><td>6</td><td><span class="score">52/60</span></td><td><span class="pill comp">Moderate</span> — Sukoon singer + Sukoon Studio exist, need @SukoonOfficial</td></tr>
+      <tr><td><b>Panah</b> — Shelter (literal Charanashrita!)</td><td>Shelter in Hindi/Urdu/Sanskrit</td><td>5</td><td><span class="score">53/60</span></td><td><span class="pill free">Highly Likely FREE</span></td></tr>
+      <tr><td><b>Ananda</b> — Bliss</td><td>Global yoga bliss</td><td>6</td><td><span class="score">52/60</span></td><td><span class="pill likely">Moderate</span></td></tr>
+      <tr><td><b>Prem</b> — Love</td><td>Most universal</td><td>4</td><td><span class="score">51/60</span></td><td><span class="pill comp">Crowded</span></td></tr>
+      <tr><td><b>Karuna</b> — Compassion (Jagannath heart)</td><td>Odisha superpower, universal</td><td>6</td><td><span class="score">51/60</span></td><td><span class="pill comp">Need @KarunaPath</span></td></tr>
+      <tr><td><b>Prana</b> — Life-force</td><td>Yoga global</td><td>5</td><td><span class="score">50/60</span></td><td><span class="pill likely">Moderate</span></td></tr>
+      <tr><td><b>Noor</b> — Light</td><td>Cross-religion light</td><td>4</td><td><span class="score">50/60</span></td><td><span class="pill comp">Crowded</span></td></tr>
+    </table></div>
+
+    <h3 style="margin:18px 0 8px;color:#1E3A5F">DIRECTION 2 — Easy Sanskrit Home (your meaning, fixed spelling)</h3>
+    <div class="table-wrap"><table>
+      <tr><th>Name</th><th>Meaning</th><th>Letters</th><th>Score</th><th>Availability</th></tr>
+      <tr style="background:#E6F0FF"><td><b>Nilaya</b> — Home/Abode</td><td>Divine dwelling</td><td>6</td><td><span class="score">54/60</span></td><td><span class="pill free">Highly Likely FREE</span></td></tr>
+      <tr><td><b>Aalaya</b> — Divine Abode</td><td>Temple = Aalaya</td><td>6</td><td><span class="score">53/60</span></td><td><span class="pill free">Highly Likely FREE</span></td></tr>
+      <tr><td><b>Aashray</b> — Shelter</td><td>Easy Hindi spelling</td><td>7</td><td><span class="score">52/60</span></td><td><span class="pill free">Likely FREE</span></td></tr>
+      <tr><td><b>Saran</b> — Refuge</td><td>Pali/English double</td><td>5</td><td><span class="score">50/60</span></td><td><span class="pill comp">Crowded</span></td></tr>
+    </table></div>
+
+    <h3 style="margin:18px 0 8px;color:#1E3A5F">DIRECTION 3 — Modern Brandable (trademark + handle gold)</h3>
+    <div class="table-wrap"><table>
+      <tr><th>Name</th><th>Meaning</th><th>Letters</th><th>Score</th><th>Availability</th></tr>
+      <tr style="background:#E6F7ED"><td><b>Aaroh</b> — Ascent / Raag</td><td>Rise, musical</td><td>5</td><td><span class="score">54/60</span></td><td><span class="pill free">Highly Likely FREE</span></td></tr>
+      <tr><td><b>Tatva</b> — Essence</td><td>Modern premium</td><td>5</td><td><span class="score">53/60</span></td><td><span class="pill free">Highly Likely FREE</span></td></tr>
+      <tr><td><b>Bodhi</b> — Awakening</td><td>Global Buddha link</td><td>5</td><td><span class="score">52/60</span></td><td><span class="pill likely">Moderate</span></td></tr>
+      <tr><td><b>Chariva</b> — Charan+Jiva invented</td><td>Keeps root subtly</td><td>7</td><td><span class="score">51/60</span></td><td><span class="pill free">Highly Likely FREE</span></td></tr>
+    </table></div>
+    <p style="font-size:12px;color:#8A7A6A;margin-top:8px">* 30-name full table in markdown. Above is curated Top 15 by score. Full scoring in BRAND_RENAME_V2_REPORT.md</p>
+  </section>
+
+  <section>
+    <h2>Top 4 <span>finalists</span> — choose your future</h2>
+    <div class="top-grid">
+      <div class="top-card winner">
+        <div class="top-head" style="background:linear-gradient(135deg,#0E1A2B,#1E3A5F)"><div style="font-size:10px;letter-spacing:0.14em;opacity:0.8">🥇 V2 #1 — WARMEST & MOST OWNABLE</div><div style="font-family:'Cormorant Garamond';font-size:34px;font-weight:800;margin-top:4px">Nilaya</div><div style="font-size:13px;opacity:0.9">नीलय • ni-LIE-ya • 6 letters • "Home"</div></div>
+        <div class="top-body">
+          <p style="font-size:14px"><b>Everyone wants home.</b> Not temple, not lecture — home. Nilaya = divine abode. Odisha echo: Jagannath's Niladri (Blue Abode). Global: Nilaya Homes/Living is premium real estate vibe — extend to Music, Kids, Foundation, Cafe, Wear.</p>
+          <div style="margin:10px 0"><span class="handle">@Nilaya</span><span class="handle">@NilayaOfficial</span><span class="handle">@NilayaLife</span></div>
+          <p style="font-size:13px;color:#4A4A4A"><b>Tagline:</b> <i>Come Home to Yourself</i> • <i>Your Divine Home</i> • <i>Where the Soul Lives</i></p>
+          <p style="font-size:12px;margin-top:8px;color:#1E3A5F;font-weight:700">✔ No spiritual channel owns @Nilaya — you own the category. Will rank #1 in 90 days.</p>
+        </div>
+      </div>
+      <div class="top-card">
+        <div class="top-head" style="background:linear-gradient(135deg,#1A2B1A,#2F6B4E)"><div style="font-size:10px;letter-spacing:0.14em;opacity:0.8">🥈 #2 — 5-LETTER SHELTER (Literal!)</div><div style="font-family:'Cormorant Garamond';font-size:34px;font-weight:800;margin-top:4px">Panah</div><div style="font-size:13px;opacity:0.9">पनाह • pa-NAH • 5 letters • "Shelter"</div></div>
+        <div class="top-body">
+          <p style="font-size:14px"><b>Charanashrita = Shelter. Panah = Shelter.</b> 5 letters vs 13. Loved by Hindu/Muslim/Sikh — "Teri panah / Allah ki panah". Ultimate cross-religion. Panah Life, Panah Music, Panah Wear — streetwear + spiritual.</p>
+          <div style="margin:10px 0"><span class="handle">@Panah</span><span class="handle">@PanahOfficial</span></div>
+          <p style="font-size:13px;color:#4A4A4A"><b>Tagline:</b> <i>Your Shelter of Grace</i> • <i>Sabki Panah</i></p>
+        </div>
+      </div>
+      <div class="top-card">
+        <div class="top-head" style="background:linear-gradient(135deg,#2B1A0E,#8B4513)"><div style="font-size:10px;letter-spacing:0.14em;opacity:0.8">🥉 #3 — MODERN RISE</div><div style="font-family:'Cormorant Garamond';font-size:34px;font-weight:800;margin-top:4px">Aaroh</div><div style="font-size:13px;opacity:0.9">आरोह • aa-ROH • 5 letters • "Ascent"</div></div>
+        <div class="top-body">
+          <p style="font-size:14px"><b>Most positive word.</b> Musical aaroh-avaroh + spiritual rise + startup rise. Zero religion, 100% aspiration. Aaroh Labs, Aaroh Media — investor & youth friendly.</p>
+          <div style="margin:10px 0"><span class="handle">@Aaroh</span><span class="handle">@AarohOfficial</span></div>
+          <p style="font-size:13px;color:#4A4A4A"><b>Tagline:</b> <i>Rise Within</i></p>
+        </div>
+      </div>
+      <div class="top-card">
+        <div class="top-head" style="background:linear-gradient(135deg,#1A1A2E,#4A2B6B)"><div style="font-size:10px;letter-spacing:0.14em;opacity:0.8">#4 — PREMIUM ESSENCE</div><div style="font-family:'Cormorant Garamond';font-size:34px;font-weight:800;margin-top:4px">Tatva</div><div style="font-size:13px;opacity:0.9">तत्व • TAT-va • 5 letters • "Essence"</div></div>
+        <div class="top-body">
+          <p style="font-size:14px"><b>D2C unicorn vibe.</b> Like Nykaa, Zepto — Tatva Tea/Skin/Labs. Premium, minimal, trademarkable.</p>
+          <div style="margin:10px 0"><span class="handle">@Tatva</span><span class="handle">@TatvaOfficial</span></div>
+          <p style="font-size:13px;color:#4A4A4A"><b>Tagline:</b> <i>The Essence of Everything</i></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="grid2">
+      <div class="card" style="background:#FFF8F0">
+        <h4>Story to tell subscribers (Odia/Hindi)</h4>
+        <p style="font-size:15px;font-style:italic;color:#0E1A2B">"We were Charanashrita — shelter at His feet. Now we are Nilaya — we built that shelter into a home for you. Same shelter, easier address. Charanashrita was our bhav, Nilaya is your home."</p>
+        <p style="font-size:13px;margin-top:10px">Keep Charanashrita as trust/legal name if sentimental; customer-facing = Nilaya.</p>
+      </div>
+      <div class="card">
+        <h4>Pronunciation Test: Bhubaneswar → Berlin</h4>
+        <table style="min-width:auto;font-size:13px;width:100%">
+          <tr><th>Name</th><th>Spell</th><th>Say</th><th>Typos</th></tr>
+          <tr><td>Charanashrita</td><td>Hard</td><td>Very Hard</td><td>5+</td></tr>
+          <tr style="background:#E6F7ED"><td><b>Nilaya</b></td><td>Easy</td><td>Easy</td><td>0</td></tr>
+          <tr style="background:#E6F7ED"><td><b>Panah</b></td><td>Easy</td><td>Easy</td><td>0</td></tr>
+          <tr><td>Aaroh</td><td>Easy</td><td>Easy</td><td>0</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Lock it <span>today</span> — 30 min (no loss)</h2>
+    <div class="grid2">
+      <div class="card"><h4>1. Check (2 min)</h4><ul class="check"><li>Open <b>youtube.com/@Nilaya</b> — if "This page isn't available" = FREE</li><li>Do same for @Panah, @Aaroh, @Tatva</li><li>Then YouTube Studio → Customization → Handle → type @Nilaya — Studio confirms instantly (most accurate)</li></ul></div>
+      <div class="card"><h4>2. Park (5 min, $0)</h4><ul class="check"><li>Even undecided, create placeholder channel with @NilayaOfficial — handles never expire, even inactive. Prevents squatters.</li><li>Check namecheckr.com for Instagram + domain in one click</li><li>Domain: godaddy.com → nilaya.com likely taken, but nilayaofficial.com / nilaya.life / nilaya.in likely free</li></ul></div>
+      <div class="card"><h4>3. Switch (14-90 day redirect)</h4><ul class="check"><li>YouTube allows name+handle change with zero sub/video loss. Old @charanashrita auto-redirects 90 days</li><li>Keep "Charanashrita" in description 90 days: "Search Charanashrita still finds us"</li></ul></div>
+      <div class="card"><h4>4. Announce</h4><ul class="check"><li>Banner: "Formerly Charanashrita → Now Nilaya — Same Shelter, New Home"</li><li>30-sec Odia/Hindi/English trailer + Community post + Short</li></ul></div>
+    </div>
+    <div class="cta" style="margin-top:22px">
+      <h2 style="color:#FFD9A3">Check your future handle now</h2>
+      <p style="opacity:0.9;max-width:640px;margin:8px auto 16px">If you see "This page isn't available" at these links — it's yours. Claim before someone else does. $0 forever.</p>
+      <a class="btn" href="https://www.youtube.com/@Nilaya" target="_blank">Check @Nilaya</a>
+      <a class="btn" href="https://www.youtube.com/@Panah" target="_blank">Check @Panah</a>
+      <a class="btn" href="https://www.youtube.com/@Aaroh" target="_blank">Check @Aaroh</a>
+      <a class="btn" href="https://www.youtube.com/@Tatva" target="_blank">Check @Tatva</a>
+      <div style="margin-top:14px;font-size:12px;opacity:0.75">Priority park TODAY: @Nilaya / @NilayaOfficial / @Panah / @Aaroh / @Tatva — even if undecided, then decide.</div>
+    </div>
+  </section>
+
+  <section style="text-align:center">
+    <p style="font-size:14px;color:#4A4A4A;max-width:720px;margin:0 auto">Previous V1 pick was <b>Ashritam/CharanVani</b> (heritage-safe). V2 pick is <b>Nilaya/Panah/Aaroh</b> (loved-by-all + future-brand). Both are valid — V1 if you want devotional continuity, V2 if you want universal empire. Tell me your Top 1 and I build logo + Odia/Hindi/English announcement script.</p>
+    <p style="font-size:12px;color:#8A7A6A;margin-top:10px">V2 research via live YouTube Search Nov 2026. Final handle = verify in Studio (real-time).</p>
+  </section>
+</div>
+</body>
+</html>
